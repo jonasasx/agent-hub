@@ -16,7 +16,9 @@ Fork it, search it, hand it off to another machine or another vendor, and never 
 
 </div>
 
-<!-- TODO: hero GIF — sidebar with live sessions from three machines, split view, phone view. docs/assets/hero.gif -->
+![Agent Hub: live sessions from three machines in one window, a Claude session messaging a Codex session, and a permission request approved from a phone](.github/assets/hero.png)
+
+<sub>Mockup of the English UI. The current interface is in Russian; English is the next milestone (see [Roadmap](#roadmap)).</sub>
 
 ---
 
@@ -70,31 +72,7 @@ Agent Hub is a small self-hosted server plus a lightweight agent on each machine
 
 ## How it works
 
-```mermaid
-flowchart LR
-  subgraph Clients
-    B[Browser / PWA]
-    D[Desktop app]
-  end
-  subgraph Hub[Hub — Docker]
-    H[Fastify API + WebSocket]
-    P[(Postgres)]
-  end
-  S[(S3)]
-  subgraph Machines
-    A1[Agent — laptop]
-    A2[Agent — workstation]
-    A3[Agent — cloud VM]
-  end
-  B <--> H
-  D <--> H
-  H <--> P
-  H --> S
-  A1 -- outbound WebSocket --> H
-  A2 -- outbound WebSocket --> H
-  A3 -- outbound WebSocket --> H
-  A1 --- C1[Claude Agent SDK / Codex app-server]
-```
+![Architecture: browser, desktop app and phone talk to the self-hosted hub; an agent on each machine connects to the hub with an outbound WebSocket and runs Claude Code and Codex](.github/assets/architecture.png)
 
 - **Hub** (`hub/`) — Node.js + Fastify, Postgres, S3. Serves the web app, the agent builds and the installers.
 - **Agent** (`agent/`) — a small Node.js service on each machine. It runs sessions through the official [Claude Agent SDK](https://docs.claude.com/en/api/agent-sdk/overview) and `codex app-server`, tails existing transcripts, and connects to the hub with an **outbound** WebSocket — no open ports on your machines.
