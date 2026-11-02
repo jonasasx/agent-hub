@@ -1,0 +1,21 @@
+# Agent Hub agent on the VM (design.md D17). Installed by deploy/agent/install-linux.sh to
+# /etc/systemd/system/agent-hub-agent.service.
+[Unit]
+Description=Agent Hub agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/.agent-hub/app
+EnvironmentFile=/home/ubuntu/.agent-hub/agent.env
+# @NODE@ is replaced by the absolute path of node (`command -v node`) at install time.
+ExecStart=@NODE@ /home/ubuntu/.agent-hub/app/agent.mjs
+Restart=always
+RestartSec=5
+# No sandboxing options: Claude Code sessions started by the agent need the same rights as an
+# interactive login of ubuntu (home, vault, sudo).
+
+[Install]
+WantedBy=multi-user.target

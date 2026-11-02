@@ -1,0 +1,13 @@
+ALTER TABLE sessions DROP COLUMN IF EXISTS external_seen_at;
+ALTER TABLE sessions DROP COLUMN IF EXISTS external_since;
+DROP TABLE IF EXISTS handoff_drafts;
+DROP TABLE IF EXISTS classification_labels;
+DROP INDEX IF EXISTS path_touches_line_idx;
+ALTER TABLE path_touches DROP CONSTRAINT IF EXISTS path_touches_project_fk;
+DELETE FROM path_touches WHERE op = 'remote';
+ALTER TABLE path_touches DROP CONSTRAINT path_touches_op_check;
+ALTER TABLE path_touches ADD CONSTRAINT path_touches_op_check CHECK (op IN ('edit', 'read', 'cwd'));
+ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_secondary_project_fk;
+ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_project_fk;
+UPDATE sessions SET project_id = NULL, secondary_project_id = NULL;
+DROP TABLE IF EXISTS projects;

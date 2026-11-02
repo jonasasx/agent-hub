@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "type": "hello",
+  "ts": 1793491200000,
+  "payload": {
+    "protocol": "1.12",
+    "agentVersion": "0.3.8",
+    "sdkVersion": "0.3.310",
+    "claudeCodeVersion": "2.1.311",
+    "hostname": "fixture-agent",
+    "os": "win32",
+    "homeDir": "C:/Users/fixture",
+    "vaultRoot": null,
+    "liveSessions": [],
+    "files": []
+  }
+}

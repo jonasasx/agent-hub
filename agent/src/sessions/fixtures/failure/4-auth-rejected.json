@@ -1,0 +1,11 @@
+{
+  "description": "A rejected token: the real sequence of task 1.1 (HP, SDK 0.3.310, a fake CLAUDE_CODE_OAUTH_TOKEN) — init, api_retry 401 ×2 (ignored), assistant authentication_failed, an error result with api_error_status 401.",
+  "messages": [
+    { "type": "system", "subtype": "init", "session_id": "00000000-0000-4000-8000-000000000004", "apiKeySource": "none", "permissionMode": "default" },
+    { "type": "system", "subtype": "api_retry", "session_id": "00000000-0000-4000-8000-000000000004", "error": "authentication_error", "error_status": 401, "attempt": 1 },
+    { "type": "system", "subtype": "api_retry", "session_id": "00000000-0000-4000-8000-000000000004", "error": "authentication_error", "error_status": 401, "attempt": 2 },
+    { "type": "assistant", "parent_tool_use_id": null, "session_id": "00000000-0000-4000-8000-000000000004", "uuid": "00000000-0000-4000-8000-0000000000d2", "error": "authentication_failed", "message": { "model": "<synthetic>", "role": "assistant", "content": [{ "type": "text", "text": "Failed to authenticate. API Error: 401 OAuth access token is invalid." }] } },
+    { "type": "result", "subtype": "success", "is_error": true, "api_error_status": 401, "terminal_reason": "api_error", "duration_ms": 2300, "total_cost_usd": 0, "result": "Failed to authenticate. API Error: 401 OAuth access token is invalid.", "usage": { "input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0 }, "session_id": "00000000-0000-4000-8000-000000000004" }
+  ],
+  "expect": { "kind": "auth_rejected" }
+}

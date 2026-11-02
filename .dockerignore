@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+**/coverage
+.git
+.env
+.env.*
+!.env.example
+pgdata
+docs
+openspec
+e2e/playwright-report
+e2e/test-results

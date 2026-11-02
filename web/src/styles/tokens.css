@@ -1,0 +1,33 @@
+/* Design tokens from docs/prototype.html. Requirement: Темы — dark by default, light via data-theme.
+   --g-org and --g-ext are new (design.md D9): areas 10-work/07-org and 11-side.
+   UI review 2.15: --faint, the light --accent/--warn/--ok/--bad/--info are darker than in the prototype — text in
+   these colours reaches WCAG AA 4.5:1 on --bg/--side/--surface (gate e2e/tests-mock/ui-gates.spec.ts).
+   --ctl-h/--ctl-fs: one height and font size for buttons, selects and inputs (40px targets on the phone). */
+:root {
+  --bg: #12151a; --side: #161a20; --surface: #1b1f27; --raised: #242a35; --line: #2c3240; --line-strong: #3a4252;
+  --fg: #e4e8ef; --muted: #8d96a7; --faint: #848d9f;
+  --accent: #f2b544; --accent-fg: #1a1406; --accent-soft: rgba(242,181,68,.13);
+  --ok: #4fc58a; --warn: #f2b544; --bad: #ef6b6b; --info: #6aa7ff;
+  --g-scanner: #3cc6b4; --g-platform: #6aa7ff; --g-customers: #b48cff; --g-support: #f0a35a;
+  --g-infra: #8fcf5c; --g-tools: #4fc3e8; --g-personal: #f07fa8; --g-none: #7d8697;
+  --g-org: #d4cf5e; --g-ext: #d98cd0;
+  --diff-add: rgba(79,197,138,.14); --diff-del: rgba(239,107,107,.14);
+  --shadow: 0 12px 40px rgba(0,0,0,.45);
+  --f-ui: "Onest", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  --ctl-h: 32px; --ctl-fs: 13px;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg: #f3f4f6; --side: #eceef2; --surface: #ffffff; --raised: #e8ebf0; --line: #dde1e8; --line-strong: #c7cdd8;
+  --fg: #1b1f27; --muted: #5d6676; --faint: #626b7b;
+  --accent: #8f5c00; --accent-fg: #ffffff; --accent-soft: rgba(143,92,0,.12);
+  --ok: #127a4b; --warn: #8f5c00; --bad: #b83232; --info: #1f5bbf;
+  --g-scanner: #11907f; --g-platform: #2d6fd6; --g-customers: #7a4fd6; --g-support: #c46a14;
+  --g-infra: #4c8f1f; --g-tools: #13839f; --g-personal: #c4416f; --g-none: #6c7586;
+  --g-org: #827a0e; --g-ext: #a2459a;
+  --diff-add: rgba(23,144,90,.12); --diff-del: rgba(201,60,60,.10);
+  --shadow: 0 12px 40px rgba(20,30,50,.18);
+  color-scheme: light;
+}
+@media (max-width: 760px) { :root { --ctl-h: 40px; } }

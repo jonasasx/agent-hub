@@ -1,0 +1,2 @@
+ALTER TABLE runners DROP COLUMN IF EXISTS providers;
+ALTER TABLE sessions DROP COLUMN IF EXISTS provider;

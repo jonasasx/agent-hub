@@ -1,0 +1,53 @@
+# Agent Hub, self-hosted: the hub and Postgres. Run from the repository root:
+#   cp .env.example .env   # fill in
+#   docker compose --env-file .env -f deploy/compose.selfhost.yml up -d --build
+# The hub listens on 127.0.0.1:${HUB_PORT:-8080}; put a TLS reverse proxy (Caddy, nginx, Traefik) in front of it
+# and set PUBLIC_URL to its https address. WebSocket upgrade must pass through (/ws/*).
+name: agenthub-selfhost
+
+services:
+  hub:
+    build:
+      context: ..
+      dockerfile: hub/Dockerfile
+    image: agenthub-selfhost-hub:latest
+    restart: unless-stopped
+    mem_limit: 1536m
+    memswap_limit: 1536m
+    env_file: ../.env
+    ports:
+      - "127.0.0.1:${HUB_PORT:-8080}:8080"
+    environment:
+      PORT: "8080"
+      NODE_OPTIONS: --max-old-space-size=1024
+      DATA_VOLUME_PATH: /hostdata
+    volumes:
+      - ../pgdata:/hostdata:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    mem_limit: 1g
+    memswap_limit: 1g
+    shm_size: 256m
+    command: ["postgres", "-c", "default_toast_compression=lz4"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-agenthub}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - ../pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }

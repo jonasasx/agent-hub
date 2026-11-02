@@ -1,0 +1,36 @@
+{
+  "name": "agent-hub",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "hub",
+    "agent",
+    "web",
+    "e2e",
+    "desktop"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "npm run build -w shared && npm run build -w hub -w agent -w web",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:exit-code": "node scripts/check-exit.mjs",
+    "lint": "eslint . && prettier --check \"**/*.{ts,tsx,js,mjs,cjs}\"",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "format": "prettier --write \"**/*.{ts,tsx,js,mjs,cjs}\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.5",
+    "eslint": "^10.13.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
+    "prettier": "3.9.10",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.0",
+    "vitest": "^5.0.5"
+  }
+}

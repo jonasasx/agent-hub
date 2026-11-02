@@ -1,0 +1,15 @@
+{
+  "name": "@agent-hub/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:e2e": "playwright test",
+    "typecheck": "tsc -p tsconfig.json",
+    "test:e2e:mock": "playwright test -c playwright.mock.config.ts"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.64.1"
+  }
+}

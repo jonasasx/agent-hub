@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "rootDir": "..",
+    "noEmit": true,
+    "paths": { "@agent-hub/shared": ["../shared/src/index.ts"] }
+  },
+  "include": ["src"]
+}

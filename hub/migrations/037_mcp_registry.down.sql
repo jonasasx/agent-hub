@@ -1,0 +1,10 @@
+DROP TABLE mcp_registry_session_updates;
+DROP TABLE mcp_registry_audit;
+DROP TABLE mcp_gateway_statuses;
+DROP TABLE mcp_oauth_tokens;
+DROP TABLE mcp_secrets;
+DROP TABLE mcp_registry_drafts;
+DROP TABLE mcp_registry_imports;
+DROP TABLE mcp_registry_overrides;
+DROP TABLE mcp_registry_meta;
+DROP TABLE mcp_registry_servers;

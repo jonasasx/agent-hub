@@ -1,0 +1,15 @@
+**/dist/**
+**/node_modules/**
+**/coverage/**
+docs/
+openspec/
+e2e/playwright-report/
+desktop/release/
+.tmp/
+*.md
+*.json
+*.yaml
+*.yml
+*.html
+*.css
+*.sql

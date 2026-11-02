@@ -1,0 +1,58 @@
+# Installer of Agent Hub desktop (design D16): NSIS, Windows x64, per-user, no code signing.
+appId: io.github.jonasasx.agenthub
+productName: Agent Hub
+# The one-click per-user installer names the install directory after the package name (APP_FILENAME =
+# appInfo.sanitizedName), not productName: `@agent-hub/desktop` gave %LOCALAPPDATA%\Programs\@agent-hubdesktop.
+# The packaged package.json gets the name «Agent Hub» → %LOCALAPPDATA%\Programs\Agent Hub. The uninstall and
+# InstallLocation registry keys follow nsis.guid; userData stays %APPDATA%\Agent Hub (productName).
+extraMetadata:
+  name: Agent Hub
+copyright: Ivan Volynkin
+directories:
+  output: release
+  buildResources: build
+# The main process is one esbuild bundle: no node_modules in the package.
+files:
+  - dist/main.cjs
+  - package.json
+  - "!node_modules/**"
+extraResources:
+  - from: assets
+    to: assets
+asar: true
+# electron is hoisted to the root node_modules of the workspace. Must equal the exact `electron` version pinned in
+# package.json (checked by src/core/electronVersion.test.ts).
+electronVersion: 45.0.0
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: assets/app.ico
+  # No certificate yet (proposal, assumption 5): electron-updater does not verify the publisher.
+  signAndEditExecutable: true
+nsis:
+  # One-click per-user installer (B3 of QA): the assisted wizard with oneClick false and perMachine false shows the
+  # install-mode page («для всех / только для меня»), also during an update. oneClick true + perMachine false installs
+  # for the current user only, without pages and without elevation; the silent update (quitAndInstall(true, true))
+  # runs the same installer.
+  oneClick: true
+  perMachine: false
+  allowElevation: false
+  createStartMenuShortcut: true
+  createDesktopShortcut: false
+  runAfterFinish: true
+  shortcutName: Agent Hub
+  installerIcon: assets/app.ico
+  uninstallerIcon: assets/app.ico
+  artifactName: Agent-Hub-Setup-${version}.${ext}
+  include: build/installer.nsh
+  differentialPackage: true
+  # The install identity (uninstall key, update in place) of the builds made before the appId was renamed.
+  guid: 996bb611-20e0-510c-94b1-7ea71797d9c4
+protocols:
+  - name: Agent Hub
+    schemes: [agenthub]
+# Produces latest.yml next to the installer; the app overrides the URL with its hubUrl (core/updates.ts).
+publish:
+  - provider: generic
+    url: https://hub.example.com/api/desktop/updates/

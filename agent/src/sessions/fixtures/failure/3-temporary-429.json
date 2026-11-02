@@ -1,0 +1,13 @@
+{
+  "description": "A temporary 429 the CLI retries by itself: api_retry ×2, an allowed_warning rate_limit_event, then a normal answer — no failure.",
+  "messages": [
+    { "type": "system", "subtype": "init", "session_id": "00000000-0000-4000-8000-000000000003", "apiKeySource": "none", "permissionMode": "default" },
+    { "type": "system", "subtype": "api_retry", "session_id": "00000000-0000-4000-8000-000000000003", "error": "rate_limit_error", "error_status": 429, "attempt": 1 },
+    { "type": "system", "subtype": "api_retry", "session_id": "00000000-0000-4000-8000-000000000003", "error": "rate_limit_error", "error_status": 429, "attempt": 2 },
+    { "type": "rate_limit_event", "session_id": "00000000-0000-4000-8000-000000000003", "uuid": "00000000-0000-4000-8000-0000000000c1", "rate_limit_info": { "status": "allowed_warning", "resetsAt": 1793264400, "rateLimitType": "seven_day" } },
+    { "type": "assistant", "parent_tool_use_id": null, "session_id": "00000000-0000-4000-8000-000000000003", "uuid": "00000000-0000-4000-8000-0000000000c2", "message": { "model": "claude-haiku-4-5", "role": "assistant", "content": [{ "type": "text", "text": "Да." }] } },
+    { "type": "result", "subtype": "success", "is_error": false, "duration_ms": 4120, "total_cost_usd": 0.0021, "result": "Да.", "usage": { "input_tokens": 12, "output_tokens": 3, "cache_read_input_tokens": 15000, "cache_creation_input_tokens": 420 }, "session_id": "00000000-0000-4000-8000-000000000003" }
+  ],
+  "expect": null,
+  "usage": { "inputTokens": 12, "outputTokens": 3, "cacheReadTokens": 15000, "cacheCreationTokens": 420 }
+}

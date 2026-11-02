@@ -1,0 +1,10 @@
+{
+  "description": "An ordinary error of the turn, nothing to do with the subscription: error_during_execution with errors[]; a subagent's rate_limit error (parent_tool_use_id set) does not count.",
+  "messages": [
+    { "type": "system", "subtype": "init", "session_id": "00000000-0000-4000-8000-000000000006", "apiKeySource": "none", "permissionMode": "default" },
+    { "type": "assistant", "parent_tool_use_id": "toolu_0000000000000000000000", "session_id": "00000000-0000-4000-8000-000000000006", "uuid": "00000000-0000-4000-8000-0000000000f1", "error": "rate_limit", "message": { "model": "<synthetic>", "role": "assistant", "content": [{ "type": "text", "text": "You've hit your session limit · resets 3:40am" }] } },
+    { "type": "result", "subtype": "error_during_execution", "is_error": true, "duration_ms": 9000, "total_cost_usd": 0.01, "errors": ["Tool execution failed: ENOENT"], "usage": { "input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0 }, "session_id": "00000000-0000-4000-8000-000000000006" }
+  ],
+  "expect": null,
+  "errorText": "Tool execution failed: ENOENT"
+}

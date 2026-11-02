@@ -1,0 +1,20 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": [
+      "ES2023",
+      "DOM"
+    ],
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "tests",
+    "tests-mock",
+    "mock",
+    "playwright.config.ts",
+    "playwright.mock.config.ts"
+  ]
+}
