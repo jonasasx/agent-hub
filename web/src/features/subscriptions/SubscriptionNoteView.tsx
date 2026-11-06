@@ -11,18 +11,20 @@
 import { useRef, useState } from 'react';
 import type { SubscriptionNote } from '../../api/types';
 import { useStore } from '../../store';
+import { t, useT } from '../../i18n';
 import { openSettings } from '../settings/Settings';
 import { useMenu, useMenuPlacement } from '../ui/a11y';
 import { activeSubs, clock, subName } from './model';
 
 export function noteText(n: SubscriptionNote, fallback: string, name: string | null): string {
   if (!name) return fallback;
-  if (n.kind === 'limit') return `Лимит подписки ${name} исчерпан${n.resetsAt ? `, сброс в ${clock(n.resetsAt)}` : ''}`;
-  if (n.kind === 'auth') return `Подписка ${name}: токен отклонён — выпустите новый claude setup-token и замените токен в настройках`;
+  if (n.kind === 'limit') return n.resetsAt ? t('subscriptions.note.limitReset', { name, time: clock(n.resetsAt) }) : t('subscriptions.note.limit', { name });
+  if (n.kind === 'auth') return t('subscriptions.note.auth', { name });
   return fallback;
 }
 
 export function SubscriptionNoteView({ note, text, readOnly, onSwitch }: { note: SubscriptionNote; text: string; readOnly: boolean; onSwitch?: (subscriptionId: string) => void }) {
+  const t = useT();
   const subs = useStore(s => s.subs);
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLSpanElement>(null);
@@ -45,17 +47,17 @@ export function SubscriptionNoteView({ note, text, readOnly, onSwitch }: { note:
         <span className="sub-note-acts">
           {canReplace && (
             <button type="button" className="btn note-retry" onClick={() => openSettings('subscriptions', { tokenFor: note.subscriptionId })}>
-              Заменить токен
+              {t('subscriptions.note.replaceToken')}
             </button>
           )}
           {canSwitch && (
             <span className="sub-note-act" ref={box}>
               <button type="button" ref={btn} className="btn note-retry" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
-                Продолжить под другой подпиской
+                {t('subscriptions.note.continueUnderOther')}
               </button>
               {open && (
-                <div ref={menu} className={`menu${place === 'up' ? ' up' : ''}`} role="menu" aria-label="Продолжить под подпиской">
-                  <div className="m-title">Продолжить под</div>
+                <div ref={menu} className={`menu${place === 'up' ? ' up' : ''}`} role="menu" aria-label={t('subscriptions.note.continueMenu')}>
+                  <div className="m-title">{t('subscriptions.note.continueUnder')}</div>
                   {alts.map(s => (
                     <button
                       key={s.id}

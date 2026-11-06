@@ -53,7 +53,10 @@ describe('subscription classifier', () => {
   });
   it('redacts recognizable credentials from messages and metadata', () => {
     const value = redactClassifierText(
-      'password=hunter2 token=abc sk-ant-' + 'api03-topsecret Bearer xyz https://alice:secret@example.test/r\nPrivateKey = abc\n-----BEGIN ' + 'PRIVATE KEY-----\nsecret\n-----END ' + 'PRIVATE KEY-----',
+      'password=hunter2 token=abc sk-ant-' +
+        'api03-topsecret Bearer xyz https://alice:secret@example.test/r\nPrivateKey = abc\n-----BEGIN ' +
+        'PRIVATE KEY-----\nsecret\n-----END ' +
+        'PRIVATE KEY-----',
     );
     for (const secret of ['hunter2', 'abc', 'sk-ant', 'xyz', 'alice', '\nsecret\n']) expect(value).not.toContain(secret);
   });

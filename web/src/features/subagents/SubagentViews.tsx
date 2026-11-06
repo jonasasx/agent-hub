@@ -11,6 +11,7 @@ import { createContext, useContext, useEffect, useId, useMemo, useRef, useState,
 import { createPortal } from 'react-dom';
 import { PROVIDER_LABELS, type BackgroundTaskStatus, type BackgroundTaskView, type HubSubagentView, type SessionView, type SubagentStatus, type SubagentView } from '../../api/types';
 import { useStore } from '../../store';
+import { useT } from '../../i18n';
 import { clockLabel, colorVar, STATUS_LABEL } from '../sessions/status';
 import { ProviderIcon } from '../chat/ProviderIcon';
 import { useDialog } from '../ui/a11y';
@@ -49,6 +50,7 @@ export function SubStatusDot({ status, label: text }: { status: SubagentStatus |
 
 /** «Субагенты N · M работают»; no button when the session has none. */
 export function SubagentsButton({ s, compact }: { s: SessionView; compact?: boolean }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const list = useList(s.id);
   const session = s;
@@ -73,7 +75,13 @@ export function SubagentsButton({ s, compact }: { s: SessionView; compact?: bool
     if (s.subagents?.total || s.subagents?.background || hubTotal) void loadSubagents(s.id, stale || (changed && loaded));
   }, [s.id, s.subagents?.total, s.subagents?.background, hubTotal, stale, bgKey, loaded]);
   if (!total && !bgTotal) return null;
-  const parts = [total ? `Субагенты ${total}` : '', bgTotal ? (total ? `фоновые ${bgTotal}` : `Фоновые ${bgTotal}`) : ''].filter(Boolean).join(' · ');
+  const runWord = (n: number) => t('sessions.subagents.runningWord', { count: n });
+  const parts = [
+    total ? t('sessions.subagents.button.subagents', { n: total }) : '',
+    bgTotal ? (total ? t('sessions.subagents.button.backgroundLower', { n: bgTotal }) : t('sessions.subagents.button.background', { n: bgTotal })) : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
   return (
     <>
       <button type="button" className={`btn sub-btn${compact ? ' compact' : ''}`} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(!open)}>
@@ -92,7 +100,7 @@ export function SubagentsButton({ s, compact }: { s: SessionView; compact?: bool
               <span className="sub-running">
                 {' · '}
                 {running}
-                <span className="sr-only"> {running === 1 ? 'работает' : 'работают'}</span>
+                <span className="sr-only"> {runWord(running)}</span>
               </span>
             )}
           </>
@@ -102,7 +110,7 @@ export function SubagentsButton({ s, compact }: { s: SessionView; compact?: bool
             {running > 0 && (
               <span className="sub-running">
                 {' '}
-                · {running} {running === 1 ? 'работает' : 'работают'}
+                · {running} {runWord(running)}
               </span>
             )}
           </>
@@ -115,6 +123,7 @@ export function SubagentsButton({ s, compact }: { s: SessionView; compact?: bool
 
 /** The list of a session's subagents: a tree by the parent, status, start time and duration. */
 export function SubagentList({ s, onClose }: { s: SessionView; onClose: () => void }) {
+  const t = useT();
   const list = useList(s.id);
   const bg = useBackground(s.id);
   const hub = useHubChildren(s.id);
@@ -126,18 +135,18 @@ export function SubagentList({ s, onClose }: { s: SessionView; onClose: () => vo
   useDialog(ref, onClose);
   useEffect(() => {
     void loadSubagents(s.id);
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
   }, [s.id]);
   const rows = useMemo(() => subTree(list ?? []), [list]);
   // events of a running monitor do not come over the socket: the open list asks again every 10 s
   const bgWorking = !!bg?.some(v => bgStatus(v, now) === 'running');
   useEffect(() => {
     if (!bgWorking) return;
-    const t = setInterval(() => void loadSubagents(s.id, true), 10_000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => void loadSubagents(s.id, true), 10_000);
+    return () => clearInterval(timer);
   }, [s.id, bgWorking]);
-  const title = bg?.length ? (list?.length || hub?.length ? 'Субагенты и фоновые задачи' : 'Фоновые задачи сессии') : 'Субагенты сессии';
+  const title = bg?.length ? (list?.length || hub?.length ? t('sessions.subagents.title.both') : t('sessions.subagents.title.background')) : t('sessions.subagents.title.subagents');
   // one list of children: sessions started over the hub and subagents of the process. Blocks (a root and its subtree) are
   // ordered by need: a permission request, working, waiting, the rest, finished last
   const items = useMemo(() => {
@@ -162,13 +171,13 @@ export function SubagentList({ s, onClose }: { s: SessionView; onClose: () => vo
       <div className={`sub-list${phone ? ' sheet' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} ref={ref}>
         <div className="sub-head">
           <h2 id={titleId}>{title}</h2>
-          <button type="button" className="icon-btn" aria-label="Закрыть" onClick={onClose}>
+          <button type="button" className="icon-btn" aria-label={t('sessions.subagents.close')} onClick={onClose}>
             ×
           </button>
         </div>
-        {empty && <p className="sub-empty">Дочерних сессий нет</p>}
+        {empty && <p className="sub-empty">{t('sessions.subagents.empty')}</p>}
         {!list && (
-          <div className="sk-rows" role="status" aria-label="Загрузка списка">
+          <div className="sk-rows" role="status" aria-label={t('sessions.subagents.loading')}>
             {[78, 62, 86].map(w => (
               <span key={w} className="skeleton" style={{ width: `${w}%` }} />
             ))}
@@ -217,8 +226,8 @@ export function SubagentList({ s, onClose }: { s: SessionView; onClose: () => vo
           </ul>
         )}
         {!!bg?.length && (
-          <section className="bg-section" aria-label="Фоновые задачи">
-            {!!(list?.length || hub?.length) && <h3 className="bg-head">Фоновые задачи</h3>}
+          <section className="bg-section" aria-label={t('sessions.subagents.backgroundTasks')}>
+            {!!(list?.length || hub?.length) && <h3 className="bg-head">{t('sessions.subagents.backgroundTasks')}</h3>}
             <ul className="sub-rows bg-rows">
               {bg.map(v => (
                 <li key={v.id}>
@@ -261,6 +270,7 @@ function HubChildRow({ h, onOpen }: { h: HubSubagentView; onOpen: () => void }) 
 
 /** A monitor or a background command: status, title, kind, start, duration; opened — the command and the last event. */
 function BackgroundRow({ v, now }: { v: BackgroundTaskView; now: number }) {
+  const t = useT();
   const st = bgStatus(v, now);
   const dur = durationLabel(bgDurationMs(v, st, now));
   const exp = expiresLabel(v, st, now);
@@ -282,7 +292,10 @@ function BackgroundRow({ v, now }: { v: BackgroundTaskView; now: number }) {
         {v.command && <pre className="bg-cmd mono">{v.command}</pre>}
         {v.lastEvent && (
           <div className="bg-last">
-            <span className="sub-meta">Последнее событие{v.lastEventAt ? ` · ${clockLabel(v.lastEventAt)}` : ''}</span>
+            <span className="sub-meta">
+              {t('sessions.subagents.lastEvent')}
+              {v.lastEventAt ? ` · ${clockLabel(v.lastEventAt)}` : ''}
+            </span>
             <pre className="bg-cmd mono">{v.lastEvent}</pre>
           </div>
         )}
@@ -314,6 +327,7 @@ export function BackgroundStatus({ toolUseId }: { toolUseId: string }) {
 
 /** «Открыть чат субагента» at a call (by tool_use id) or a chat link by the addressee / sender name. */
 export function SubagentLink({ toolUseId, target, label }: { toolUseId?: string; target?: string; label?: string }) {
+  const t = useT();
   const scope = useContext(SubagentScope);
   const list = useList(scope);
   const session = useStore(st => (scope ? st.sessions[scope] : undefined));
@@ -336,7 +350,9 @@ export function SubagentLink({ toolUseId, target, label }: { toolUseId?: string;
         }}
       >
         {/* addressed by agentId: the registry row's name reads better than the id (QA subagents 3) */}
-        {target && v.name ? `Чат ${v.name}` : (label ?? (v.kind === 'teammate' && v.name ? `Чат ${v.name}` : 'Открыть чат субагента'))}
+        {target && v.name
+          ? t('sessions.subagents.link.chatOf', { name: v.name })
+          : (label ?? (v.kind === 'teammate' && v.name ? t('sessions.subagents.link.chatOf', { name: v.name }) : t('sessions.subagents.link.open')))}
       </a>
     </span>
   );
@@ -344,13 +360,14 @@ export function SubagentLink({ toolUseId, target, label }: { toolUseId?: string;
 
 /** The header of a subagent's chat: the description, «Субагент сессии <родитель>», the type, the status. */
 export function SubagentHead({ v, parent }: { v: SubagentView; parent: SessionView | undefined }) {
+  const t = useT();
   const parentSub = useStore(st => (v.parentId ? st.subagents[v.parentId] : undefined));
   const [now, setNow] = useState(Date.now());
   const st = subStatus(v, parent);
   useEffect(() => {
     if (st !== 'running' && st !== 'idle') return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
   }, [st]);
   const dur = durationLabel(subDurationMs(v, st, now));
   return (
@@ -373,7 +390,7 @@ export function SubagentHead({ v, parent }: { v: SubagentView; parent: SessionVi
       </div>
       <div className="banner sub-banner" role="note">
         <div className="b-text">
-          Субагент сессии{' '}
+          {t('sessions.subagents.head.of')}{' '}
           <a
             href={`/s/${v.sessionId}`}
             onClick={e => {
@@ -385,7 +402,7 @@ export function SubagentHead({ v, parent }: { v: SubagentView; parent: SessionVi
           </a>
           {parentSub && (
             <>
-              {' · вызван '}
+              {` · ${t('sessions.subagents.head.calledBy')} `}
               <a
                 href={`#subagent-${parentSub.id}`}
                 onClick={e => {
@@ -397,7 +414,7 @@ export function SubagentHead({ v, parent }: { v: SubagentView; parent: SessionVi
               </a>
             </>
           )}{' '}
-          — только чтение
+          — {t('sessions.subagents.head.readOnly')}
           {/* the phone hides the chat header: the status and the type stay visible here */}
           <span className="sub-banner-st">
             {' · '}

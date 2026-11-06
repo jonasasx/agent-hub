@@ -5,6 +5,7 @@
  * Requirements (workspace-ui): Дерево «Проекты»; Строка проекта под шапкой чата.
  */
 import type { ProjectListItem, ProjectRef, SessionView, SidebarProject } from '../../api/types';
+import { hubText, t, tText } from '../../i18n';
 
 /** Kinds of the directory (shared `ProjectKind` and «Без проекта»). */
 export type ProjectKind = ProjectListItem['kind'];
@@ -15,17 +16,17 @@ export type ProjectItem = ProjectListItem;
 /** The project of a session (`kind` and `archived` absent for «Без проекта» and on an older hub). */
 export type ProjectInfo = ProjectRef;
 
-export const NO_PROJECT: ProjectItem = { id: 'none', kind: 'none', title: 'Без проекта', path: '', areaPath: null, colorKey: 'none', archived: false };
+export const noProject = (): ProjectItem => ({ id: 'none', kind: 'none', title: t('projects.none'), path: '', areaPath: null, colorKey: 'none', archived: false });
 
 /** `GET /api/projects` → items; «Без проекта» is added when the hub did not list it. */
 export function projectItems(body: unknown): ProjectItem[] {
   const list = (Array.isArray(body) ? body : ((body as { projects?: unknown[] } | null)?.projects ?? [])) as Partial<ProjectItem>[];
   const items = list.flatMap((p): ProjectItem[] =>
     p && typeof p.id === 'string' && typeof p.title === 'string'
-      ? [{ id: p.id, kind: p.kind ?? 'project', title: p.title, path: p.path ?? '', areaPath: p.areaPath ?? null, colorKey: p.colorKey ?? 'none', archived: !!p.archived }]
+      ? [{ id: p.id, kind: p.kind ?? 'project', title: hubText(p.title, p.i18n), path: p.path ?? '', areaPath: p.areaPath ?? null, colorKey: p.colorKey ?? 'none', archived: !!p.archived }]
       : [],
   );
-  return items.some(p => p.id === 'none') ? items : [...items, NO_PROJECT];
+  return items.some(p => p.id === 'none') ? items : [...items, noProject()];
 }
 
 /**
@@ -37,20 +38,24 @@ export function filterProjects(items: ProjectItem[], q: string): ProjectItem[] {
   return items.filter(p => !needle || p.title.toLowerCase().includes(needle) || p.path.toLowerCase().includes(needle));
 }
 
-export const KIND_LABEL: Record<ProjectKind, string> = { area: 'область', system: 'система', project: 'проект', repo: 'репозиторий', builtin: '', none: '' };
+export function kindLabel(kind: ProjectKind): string {
+  return kind === 'builtin' || kind === 'none' ? '' : t(`projects.kind.${kind}`);
+}
 
 /** The evidence line under the chat head (spec «Строка проекта под шапкой чата»). */
 export function evidenceText(s: SessionView): string {
   switch (s.projectSource) {
-    // the hub words these itself («проект удалён из справочника», «унаследовано от родителя»)
+    // a deleted project: the key of the hub (`projectEvidenceI18n`), or the stored text — English now, Russian before
     case 'manual':
-      return s.projectEvidence?.startsWith('проект удалён') ? s.projectEvidence : 'закреплено вручную';
+      return s.projectEvidenceI18n?.key === 'hub.projects.evidenceDeleted' || /^(проект удалён|project removed)/.test(s.projectEvidence ?? '')
+        ? tText('hub.projects.evidenceDeleted')
+        : t('projects.evidence.manual');
     case 'inherited':
-      return s.projectEvidence?.startsWith('унаследовано') ? s.projectEvidence : 'унаследовано от родителя';
+      return t('projects.evidence.inherited');
     case 'auto':
-      return s.projectEvidence ? `определено по путям: ${s.projectEvidence}` : 'определено по путям';
+      return s.projectEvidence ? t('projects.evidence.auto', { evidence: s.projectEvidence }) : t('projects.evidence.autoShort');
     default:
-      return 'проект пока не определён';
+      return t('projects.evidence.unknown');
   }
 }
 

@@ -9,12 +9,14 @@
  */
 import type { SessionView } from '../../api/types';
 import { useStore } from '../../store';
+import { useT } from '../../i18n';
 import { isReadOnly, runnerIndex } from '../sessions/status';
 import { switchSubscription } from './actions';
 import { LimitChip } from '../limits/LimitChip';
-import { CONNECTORS_HINT, MACHINE_LOGIN, activeSubs, headState, shortOptionLabel, subName } from './model';
+import { connectorsHint, machineLogin, activeSubs, headState, shortOptionLabel, subName } from './model';
 
 export function HeadSubscription({ s, inline, onPicked }: { s: SessionView; inline?: boolean; onPicked?: () => void }) {
+  const t = useT();
   const subs = useStore(st => st.subs);
   const runners = useStore(st => st.runners);
   const idx = runnerIndex(runners);
@@ -22,16 +24,16 @@ export function HeadSubscription({ s, inline, onPicked }: { s: SessionView; inli
   const st = headState(s, subs, runner);
   if (st.kind === 'hidden') return null;
   if (st.kind === 'outdated') {
-    const tip = `Агент на ${runner?.name ?? s.runnerId} устарел — сессия идёт под входом машины — обновите агента`;
+    const tip = t('subscriptions.head.outdated', { runner: runner?.name ?? s.runnerId });
     return inline ? (
       <span className="pill sub-login" title={tip}>
-        {MACHINE_LOGIN}
+        {machineLogin()}
       </span>
     ) : (
       <label>
-        Подписка
+        {t('subscriptions.field.label')}
         <span className="hint" title={tip}>
-          {MACHINE_LOGIN} · {tip}
+          {machineLogin()} · {tip}
         </span>
       </label>
     );
@@ -42,14 +44,14 @@ export function HeadSubscription({ s, inline, onPicked }: { s: SessionView; inli
   const retiredCurrent = st.value !== '' && !active.some(x => x.id === st.value) ? (subName(subs, st.value) ?? s.subscription?.name ?? st.value) : null;
   const disabled = isReadOnly(s, idx) || !runner?.online;
   const now = new Date();
-  const why = isReadOnly(s, idx) ? 'Сессия только для чтения' : !runner?.online ? `${runner?.name ?? s.runnerId} не в сети` : null;
-  const title = [st.next ? 'Подписка, под которой продолжится сессия' : 'Подписка процесса сессии', why, provider === 'claude' && subs?.connectorsHint ? CONNECTORS_HINT : null]
+  const why = isReadOnly(s, idx) ? t('subscriptions.head.readOnly') : !runner?.online ? t('subscriptions.head.offline', { runner: runner?.name ?? s.runnerId }) : null;
+  const title = [st.next ? t('subscriptions.head.titleNext') : t('subscriptions.head.titleProcess'), why, provider === 'claude' && subs?.connectorsHint ? connectorsHint() : null]
     .filter(Boolean)
     .join('. ');
   const select = (
     <select
       className="mini"
-      aria-label={st.next ? 'Подписка: продолжит под' : 'Подписка'}
+      aria-label={st.next ? t('subscriptions.head.ariaNext') : t('subscriptions.field.label')}
       title={title}
       disabled={disabled}
       value={st.value}
@@ -61,7 +63,7 @@ export function HeadSubscription({ s, inline, onPicked }: { s: SessionView; inli
     >
       {st.value === '' && (
         <option value="" disabled>
-          {MACHINE_LOGIN}
+          {machineLogin()}
         </option>
       )}
       {retiredCurrent !== null && (
@@ -80,17 +82,17 @@ export function HeadSubscription({ s, inline, onPicked }: { s: SessionView; inli
   if (inline)
     return (
       <span className="ctl-sub">
-        {st.next && <span className="sub-next">продолжит под</span>}
+        {st.next && <span className="sub-next">{t('subscriptions.head.continuesUnder')}</span>}
         {select}
         <LimitChip s={s} />
       </span>
     );
   return (
     <label>
-      {st.next ? 'Подписка — продолжит под' : 'Подписка'}
+      {st.next ? t('subscriptions.head.labelNext') : t('subscriptions.field.label')}
       {select}
       {why && <span className="hint sub-why">{why}</span>}
-      {provider === 'claude' && subs?.connectorsHint && <span className="hint">{CONNECTORS_HINT}</span>}
+      {provider === 'claude' && subs?.connectorsHint && <span className="hint">{connectorsHint()}</span>}
     </label>
   );
 }

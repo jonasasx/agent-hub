@@ -3,8 +3,9 @@
  * and the reload after a reconnect. A 404 of the hub hides the panel.
  */
 import { ApiError, api } from '../../api/client';
-import { MCP_TEXTS, type McpAction, type McpSessionView, type UiServerMessage } from '../../api/types';
+import { type McpAction, type McpSessionView, type UiServerMessage } from '../../api/types';
 import { useStore } from '../../store';
+import { hubText, t } from '../../i18n';
 import { authKey, authResultText } from './mcpModel';
 
 const get = useStore.getState;
@@ -14,24 +15,24 @@ export type McpResult = { ok: true } | { ok: false; message: string; code: strin
 
 /** The text of a refused request: the hub's `message` (texts of the spec, «X1 не в сети»), else by the code. */
 export function mcpErrorText(err: unknown): { message: string; code: string } {
-  if (!(err instanceof ApiError)) return { code: 'network_error', message: 'Хаб не ответил. Проверьте связь и попробуйте ещё раз.' };
+  if (!(err instanceof ApiError)) return { code: 'network_error', message: t('mcp.error.hubNoReply') };
   const byCode: Record<string, string> = {
-    agent_outdated: `${MCP_TEXTS.agentOutdated}. Агент обновится сам между ходами — версия на экране «Машины».`,
-    not_hub_managed: MCP_TEXTS.notHubManaged,
-    mcp_auth_unsupported: MCP_TEXTS.authUnsupported,
-    bad_callback_url: MCP_TEXTS.stateMismatch,
-    no_auth_flow: 'Попытка входа не найдена — нажмите «Войти» ещё раз',
-    runner_offline: 'Машина не в сети',
-    read_only: 'Сессия только для чтения',
-    mcp_unknown_server: 'Такого сервера нет в последнем снимке — нажмите «Обновить»',
-    probe_busy: 'Проверка уже идёт',
-    concurrent_external: 'Сессия сейчас открыта вне хаба',
-    revision_conflict: 'Черновик изменился на сервере. Его актуальная версия загружена; проверьте данные и повторите действие.',
+    agent_outdated: t('mcp.error.agentOutdated', { text: t('mcp.text.agentOutdated') }),
+    not_hub_managed: t('mcp.text.notHubManaged'),
+    mcp_auth_unsupported: t('mcp.text.authUnsupported'),
+    bad_callback_url: t('mcp.text.stateMismatch'),
+    no_auth_flow: t('mcp.error.noAuthFlow'),
+    runner_offline: t('mcp.error.runnerOffline'),
+    read_only: t('mcp.error.readOnly'),
+    mcp_unknown_server: t('mcp.error.unknownServer'),
+    probe_busy: t('mcp.error.probeBusy'),
+    concurrent_external: t('mcp.error.concurrentExternal'),
+    revision_conflict: t('mcp.error.revisionConflict'),
   };
   // agent_outdated: the spec's text plus the offer to update; else the hub's text wins
   if (err.code === 'agent_outdated') return { code: err.code, message: byCode.agent_outdated! };
   if (err.code === 'revision_conflict') return { code: err.code, message: byCode.revision_conflict! };
-  return { code: err.code, message: err.serverMessage ?? byCode[err.code] ?? (err.status === 0 ? 'Хаб не ответил. Проверьте связь и попробуйте ещё раз.' : `Не выполнено (${err.status})`) };
+  return { code: err.code, message: err.serverMessage ?? byCode[err.code] ?? (err.status === 0 ? t('mcp.error.hubNoReply') : t('mcp.error.failedStatus', { status: err.status })) };
 }
 
 /** A body that is not the hub's view (an older hub, a proxy page) hides the panel instead of breaking it. */
@@ -129,8 +130,9 @@ export function handleMcpMessage(m: UiServerMessage): boolean {
         putView(msg.sessionId, { ...cur, authFlows: msg.flow ? [...others, msg.flow] : others });
       } else if (cur === undefined) void loadMcp(msg.sessionId, true);
       // a flow with an error — the attempt goes on (a pasted address of another attempt); no flow — it ended
-      if (msg.flow) setAuthError(msg.sessionId, msg.server, msg.error);
-      else setAuthError(msg.sessionId, msg.server, msg.result === 'ok' ? undefined : (msg.error ?? authResultText(msg.result)));
+      const failure = msg.error ? hubText(msg.error, msg.errorI18n) : undefined;
+      if (msg.flow) setAuthError(msg.sessionId, msg.server, failure);
+      else setAuthError(msg.sessionId, msg.server, msg.result === 'ok' ? undefined : (failure ?? authResultText(msg.result)));
       return true;
     }
   }

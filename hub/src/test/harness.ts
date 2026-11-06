@@ -89,6 +89,8 @@ export async function startTestHub(
   const hub = await buildHub({
     config,
     db: tdb.db,
+    // change i18n D10: the existing tests check Russian texts
+    defaultLocale: 'ru',
     oidc: createOidcClient({ issuer: config.OIDC_GOOGLE_ISSUER, clientId: config.OIDC_GOOGLE_CLIENT_ID, clientSecret: config.OIDC_GOOGLE_CLIENT_SECRET }),
     ...(keycloak ? { oidcKeycloak: createOidcClient({ issuer: keycloak.issuer, clientId: keycloak.clientId, clientSecret: keycloak.clientSecret }) } : {}),
     limits,
@@ -109,7 +111,7 @@ export async function startTestHub(
     // The disk check timer is off in tests unless asked; tests call checkDisk directly.
     ops: { diskCheckMs: 0, ...opts.ops },
     // The catalogue is loaded once; recompute without the 2 s debounce unless a test asks for it.
-    projects: { catalogCheckMs: 0, debounceMs: 0, ...opts.projects },
+    projects: { debounceMs: 0, ...opts.projects },
     logger: opts.logStream ? { level: 'info', stream: opts.logStream } : false,
   });
   await hub.app.listen({ host: '127.0.0.1', port: 0 });
@@ -274,4 +276,3 @@ export function connectUi(wsBase: string, session: string) {
 
 /** The mini vault of the catalogue fixtures (INDEX.md, 40-automation/repos.txt copied from the vault 2026-10-26). */
 export const FIXTURE_VAULT = fileURLToPath(new URL('../projects/fixtures/vault', import.meta.url));
-export const FIXTURE_MAPPING = fileURLToPath(new URL('../projects/fixtures/mapping.csv', import.meta.url));

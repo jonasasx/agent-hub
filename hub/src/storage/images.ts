@@ -1,6 +1,8 @@
 // Images in the chat (design D19): type by signature, size by header, content-addressed storage.
 import { createHash, randomBytes } from 'node:crypto';
+import type { I18nText } from '@agent-hub/shared';
 import type { Db } from '../db/db.js';
+import { render } from '../i18n.js';
 import { imageDimensions } from '../replication/extract.js';
 import type { ObjectStore } from './objectStore.js';
 
@@ -30,19 +32,19 @@ export class ImageError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
-    message: string,
+    readonly i18n: I18nText,
   ) {
-    super(message);
+    super(render(i18n));
   }
 }
 
 /** Checks an image and stores it as blobs/<sha256> (once), readable by the user. */
 export async function storeImage(db: Db, store: ObjectStore, userId: string, bytes: Buffer): Promise<StoredImage> {
   const mime = sniffImage(bytes);
-  if (!mime) throw new ImageError(415, 'not_image', 'Это не изображение PNG, JPEG, GIF или WebP');
+  if (!mime) throw new ImageError(415, 'not_image', { key: 'hub.blobs.notPng' });
   const dims = imageDimensions(bytes);
-  if (!dims) throw new ImageError(415, 'not_image', 'Не удалось прочитать размер изображения');
-  if (dims.width > MAX_IMAGE_SIDE || dims.height > MAX_IMAGE_SIDE) throw new ImageError(422, 'image_too_large', `Изображение больше ${MAX_IMAGE_SIDE} px по стороне`);
+  if (!dims) throw new ImageError(415, 'not_image', { key: 'hub.blobs.noDimensions' });
+  if (dims.width > MAX_IMAGE_SIDE || dims.height > MAX_IMAGE_SIDE) throw new ImageError(422, 'image_too_large', { key: 'hub.blobs.sideTooLarge', params: { max: MAX_IMAGE_SIDE } });
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   const known = await db.selectFrom('blobs').select('sha256').where('sha256', '=', sha256).executeTakeFirst();
   if (!known) await store.put(`blobs/${sha256}`, bytes, mime);

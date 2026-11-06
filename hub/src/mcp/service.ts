@@ -6,10 +6,12 @@
 // Вход в удалённый MCP с любого устройства; Защита потока входа MCP; MCP спящей сессии; MCP машины; Права на MCP;
 // Совместимость управления MCP с агентом; Выход из удалённого MCP (mcp-auth-controls A3).
 import type { FastifyBaseLogger } from 'fastify';
+import type { I18nText } from '@agent-hub/shared';
+import { render } from '../i18n.js';
+import { failText } from '../texts.js';
 import {
   MCP_AUTH_CONTROLS_PROTOCOL,
   MCP_PROTOCOL,
-  MCP_TEXTS,
   mcpAuthStartResultSchema,
   mcpProbeResultSchema,
   mcpSnapshotResultSchema,
@@ -50,7 +52,7 @@ const MCP_CALLBACK_KEEP_MAX = 64;
 /** «Войти» of a woken session: its snapshot is read until the server leaves `pending`, at most this long. */
 export const MCP_WAKE_SETTLE_MS = 30_000;
 
-export type McpCallbackOutcome = { ok: boolean; error?: string };
+export type McpCallbackOutcome = { ok: boolean; error?: string; errorI18n?: I18nText };
 /** A callback passed to the process (or being passed): the key is the attempt's state. */
 interface CallbackRun {
   userId: string;
@@ -84,22 +86,28 @@ export interface McpServiceOptions {
 }
 
 /** The text of an agent's refusal for the panel (lastError, mcp.auth error). */
-function agentText(err: unknown): string {
-  if (err instanceof HttpError) return err.message;
+function agentText(err: unknown): I18nText {
+  if (err instanceof HttpError) return err.i18n ?? rawText(err.message);
   if (err instanceof CommandError) {
-    if (err.code === 'mcp_auth_unsupported') return MCP_TEXTS.authUnsupported;
-    if (err.code === 'mcp_auth_state_mismatch') return MCP_TEXTS.stateMismatch;
-    if (err.code === 'timeout') return 'Агент не ответил вовремя';
-    if (err.code === 'disconnected') return 'Машина отключилась';
-    if (err.code === 'not_running') return 'Процесс сессии не запущен';
-    if (err.code === 'not_implemented') return MCP_TEXTS.agentOutdated;
-    return err.message.slice(0, 1000) || err.code;
+    if (err.code === 'mcp_auth_unsupported') return { key: 'hub.mcp.authUnsupported' };
+    if (err.code === 'mcp_auth_state_mismatch') return { key: 'hub.mcp.stateMismatch' };
+    if (err.code === 'timeout') return { key: 'hub.sessions.agentTimeout' };
+    if (err.code === 'disconnected') return { key: 'hub.sessions.runnerDisconnected' };
+    if (err.code === 'not_running') return { key: 'hub.mcp.processNotRunning' };
+    if (err.code === 'not_implemented') return { key: 'hub.mcp.agentOutdated' };
+    return rawText(err.message.slice(0, 1000) || err.code);
   }
-  return err instanceof Error ? err.message.slice(0, 1000) : String(err);
+  return rawText(err instanceof Error ? err.message.slice(0, 1000) : String(err));
 }
 
+/** `error` (English, for older clients) and `errorI18n` of an mcp.auth message. */
+const errOf = (i: I18nText): { error: string; errorI18n: I18nText } => failText(i);
+
 /** The agent's sign-in address failed the schema (not https, http other than localhost, too long). */
-export const MCP_AUTH_URL_REFUSED = 'Адрес входа от агента отклонён: нужен https (http — только для localhost)';
+export const MCP_AUTH_URL_REFUSED: I18nText = { key: 'hub.mcp.authUrlRefused' };
+
+/** An already readable text (the agent's own English message) as a key. */
+const rawText = (text: string): I18nText => ({ key: 'hub.mcp.raw', params: { text } });
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
@@ -117,7 +125,7 @@ export class McpService {
   /** Hub session id → servers whose «Войти» waits for the woken process to settle (afterWakeAuth); an exit cancels it. */
   private readonly settling = new Map<string, Set<string>>();
   private readonly probeAt = new Map<string, number>();
-  private readonly probeErrors = new Map<string, string>();
+  private readonly probeErrors = new Map<string, I18nText>();
   private readonly running = new Set<Promise<unknown>>();
   private readonly timer: NodeJS.Timeout | null = null;
 
@@ -167,12 +175,17 @@ export class McpService {
     return st;
   }
 
-  private setPending(sessionId: string, server: string, pending: McpPendingAction | undefined, lastError?: string | null): void {
+  private setPending(sessionId: string, server: string, pending: McpPendingAction | undefined, lastError?: I18nText | null): void {
     const st = this.stateOf(sessionId, server);
     if (pending) st.pending = pending;
     else delete st.pending;
-    if (lastError === null) delete st.lastError;
-    else if (lastError !== undefined) st.lastError = lastError;
+    if (lastError === null) {
+      delete st.lastError;
+      delete st.lastErrorI18n;
+    } else if (lastError !== undefined) {
+      st.lastError = render(lastError, 'en');
+      st.lastErrorI18n = lastError;
+    }
   }
 
   private isPending(sessionId: string, server: string): boolean {
@@ -211,7 +224,8 @@ export class McpService {
       online: this.o.agents.isOnline(runner.id),
       probing: this.probing.has(runner.id),
       probeAvailableAt: last !== undefined ? new Date(last + (this.o.probeMinMs ?? MCP_PROBE_MIN_MS)) : null,
-      probeError: this.probeErrors.get(runner.id) ?? null,
+      probeError: this.probeErrors.has(runner.id) ? render(this.probeErrors.get(runner.id)!, 'en') : null,
+      probeErrorI18n: this.probeErrors.get(runner.id) ?? null,
       now: this.now(),
     });
   }
@@ -261,7 +275,7 @@ export class McpService {
     const f = this.flows.find(s.id, p.server);
     if (f && this.flows.remove(f)) {
       // the agent's text is English and technical: the panel gets the spec's text
-      this.send(s.user_id, { type: 'mcp.auth', sessionId: s.id, server: p.server, flow: null, result: p.ok ? 'ok' : 'failed', ...(p.ok ? {} : { error: MCP_TEXTS.notConnectedAfterSignIn }) });
+      this.send(s.user_id, { type: 'mcp.auth', sessionId: s.id, server: p.server, flow: null, result: p.ok ? 'ok' : 'failed', ...(p.ok ? {} : errOf({ key: 'hub.mcp.notConnectedAfterSignIn' })) });
       await this.o.sessions.upsert(s.id);
     }
     await this.emit(s.id);
@@ -272,11 +286,11 @@ export class McpService {
     const s = await findSessionByClaudeId(this.o.db, runnerId, claudeSessionId);
     if (!s) return;
     for (const f of this.flows.removeSession(s.id)) {
-      this.send(s.user_id, { type: 'mcp.auth', sessionId: s.id, server: f.server, flow: null, result: 'process_exited', error: MCP_TEXTS.processExited });
+      this.send(s.user_id, { type: 'mcp.auth', sessionId: s.id, server: f.server, flow: null, result: 'process_exited', ...errOf({ key: 'hub.mcp.processExited' }) });
     }
     // a «Войти» still waiting for the woken process to settle: the wait ends here, the start is not sent
     for (const server of this.settling.get(s.id) ?? []) {
-      this.send(s.user_id, { type: 'mcp.auth', sessionId: s.id, server, flow: null, result: 'process_exited', error: MCP_TEXTS.processExited });
+      this.send(s.user_id, { type: 'mcp.auth', sessionId: s.id, server, flow: null, result: 'process_exited', ...errOf({ key: 'hub.mcp.processExited' }) });
     }
     this.settling.delete(s.id);
     const m = this.states.get(s.id);
@@ -285,7 +299,7 @@ export class McpService {
     if (m) {
       for (const [server, st] of m) {
         if (st.pending === 'wake') continue;
-        if (st.pending) this.setPending(s.id, server, undefined, 'Процесс сессии завершился');
+        if (st.pending) this.setPending(s.id, server, undefined, { key: 'hub.mcp.processEnded' });
         else m.delete(server);
       }
       if (!m.size) this.states.delete(s.id);
@@ -304,8 +318,8 @@ export class McpService {
   /** 409 agent_outdated (protocol < 1.7), 409 not_hub_managed. */
   private async gate(s: SessionRow): Promise<RunnerRow> {
     const runner = await getRunner(this.o.db, s.runner_id);
-    if (!runner || !protocolAtLeast(runner.protocol_version, MCP_PROTOCOL)) throw new HttpError(409, 'agent_outdated', MCP_TEXTS.agentOutdated);
-    if (!s.is_hub_managed) throw new HttpError(409, 'not_hub_managed', MCP_TEXTS.notHubManaged);
+    if (!runner || !protocolAtLeast(runner.protocol_version, MCP_PROTOCOL)) throw new HttpError(409, 'agent_outdated', { key: 'hub.mcp.agentOutdated' });
+    if (!s.is_hub_managed) throw new HttpError(409, 'not_hub_managed', { key: 'hub.mcp.notHubManaged' });
     return runner;
   }
 
@@ -319,13 +333,13 @@ export class McpService {
     const rows = Array.isArray(s.mcp_servers) ? s.mcp_servers : null;
     if (!rows) return null;
     const row = rows.find(r => r.name === server);
-    if (!row) throw new HttpError(422, 'mcp_unknown_server', `Сервер ${server.slice(0, 200)} не найден в сессии`);
+    if (!row) throw new HttpError(422, 'mcp_unknown_server', { key: 'hub.mcp.unknownServer', params: { server: server.slice(0, 200) } });
     return row;
   }
 
   private conn(runnerId: string) {
     const c = this.o.agents.get(runnerId);
-    if (!c) throw new HttpError(409, 'runner_offline', 'Машина не в сети');
+    if (!c) throw new HttpError(409, 'runner_offline', { key: 'hub.sessions.runnerOffline' });
     return c;
   }
 
@@ -358,7 +372,7 @@ export class McpService {
           },
           async (err: unknown) => {
             this.waking.delete(s.id);
-            this.setPending(s.id, server, undefined, `Сессия не поднялась: ${agentText(err)}`);
+            this.setPending(s.id, server, undefined, { key: 'hub.mcp.wakeFailed', params: { error: render(agentText(err), 'en') } });
             await this.emit(s.id);
           },
         ),
@@ -386,7 +400,7 @@ export class McpService {
       await this.apply(s, r.snapshot);
       return r.snapshot;
     } catch (err) {
-      this.o.log.warn({ sessionId: s.id, err: agentText(err) }, 'mcp status refresh failed');
+      this.o.log.warn({ sessionId: s.id, err: render(agentText(err), 'en') }, 'mcp status refresh failed');
       return null;
     }
   }
@@ -396,7 +410,7 @@ export class McpService {
     const view = await this.o.sessions.withOwnedSession(userId, id, async s => {
       await this.gate(s);
       const row = this.knownServer(s, server);
-      if (row && row.status === 'disabled' && action === 'reconnect') throw new HttpError(422, 'invalid_request', 'Сервер выключен — сначала включите его');
+      if (row && row.status === 'disabled' && action === 'reconnect') throw new HttpError(422, 'invalid_request', { key: 'hub.mcp.serverDisabled' });
       if (this.isPending(s.id, server)) return this.viewOf(s);
       this.o.log.info({ sessionId: s.id, server, action }, 'mcp action');
       // «Переподключить» of a sleeping session: the new process connects its servers itself — the status after 2 s
@@ -432,10 +446,10 @@ export class McpService {
         if (cancelled()) return;
         const row = snap?.servers.find(x => x.name === server);
         if (snap && !row) {
-          const text = `Сервер ${server.slice(0, 200)} не найден в сессии`;
+          const text: I18nText = { key: 'hub.mcp.unknownServer', params: { server: server.slice(0, 200) } };
           this.o.log.info({ sessionId: s.id, server, code: 'mcp_unknown_server' }, 'mcp sign-in refused');
           this.setPending(s.id, server, undefined, text);
-          this.send(s.user_id, { type: 'mcp.auth', sessionId: s.id, server, flow: null, result: 'failed', error: text });
+          this.send(s.user_id, { type: 'mcp.auth', sessionId: s.id, server, flow: null, result: 'failed', ...errOf(text) });
           await this.emit(s.id);
           return;
         }
@@ -454,7 +468,7 @@ export class McpService {
       this.setPending(s.id, server, undefined, null);
       await this.apply(s, r.snapshot);
     } catch (err) {
-      this.o.log.info({ sessionId: s.id, server, action, err: agentText(err) }, 'mcp action failed');
+      this.o.log.info({ sessionId: s.id, server, action, err: render(agentText(err), 'en') }, 'mcp action failed');
       this.setPending(s.id, server, undefined, agentText(err));
       await this.emit(s.id);
     }
@@ -465,7 +479,7 @@ export class McpService {
     const view = await this.o.sessions.withOwnedSession(userId, id, async s => {
       await this.gate(s);
       const row = this.knownServer(s, server);
-      if (row && !canAuthOf(row)) throw new HttpError(422, 'mcp_auth_unsupported', 'Вход есть только у удалённых серверов (http, sse)');
+      if (row && !canAuthOf(row)) throw new HttpError(422, 'mcp_auth_unsupported', { key: 'hub.mcp.signInRemoteOnly' });
       if (this.isPending(s.id, server)) return this.viewOf(s);
       this.o.log.info({ sessionId: s.id, server }, 'mcp sign-in requested');
       // a woken process connects its servers itself: the sign-in starts once this server left `pending`
@@ -495,7 +509,7 @@ export class McpService {
       );
       if (!parsed.success) {
         const badUrl = parsed.error.issues.some(i => i.path[0] === 'authUrl');
-        throw new HttpError(502, 'bad_agent_reply', badUrl ? MCP_AUTH_URL_REFUSED : 'Агент вернул некорректный ответ на запрос входа');
+        throw new HttpError(502, 'bad_agent_reply', badUrl ? MCP_AUTH_URL_REFUSED : { key: 'hub.mcp.badAuthReply' });
       }
       const r = parsed.data;
       // a snapshot stored while the agent was answering (needs-auth after the CLI dropped the token) counts as «left»
@@ -524,9 +538,9 @@ export class McpService {
       await this.o.sessions.upsert(s.id);
     } catch (err) {
       const text = agentText(err);
-      this.o.log.info({ sessionId: s.id, server, err: text }, 'mcp sign-in refused');
+      this.o.log.info({ sessionId: s.id, server, err: render(text, 'en') }, 'mcp sign-in refused');
       this.setPending(s.id, server, undefined, text);
-      this.send(s.user_id, { type: 'mcp.auth', sessionId: s.id, server, flow: null, result: 'failed', error: text });
+      this.send(s.user_id, { type: 'mcp.auth', sessionId: s.id, server, flow: null, result: 'failed', ...errOf(text) });
     }
     await this.emit(s.id);
   }
@@ -540,14 +554,14 @@ export class McpService {
     try {
       u = new URL(raw.trim());
     } catch {
-      throw new HttpError(400, 'bad_callback_url', 'Это не адрес страницы — скопируйте адрес из строки браузера целиком');
+      throw new HttpError(400, 'bad_callback_url', { key: 'hub.mcp.callbackNotUrl' });
     }
     const local = u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1') && f.callbackPort !== undefined && Number(u.port) === f.callbackPort;
     const hub = `${u.origin}${u.pathname}` === this.redirectUri;
     if (!local && !hub) {
-      throw new HttpError(400, 'bad_callback_url', f.callbackPort !== undefined ? `Адрес должен начинаться с http://localhost:${f.callbackPort}/` : 'Адрес не от страницы входа');
+      throw new HttpError(400, 'bad_callback_url', f.callbackPort !== undefined ? { key: 'hub.mcp.callbackMustStart', params: { port: f.callbackPort } } : { key: 'hub.mcp.callbackNotFromPage' });
     }
-    if (u.searchParams.get('state') !== f.state || (!u.searchParams.get('code') && !u.searchParams.get('error'))) throw new HttpError(400, 'bad_callback_url', MCP_TEXTS.stateMismatch);
+    if (u.searchParams.get('state') !== f.state || (!u.searchParams.get('code') && !u.searchParams.get('error'))) throw new HttpError(400, 'bad_callback_url', { key: 'hub.mcp.stateMismatch' });
     return u;
   }
 
@@ -556,7 +570,7 @@ export class McpService {
     return this.o.sessions.withOwnedSession(userId, id, async s => {
       await this.gate(s);
       const f = this.flows.find(s.id, server);
-      if (!f) throw new HttpError(404, 'no_auth_flow', 'Попытка входа не найдена — нажмите «Войти» ещё раз');
+      if (!f) throw new HttpError(404, 'no_auth_flow', { key: 'hub.mcp.noAuthFlow' });
       const u = this.checkCallbackUrl(f, callbackUrl);
       this.setPending(s.id, server, 'auth', null);
       return this.accepted(s, () => this.track(this.runCallback(f, u.toString())));
@@ -614,19 +628,20 @@ export class McpService {
     try {
       const r = mcpSnapshotResultSchema.parse(await this.conn(f.runnerId).request('mcp.auth.callback', { sessionId: f.claudeSessionId, server: f.server, callbackUrl }, this.t.callback));
       const ok = !providerError && r.snapshot.servers.find(x => x.name === f.server)?.status === 'connected';
-      out = ok ? { ok } : { ok, error: providerError ?? MCP_TEXTS.notConnectedAfterSignIn };
-      this.setPending(f.sessionId, f.server, undefined, ok ? null : out.error);
-      if (this.flows.remove(f)) this.send(f.userId, { type: 'mcp.auth', sessionId: f.sessionId, server: f.server, flow: null, result: ok ? 'ok' : 'failed', ...(ok ? {} : { error: out.error! }) });
+      const failure: I18nText = providerError ? rawText(providerError) : { key: 'hub.mcp.notConnectedAfterSignIn' };
+      out = ok ? { ok } : { ok, ...errOf(failure) };
+      this.setPending(f.sessionId, f.server, undefined, ok ? null : failure);
+      if (this.flows.remove(f)) this.send(f.userId, { type: 'mcp.auth', sessionId: f.sessionId, server: f.server, flow: null, result: ok ? 'ok' : 'failed', ...(ok ? {} : errOf(failure)) });
       await this.apply({ id: f.sessionId, runner_id: f.runnerId }, r.snapshot);
     } catch (err) {
-      const text = providerError ?? agentText(err);
-      out = { ok: false, error: text };
+      const text: I18nText = providerError ? rawText(providerError) : agentText(err);
+      out = { ok: false, ...errOf(text) };
       this.setPending(f.sessionId, f.server, undefined, text);
       if (err instanceof CommandError && err.code === 'mcp_auth_state_mismatch') {
         // the attempt keeps waiting (the CLI's own rule)
-        this.send(f.userId, { type: 'mcp.auth', sessionId: f.sessionId, server: f.server, flow: flowView(f), error: MCP_TEXTS.stateMismatch });
+        this.send(f.userId, { type: 'mcp.auth', sessionId: f.sessionId, server: f.server, flow: flowView(f), ...errOf({ key: 'hub.mcp.stateMismatch' }) });
       } else if (this.flows.remove(f)) {
-        this.send(f.userId, { type: 'mcp.auth', sessionId: f.sessionId, server: f.server, flow: null, result: 'failed', error: text });
+        this.send(f.userId, { type: 'mcp.auth', sessionId: f.sessionId, server: f.server, flow: null, result: 'failed', ...errOf(text) });
       }
       await this.emit(f.sessionId);
     }
@@ -643,9 +658,9 @@ export class McpService {
   async logout(userId: string, id: string, server: string): Promise<McpSessionView> {
     const view = await this.o.sessions.withOwnedSession(userId, id, async s => {
       const runner = await this.gate(s);
-      if (!protocolAtLeast(runner.protocol_version, MCP_AUTH_CONTROLS_PROTOCOL)) throw new HttpError(409, 'agent_outdated', MCP_TEXTS.agentOutdated);
+      if (!protocolAtLeast(runner.protocol_version, MCP_AUTH_CONTROLS_PROTOCOL)) throw new HttpError(409, 'agent_outdated', { key: 'hub.mcp.agentOutdated' });
       const row = this.knownServer(s, server);
-      if (row && !canAuthOf(row)) throw new HttpError(422, 'mcp_auth_unsupported', 'Выход есть только у удалённых серверов (http, sse)');
+      if (row && !canAuthOf(row)) throw new HttpError(422, 'mcp_auth_unsupported', { key: 'hub.mcp.signOutRemoteOnly' });
       if (this.isPending(s.id, server)) return this.viewOf(s);
       this.o.log.info({ sessionId: s.id, server }, 'mcp sign-out requested');
       return this.accepted(
@@ -689,13 +704,8 @@ export class McpService {
       this.o.log.info({ sessionId: s.id, server }, 'mcp sign-out done');
       await this.apply(s, r.snapshot);
     } catch (err) {
-      const text =
-        err instanceof CommandError && err.code === 'mcp_auth_unsupported'
-          ? err.message.startsWith('Выход')
-            ? err.message.slice(0, 1000)
-            : MCP_TEXTS.logoutUnsupported.replace('<сервер>', server.slice(0, 200))
-          : agentText(err);
-      this.o.log.info({ sessionId: s.id, server, err: text }, 'mcp sign-out failed');
+      const text: I18nText = err instanceof CommandError && err.code === 'mcp_auth_unsupported' ? { key: 'hub.mcp.logoutUnsupported', params: { server: server.slice(0, 200) } } : agentText(err);
+      this.o.log.info({ sessionId: s.id, server, err: render(text, 'en') }, 'mcp sign-out failed');
       this.setPending(s.id, server, undefined, text);
       await this.emit(s.id);
     }
@@ -705,7 +715,7 @@ export class McpService {
 
   private async owned(userId: string, runnerId: string): Promise<RunnerRow> {
     const r = await getOwnedRunner(this.o.db, userId, runnerId);
-    if (!r) throw new HttpError(404, 'runner_not_found', 'Машина не найдена');
+    if (!r) throw new HttpError(404, 'runner_not_found', { key: 'hub.sessions.runnerNotFound' });
     return r;
   }
 
@@ -717,16 +727,16 @@ export class McpService {
   /** POST /api/runners/:id/mcp/probe → 202; 409 runner_offline | agent_outdated | probe_busy; 429 probe_too_soon. */
   async probe(userId: string, runnerId: string): Promise<McpMachineView> {
     const r = await this.owned(userId, runnerId);
-    if (!protocolAtLeast(r.protocol_version, MCP_PROTOCOL)) throw new HttpError(409, 'agent_outdated', MCP_TEXTS.agentOutdated);
+    if (!protocolAtLeast(r.protocol_version, MCP_PROTOCOL)) throw new HttpError(409, 'agent_outdated', { key: 'hub.mcp.agentOutdated' });
     const conn = this.o.agents.get(r.id);
-    if (!conn) throw new HttpError(409, 'runner_offline', `${r.name} не в сети`);
-    if (this.probing.has(r.id)) throw new HttpError(409, 'probe_busy', 'Проверка уже идёт');
+    if (!conn) throw new HttpError(409, 'runner_offline', { key: 'hub.sessions.runnerNamedOffline', params: { name: r.name } });
+    if (this.probing.has(r.id)) throw new HttpError(409, 'probe_busy', { key: 'hub.mcp.probeBusy' });
     const now = this.now().getTime();
     const last = this.probeAt.get(r.id);
     const min = this.o.probeMinMs ?? MCP_PROBE_MIN_MS;
     if (last !== undefined && now - last < min) {
       const sec = Math.ceil((last + min - now) / 1000);
-      throw new HttpError(429, 'probe_too_soon', `Проверить снова можно через ${sec} с`, { retryAfter: String(sec) });
+      throw new HttpError(429, 'probe_too_soon', { key: 'hub.mcp.probeTooSoon', params: { sec } }, { retryAfter: String(sec) });
     }
     this.probeAt.set(r.id, now);
     this.probing.add(r.id);
@@ -738,9 +748,9 @@ export class McpService {
           await storeMachineServers(this.o.db, r.id, res.snapshot, 'probe');
           this.probeErrors.delete(r.id);
         } catch (err) {
-          const text = err instanceof CommandError && err.code === 'mcp_probe_busy' ? 'Проверка уже идёт на машине' : agentText(err);
+          const text: I18nText = err instanceof CommandError && err.code === 'mcp_probe_busy' ? { key: 'hub.mcp.probeBusyMachine' } : agentText(err);
           this.probeErrors.set(r.id, text);
-          this.o.log.warn({ runnerId: r.id, err: text }, 'mcp machine probe failed');
+          this.o.log.warn({ runnerId: r.id, err: render(text, 'en') }, 'mcp machine probe failed');
         } finally {
           this.probing.delete(r.id);
           await this.emitMachine(r.id);

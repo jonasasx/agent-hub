@@ -47,6 +47,7 @@ import { McpRegistryService, registerMcpRegistryApi } from './mcp/registry.js';
 import { PeersService, type PeersServiceOptions } from './peers/service.js';
 import { registerPeersApi } from './http/peers.js';
 import { setKeycloakLabel } from './http/pages.js';
+import { tx } from './texts.js';
 
 export interface HubDeps {
   config: Config;
@@ -70,7 +71,7 @@ export interface HubDeps {
   /** Tests: statfs of the data volume, the Telegram sender and the disk check period (default 10 min; 0 — off). */
   ops?: { stat?: StatFn; send?: SendTelegram; diskCheckMs?: number };
   /** Tests: the catalogue check period (default 60 s; 0 — loaded once) and the recompute debounce (default 2 s). */
-  projects?: { catalogCheckMs?: number; debounceMs?: number; classifier?: ProjectClassifier };
+  projects?: { debounceMs?: number; classifier?: ProjectClassifier };
   /** Tests: limits and timeouts of the file explorer routes (tool-windows-file-explorer). */
   files?: Partial<import('./http/files.js').FsRouteOptions>;
   /** Tests: how long handoff.generate may take (default 120 s). */
@@ -85,6 +86,8 @@ export interface HubDeps {
   peers?: Partial<Pick<PeersServiceOptions, 'pairLimit' | 'senderLimit' | 'windowMs' | 'now'>>;
   /** Tests: the fetch of the ElevenLabs client (dictation, change voice-input). */
   voice?: { fetch?: typeof fetch };
+  /** Tests: the language of a request without a header, a profile language or Accept-Language (default en, change i18n D10). */
+  defaultLocale?: import('@agent-hub/shared').Locale;
   /** Defaults to a pino logger at config.LOG_LEVEL. */
   logger?: boolean | object;
 }
@@ -209,20 +212,8 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
   });
   const store = deps.store ?? (config.S3_BUCKET_DATA ? new S3Store(config.S3_BUCKET_DATA, config.AWS_REGION, config.S3_PREFIX) : undefined);
   if (!store) app.log.warn('S3_BUCKET_DATA is not set: transcripts of other sessions are not replicated');
-  // Project catalogue and classification (D9, M4): the vault mounted read-only, re-read when INDEX.md, repos.txt or the
-  // restructuring table change; a change re-matches the touches and reclassifies unpinned sessions.
-  const catalog = new ProjectCatalog({
-    db,
-    log: app.log.child({ part: 'projects' }),
-    vaultDir: config.VAULT_DIR ?? null,
-    legacyFile: config.LEGACY_PATHS_FILE ?? null,
-    vaultRemotes: config.VAULT_REMOTES.split(',')
-      .map(x => x.trim())
-      .filter(Boolean),
-    onChanged: async (userIds, orphans) => {
-      await projects.rematch(userIds, orphans);
-    },
-  });
+  // Legacy project groups and classification (D9, M4): `projects` rows from the database only (catalog-db-session-context).
+  const catalog = new ProjectCatalog({ db, log: app.log.child({ part: 'projects' }) });
   const projects: ProjectService = new ProjectService({
     db,
     catalog,
@@ -232,13 +223,11 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
       const row = await getSession(db, sessionId);
       if (!row) return;
       const v = await sessions.upsert(sessionId);
-      if (projectId) ui.broadcast(row.user_id, { type: 'toast', kind: 'project_auto', sessionId, title: v.title, text: `Проект определён: ${v.title || 'сессия'} → ${v.project.title}` });
+      if (projectId)
+        ui.broadcast(row.user_id, { type: 'toast', kind: 'project_auto', sessionId, title: v.title, ...tx('hub.app.toastProjectAuto', { title: v.title || 'session', project: v.project.title }) });
     },
     onChanged: async sessionId => {
       await sessions.upsert(sessionId).catch(() => undefined);
-    },
-    onBulkChanged: async userIds => {
-      for (const u of userIds) ui.broadcast(u, { type: 'projects.changed' });
     },
   });
   // the classifier runs on the utility runner through the handoff one-shot; `handoff` is created further below
@@ -254,7 +243,7 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
     );
   const detection = new CatalogDetection({ db, config, projects, classifier, changed: id => sessions.upsert(id), log: app.log.child({ part: 'projects' }) });
   projects.setCatalogDetection(detection);
-  await catalog.start(deps.projects?.catalogCheckMs ?? 60_000);
+  await catalog.load();
   // claude-subscriptions: the registry of subscriptions (tokens decrypted only to build a command to an agent)
   const subscriptions = new SubscriptionService({
     db,
@@ -280,7 +269,7 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
   });
 
   const providers = { google: deps.oidc, keycloak: deps.oidcKeycloak };
-  registerAuth(app, { config, db, oidc: providers, limits, onSessionEnded: hash => ui.closeAuthSession(hash) });
+  registerAuth(app, { config, db, oidc: providers, limits, onSessionEnded: hash => ui.closeAuthSession(hash), ...(deps.defaultLocale ? { defaultLocale: deps.defaultLocale } : {}) });
   // Desktop app (change desktop-app): login through the system browser and the update feed.
   registerDesktopAuth(app, { config, db, oidc: providers, limits });
   // Change multi-user (task 5.4): the agent build and the installers.
@@ -305,6 +294,7 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
       user: { id: user.id, email: user.email, role: user.role, name: user.name, provider: user.provider },
       vapidPublicKey: config.VAPID_PUBLIC_KEY || null,
       voiceInput: !!config.ELEVENLABS_API_KEY,
+      locale: user.locale ?? null,
     };
   });
 
@@ -572,7 +562,6 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
       sessions.close();
       sessions.replication?.close();
       clearInterval(merge);
-      catalog.stop();
       projects.stop();
       await projects.flush();
       if (diskTimer) clearInterval(diskTimer);

@@ -7,11 +7,13 @@ import { useEffect, useState } from 'react';
 import { FileIcon, ICON_REFRESH, ICON_UP } from './fileIcons';
 import { FileTree } from './FileTree';
 import { useFiles } from './filesStore';
+import { useT } from '../../i18n';
 import { ancestorsOf, baseName, isInside, samePath } from './paths';
 import { SourceChips } from './SourceChips';
 import { useSource } from './useSource';
 
 export function FilesWindow() {
+  const t = useT();
   const src = useSource();
   const hidden = useFiles(s => s.hidden);
   const reveal = useFiles(s => s.reveal);
@@ -30,8 +32,8 @@ export function FilesWindow() {
     f.setExpanded(target, reveal.dir ? [...chain, reveal.path] : chain);
     f.select(target, reveal.path);
     setFlash(reveal.path);
-    const t = setTimeout(() => setFlash(null), 1400);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setFlash(null), 1400);
+    return () => clearTimeout(timer);
     // the effect follows the request and the source it resolves to
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reveal?.nonce, src?.key, src?.root]);
@@ -44,8 +46,8 @@ export function FilesWindow() {
         </div>
         <div className="fx-tree">
           <div className="fx-state" role="status">
-            <div className="big">Нет машин</div>
-            <div className="muted">Подключите машину, чтобы видеть её файлы</div>
+            <div className="big">{t('files.window.noMachines')}</div>
+            <div className="muted">{t('files.window.noMachinesHint')}</div>
           </div>
         </div>
       </div>
@@ -53,7 +55,7 @@ export function FilesWindow() {
   }
 
   const atHome = !!src.root && !!src.home && samePath(src.root, src.home);
-  const name = !src.root || atHome ? `${src.machineName} · домашняя папка` : baseName(src.root);
+  const name = !src.root || atHome ? t('files.window.homeNamed', { machine: src.machineName }) : baseName(src.root);
   return (
     <div className="fx-panel">
       <div className="fx-fp">
@@ -69,25 +71,25 @@ export function FilesWindow() {
           <button
             type="button"
             className="btn sm ghost"
-            title={src.up ? `Подняться на уровень выше: ${src.up}` : 'Выше домашней папки подняться нельзя'}
-            aria-label="Выше"
+            title={src.up ? t('files.window.upTitle', { path: src.up }) : t('files.window.upDisabled')}
+            aria-label={t('files.window.upLabel')}
             disabled={!src.up}
             aria-disabled={!src.up}
             onClick={() => src.up && useFiles.getState().liftRoot(src)}
           >
-            {ICON_UP} выше
+            {ICON_UP} {t('files.window.up')}
           </button>
           <button
             type="button"
             className={`btn sm ghost icon fx-hid${hidden ? ' on' : ''}`}
             aria-pressed={hidden}
-            title="Скрытые файлы"
-            aria-label="Скрытые файлы"
+            title={t('files.window.hidden')}
+            aria-label={t('files.window.hidden')}
             onClick={() => useFiles.getState().setHidden(!hidden)}
           >
             .*
           </button>
-          <button type="button" className="btn sm ghost icon" title="Обновить" aria-label="Обновить" onClick={() => useFiles.getState().refresh(src)}>
+          <button type="button" className="btn sm ghost icon" title={t('files.window.refresh')} aria-label={t('files.window.refresh')} onClick={() => useFiles.getState().refresh(src)}>
             {ICON_REFRESH}
           </button>
         </div>

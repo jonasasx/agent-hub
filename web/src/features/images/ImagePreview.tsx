@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as RPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { create } from 'zustand';
+import { useT } from '../../i18n';
 import { useDialog } from '../ui/a11y';
 import { blobUrl, imageCaption, type ImageRef } from './format';
 import { MAX_SCALE, canPan, clampOffset, clampScale, fitScale, stepScale, wheelFactor, zoomAt, type Offset, type Size } from './zoom';
@@ -83,6 +84,7 @@ export function sessionPics(el: HTMLElement): { pics: Pic[]; index: number } | n
 
 /** A preview with its caption; place is reserved by width/height before the image arrives. */
 export function ImagePreview({ pic, onOpen, label }: { pic: Pic; onOpen: (el: HTMLElement) => void; label: string }) {
+  const t = useT();
   const [attempt, setAttempt] = useState(0);
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -109,7 +111,7 @@ export function ImagePreview({ pic, onOpen, label }: { pic: Pic; onOpen: (el: HT
     return (
       <span className="img-prev failed" role="group" aria-label={label}>
         <span className="img-missing" style={{ aspectRatio: ratio }}>
-          <span>Изображение недоступно</span>
+          <span>{t('chat.images.unavailable')}</span>
           <button
             type="button"
             className="btn"
@@ -118,7 +120,7 @@ export function ImagePreview({ pic, onOpen, label }: { pic: Pic; onOpen: (el: HT
               setAttempt(attempt + 1);
             }}
           >
-            Повторить
+            {t('chat.images.retry')}
           </button>
         </span>
         {pic.caption && <span className="img-cap">{pic.caption}</span>}
@@ -134,7 +136,7 @@ export function ImagePreview({ pic, onOpen, label }: { pic: Pic; onOpen: (el: HT
         }}
         className={`img-open${loaded ? ' loaded' : ''}`}
         onClick={e => onOpen(e.currentTarget)}
-        aria-label={`Открыть ${label.toLowerCase()}`}
+        aria-label={t('chat.images.open', { label: label.toLowerCase() })}
         aria-busy={!loaded}
       >
         <img ref={img} src={src} alt="" loading="lazy" decoding="async" width={pic.width} height={pic.height} style={box.img} onLoad={onLoaded} onError={() => setFailed(true)} />
@@ -146,6 +148,7 @@ export function ImagePreview({ pic, onOpen, label }: { pic: Pic; onOpen: (el: HT
 
 /** The images of one message or tool result; the lightbox steps through all images of the session, this group outside a chat. */
 export function ImageGroup({ pics, className = '' }: { pics: Pic[]; className?: string }) {
+  const t = useT();
   if (!pics.length) return null;
   return (
     // spans: a group may stand inside a Markdown paragraph
@@ -154,7 +157,7 @@ export function ImageGroup({ pics, className = '' }: { pics: Pic[]; className?: 
         <ImagePreview
           key={`${p.src}:${i}`}
           pic={p}
-          label={pics.length > 1 ? `Изображение ${i + 1} из ${pics.length}` : 'Изображение'}
+          label={pics.length > 1 ? t('chat.images.labelOf', { n: i + 1, total: pics.length }) : t('chat.images.label')}
           onOpen={el => {
             const session = sessionPics(el);
             if (session) openLightbox(session.pics, session.index);
@@ -195,6 +198,7 @@ const SWIPE_PX = 50;
 const EPS = 1e-6;
 
 function LightboxDialog({ pics, index }: { pics: Pic[]; index: number }) {
+  const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState(false);
@@ -392,25 +396,25 @@ function LightboxDialog({ pics, index }: { pics: Pic[]; index: number }) {
   const zoomed = scale > fit + EPS;
 
   return createPortal(
-    <div className="lightbox" role="dialog" aria-modal="true" aria-label={pics.length > 1 ? `Изображение ${index + 1} из ${pics.length}` : 'Изображение'} ref={ref}>
+    <div className="lightbox" role="dialog" aria-modal="true" aria-label={pics.length > 1 ? t('chat.images.labelOf', { n: index + 1, total: pics.length }) : t('chat.images.label')} ref={ref}>
       <div className="lb-bar">
         <span className="lb-caption">
           {pics.length > 1 && `${index + 1} / ${pics.length} · `}
           {pic.caption}
         </span>
         {known && !failed && (
-          <span className="lb-zoom" role="group" aria-label="Масштаб">
-            <button type="button" className="btn" aria-label="Уменьшить" disabled={!zoomed} onClick={() => zoomTo(stepScale(scale, -1, fit))}>
+          <span className="lb-zoom" role="group" aria-label={t('chat.images.zoom')}>
+            <button type="button" className="btn" aria-label={t('chat.images.zoomOut')} disabled={!zoomed} onClick={() => zoomTo(stepScale(scale, -1, fit))}>
               −
             </button>
             <output className="lb-pct" aria-live="polite">
               {Math.round(scale * 100)}%
             </output>
-            <button type="button" className="btn" aria-label="Увеличить" disabled={scale >= Math.max(MAX_SCALE, fit) - EPS} onClick={() => zoomTo(stepScale(scale, 1, fit))}>
+            <button type="button" className="btn" aria-label={t('chat.images.zoomIn')} disabled={scale >= Math.max(MAX_SCALE, fit) - EPS} onClick={() => zoomTo(stepScale(scale, 1, fit))}>
               +
             </button>
             <button type="button" className="btn" disabled={!zoom || !zoomed} onClick={() => setZoom(null)}>
-              Вписать
+              {t('chat.images.fit')}
             </button>
             <button type="button" className="btn" disabled={Math.abs(scale - 1) < EPS} onClick={() => zoomTo(1)}>
               100%
@@ -419,11 +423,11 @@ function LightboxDialog({ pics, index }: { pics: Pic[]; index: number }) {
         )}
         {pic.original && (
           <a className="btn" href={pic.original} target="_blank" rel="noopener noreferrer">
-            Открыть оригинал
+            {t('chat.images.openOriginal')}
           </a>
         )}
         <button type="button" className="btn" onClick={close}>
-          Закрыть
+          {t('chat.images.close')}
         </button>
       </div>
       <div className="lb-stage" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onCancel}>
@@ -436,7 +440,7 @@ function LightboxDialog({ pics, index }: { pics: Pic[]; index: number }) {
           }}
         >
           {failed ? (
-            <div className="img-missing">Изображение недоступно</div>
+            <div className="img-missing">{t('chat.images.unavailable')}</div>
           ) : (
             <img
               key={pic.src}
@@ -464,10 +468,10 @@ function LightboxDialog({ pics, index }: { pics: Pic[]; index: number }) {
         </div>
         {pics.length > 1 && (
           <>
-            <button type="button" className="icon-btn lb-prev" aria-label="Предыдущее" disabled={index === 0} onClick={() => go(-1)}>
+            <button type="button" className="icon-btn lb-prev" aria-label={t('chat.images.prev')} disabled={index === 0} onClick={() => go(-1)}>
               ←
             </button>
-            <button type="button" className="icon-btn lb-next" aria-label="Следующее" disabled={index === pics.length - 1} onClick={() => go(1)}>
+            <button type="button" className="icon-btn lb-next" aria-label={t('chat.images.next')} disabled={index === pics.length - 1} onClick={() => go(1)}>
               →
             </button>
           </>

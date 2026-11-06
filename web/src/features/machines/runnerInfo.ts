@@ -4,21 +4,21 @@
  * the hint, «агент устарел» / «обновляется» marks for an online machine.
  */
 import type { RunnerView } from '../../api/types';
+import { fmt, t } from '../../i18n';
 
 /** "06:41" for today, "24.10 06:41" for earlier days, in the browser time zone. */
 export function formatLastSeen(iso: string | null, now: Date = new Date()): string | null {
   if (!iso) return null;
   const d = new Date(iso);
-  const time = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const time = fmt.time(d);
   const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
   if (sameDay) return time;
-  const date = d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
-  return `${date} ${time}`;
+  return `${fmt.dayMonth(d)} ${time}`;
 }
 
 export function runnerStatusText(r: RunnerView): string {
-  if (r.incompatible && !r.online) return 'несовместимая версия агента';
-  return r.online ? 'в сети' : 'не в сети';
+  if (r.incompatible && !r.online) return t('machines.status.incompatible');
+  return r.online ? t('machines.status.online') : t('machines.status.offline');
 }
 
 /** The mark next to an online machine's name: the agent is outdated, or its update is running; null — none. */
@@ -28,15 +28,15 @@ export function agentMark(r: RunnerView): 'outdated' | 'updating' | null {
   return r.outdated ? 'outdated' : null;
 }
 
-export const MARK_TEXT = { outdated: 'агент устарел', updating: 'обновляется' } as const;
+export const markText = (mark: 'outdated' | 'updating'): string => (mark === 'updating' ? t('machines.mark.updating') : t('machines.mark.outdated'));
 
 export function runnerTooltip(r: RunnerView, now: Date = new Date()): string {
-  const parts = [r.os ?? 'ОС неизвестна'];
-  if (r.agentVersion) parts.push(`агент ${r.agentVersion}`);
+  const parts = [r.os ?? t('machines.tip.osUnknown')];
+  if (r.agentVersion) parts.push(t('machines.tip.agent', { version: r.agentVersion }));
   if (!r.online) {
-    if (r.incompatible) parts.push('несовместимая версия агента');
+    if (r.incompatible) parts.push(t('machines.status.incompatible'));
     const seen = formatLastSeen(r.lastSeenAt, now);
-    parts.push(seen ? `не в сети с ${seen}` : 'ещё не подключалась');
+    parts.push(seen ? t('machines.tip.offlineSince', { since: seen }) : t('machines.tip.neverConnected'));
   }
   return parts.join(' · ');
 }

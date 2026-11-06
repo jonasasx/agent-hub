@@ -10,11 +10,12 @@
 import { useState } from 'react';
 import type { Provider, RunnerView } from '../../api/types';
 import { useStore } from '../../store';
-import { CONNECTORS_HINT, activeSubs, choiceWarning, formField, initialChoice, optionLabel, outdatedText, subName } from './model';
+import { t, useT } from '../../i18n';
+import { connectorsHint, activeSubs, choiceWarning, formField, initialChoice, optionLabel, outdatedText, subName } from './model';
 
 /** «Подписка «X» выведена — выберите другую»: the explicit choice left the active list (QA on prod, 6.6). */
 export function goneText(name: string | null): string {
-  return `Подписка «${name ?? 'выбранная'}» выведена — выберите другую`;
+  return t('subscriptions.field.gone', { name: name ?? t('subscriptions.field.chosen') });
 }
 
 /**
@@ -64,9 +65,9 @@ export function useSubscriptionChoice(
 /** The text under the field after 422: which subscription left and which one the field shows now. */
 function unavailableText(subs: ReturnType<typeof useStore.getState>['subs'], gone: string, now: string): string {
   const goneName = subName(subs, gone);
-  const head = goneName ? `Подписка «${goneName}» недоступна` : 'Подписка недоступна';
-  if (now === gone || !now) return `${head} — список обновляется, выберите другую`;
-  return `${head} — выбрана «${subName(subs, now) ?? now}», проверьте и запустите снова`;
+  const head = goneName ? t('subscriptions.field.unavailableNamed', { name: goneName }) : t('subscriptions.field.unavailable');
+  if (now === gone || !now) return t('subscriptions.field.listRefreshing', { head });
+  return t('subscriptions.field.nowChosen', { head, name: subName(subs, now) ?? now });
 }
 
 export function SubscriptionField({
@@ -86,15 +87,16 @@ export function SubscriptionField({
   error?: string;
   unavailableId?: string;
 }) {
+  const t = useT();
   const subs = useStore(s => s.subs);
   const field = formField(subs, runner, provider);
   if (field === 'hidden') return null;
   if (field === 'outdated')
     return (
       <div className="field">
-        <span className="lbl">Подписка</span>
+        <span className="lbl">{t('subscriptions.field.label')}</span>
         <span className="hint sub-outdated" role="note">
-          {outdatedText(runner?.name ?? 'машине')}
+          {outdatedText(runner?.name ?? t('subscriptions.field.machineFallback'))}
         </span>
       </div>
     );
@@ -110,11 +112,11 @@ export function SubscriptionField({
   const describedBy = [errText ? `${id}-err` : null, warning ? `${id}-warn` : null, provider === 'claude' && subs?.connectorsHint ? `${id}-hint` : null].filter(Boolean).join(' ') || undefined;
   return (
     <div className="field">
-      <label htmlFor={id}>Подписка</label>
+      <label htmlFor={id}>{t('subscriptions.field.label')}</label>
       <select id={id} className="input" value={value} onChange={e => onChange(e.target.value)} aria-invalid={!!errText} aria-describedby={describedBy}>
         {gone && (
           <option value={value} disabled>
-            {`${subName(subs, value) ?? 'Подписка'} (выведена)`}
+            {t('subscriptions.field.retiredOption', { name: subName(subs, value) ?? t('subscriptions.field.label') })}
           </option>
         )}
         {active.map(s => (
@@ -135,7 +137,7 @@ export function SubscriptionField({
       )}
       {provider === 'claude' && subs?.connectorsHint && (
         <span className="hint" id={`${id}-hint`}>
-          {CONNECTORS_HINT}
+          {connectorsHint()}
         </span>
       )}
     </div>

@@ -15,15 +15,14 @@ import type { ObjectStore } from './storage/objectStore.js';
 
 const USAGE = `Usage:
   cli.js migrate
-  cli.js runner:list                runners of every user with their owner (machines are added in the UI: «Подключить машину»)
+  cli.js runner:list                runners of every user with their owner (machines are added in the UI: "Connect a machine")
   cli.js runner:set-hostname <id> <hostname>   the machine's hostname before its agent connects (import:drive maps <sid>__<host>.jsonl by it);
                                                unique among the runners of the same owner
   cli.js events:backfill-blobs [--dry-run]   move big tool-result copies of stored events to S3 (D4), idempotent
   cli.js sessions:reclassify [--dry-run]     recompute session sources from main transcripts (D5), idempotent
   cli.js projects:reclassify [--dry-run] [--fresh]
                                                rebuild path signals from events and decide projects (D9), pinned sessions untouched;
-                                               --fresh: from scratch, without the stored auto project (no hysteresis);
-                                               needs VAULT_DIR (and LEGACY_PATHS_FILE, VAULT_REMOTES)
+                                               --fresh: from scratch, without the stored auto project (no hysteresis)
   cli.js subagents:backfill [--session <id>] [--dry-run]
                                                the registry of subagents for history: raw copies in S3,
                                                sessions without them from events; one session at a time, idempotent
@@ -134,14 +133,7 @@ export async function runCli(argv: string[], db: Db, out: (s: string) => void, e
     case 'projects:reclassify': {
       const { values } = parseArgs({ args: rest, options: { 'dry-run': { type: 'boolean' }, fresh: { type: 'boolean' } } });
       const dryRun = values['dry-run'] ?? false;
-      if (!env.VAULT_DIR) out('warning: VAULT_DIR is not set: only «Vault» and «Знания» exist');
       const r = await reclassifyProjects(db, {
-        vaultDir: env.VAULT_DIR ?? null,
-        legacyFile: env.LEGACY_PATHS_FILE ?? null,
-        vaultRemotes: (env.VAULT_REMOTES ?? '')
-          .split(',')
-          .map(x => x.trim())
-          .filter(Boolean),
         dryRun,
         fresh: values.fresh ?? false,
         log: out,
@@ -162,22 +154,12 @@ export async function runCli(argv: string[], db: Db, out: (s: string) => void, e
         return 2;
       }
       const drive = deps.drive ?? (await googleDriveClient(tokenFile!));
-      // Signals and projects of the imported sessions, when the vault is mounted (D9 p. 5).
+      // Signals and projects of the imported sessions (D9 p. 5), by the `projects` rows of the database.
       let projects: ProjectService | undefined;
-      let catalog: ProjectCatalog | undefined;
-      if (env.VAULT_DIR && !values['dry-run']) {
+      if (!values['dry-run']) {
         const quiet = { info: () => undefined, warn: () => undefined, error: () => undefined } as never;
-        catalog = new ProjectCatalog({
-          db,
-          log: quiet,
-          vaultDir: env.VAULT_DIR,
-          legacyFile: env.LEGACY_PATHS_FILE ?? null,
-          vaultRemotes: (env.VAULT_REMOTES ?? '')
-            .split(',')
-            .map(x => x.trim())
-            .filter(Boolean),
-        });
-        await catalog.start(0);
+        const catalog = new ProjectCatalog({ db, log: quiet });
+        await catalog.load();
         projects = new ProjectService({ db, catalog, log: quiet, debounceMs: 0 });
       }
       const dryRun = values['dry-run'] ?? false;
@@ -191,7 +173,6 @@ export async function runCli(argv: string[], db: Db, out: (s: string) => void, e
         log: out,
         ...(projects ? { projects } : {}),
       });
-      catalog?.stop();
       for (const l of formatReport(r, dryRun)) out(l);
       return r.errors.length ? 1 : 0;
     }

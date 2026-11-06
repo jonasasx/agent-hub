@@ -3,6 +3,7 @@
  * `POST /auth/desktop/exchange` from the main process with `Origin` = PUBLIC_URL (the existing guard, no exemption).
  */
 import type { DesktopExchangeError, DesktopExchangeRequest, DesktopExchangeResponse } from '@agent-hub/shared';
+import { dt } from './i18n.js';
 
 export type ExchangeResult = { ok: true; sessionToken: string; expiresAt: string } | { ok: false; error: DesktopExchangeError | 'network' | 'bad_response'; status: number };
 
@@ -39,17 +40,17 @@ export async function exchangeCode(fetchFn: FetchLike, hubUrl: string, userAgent
 export function exchangeErrorText(r: Extract<ExchangeResult, { ok: false }>): string {
   switch (r.error) {
     case 'invalid_grant':
-      return 'Код входа истёк или уже использован.';
+      return dt('desktop.exchange.invalidGrant');
     case 'forbidden_account':
-      return 'Этот аккаунт не допущен к хабу.';
+      return dt('desktop.exchange.forbiddenAccount');
     case 'forbidden_origin':
-      return 'Хаб отклонил запрос приложения (Origin).';
+      return dt('desktop.exchange.forbiddenOrigin');
     case 'invalid_request':
-      return 'Хаб не принял запрос входа.';
+      return dt('desktop.exchange.invalidRequest');
     case 'network':
-      return 'Нет связи с хабом.';
+      return dt('desktop.exchange.network');
     default:
-      return `Неожиданный ответ хаба (HTTP ${r.status}).`;
+      return dt('desktop.exchange.unexpected', { status: r.status });
   }
 }
 

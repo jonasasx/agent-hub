@@ -1,5 +1,6 @@
 import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest';
-import { autoReply, connectFakeAgent, connectUi, NO_AUTO_REPLY, PUBLIC_URL, startTestHub, waitFor, type FakeAgent, type TestHub } from '../test/harness.js';
+import { autoReply, connectFakeAgent, connectUi, NO_AUTO_REPLY, PUBLIC_URL, startTestHub, waitFor, type FakeAgent, type TestHub, FIXTURE_VAULT } from '../test/harness.js';
+import { seedFixtureVault } from '../test/legacyCatalog.js';
 
 describe('projects-catalog HTTP (integration)', () => {
   let t: TestHub;
@@ -20,6 +21,7 @@ describe('projects-catalog HTTP (integration)', () => {
     await t.addRunner('idle', 'Idle');
     await t.tdb.pool.query(`UPDATE runners SET online=true WHERE id='vm'`);
     cookie = await t.login();
+    await seedFixtureVault(t.tdb.db, t.hub.projects.catalog, FIXTURE_VAULT);
     // A 1.12 agent remains connected but does not negotiate the directory-picker capability.
     agent = connectFakeAgent(t.wsBase, token, { protocol: '1.12' });
     autoReply(agent, (type, payload) => {
@@ -105,7 +107,7 @@ describe('projects-catalog HTTP (integration)', () => {
     expect((await api('PUT', `/api/projects/${legacy.id}/hidden`)).statusCode).toBe(200);
     await api('DELETE', `/api/projects/${legacy.id}/hidden`);
     expect((await api('PATCH', `/api/projects/${legacy.id}/color`, { colorKey: 'rose' })).statusCode).toBe(200);
-    await t.hub.projects.catalog.reload(true);
+    await t.hub.projects.catalog.load();
     expect(t.hub.projects.catalog.row(legacy.id)?.colorKey).toBe('rose');
     expect((await t.tdb.pool.query(`SELECT 1 FROM session_projects WHERE project_id=$1`, [created.id])).rowCount).toBe(0);
     expect((await t.tdb.pool.query(`SELECT 1 FROM project_bindings WHERE project_id=$1`, [created.id])).rowCount).toBe(0);

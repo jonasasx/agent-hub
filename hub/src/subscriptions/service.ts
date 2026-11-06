@@ -54,7 +54,7 @@ function sameTokenVersion(tokenAt: Date) {
 }
 
 /** Name of the machine login in usage and notes. */
-export const MACHINE_LOGIN = 'Вход машины';
+export const MACHINE_LOGIN = 'Machine login';
 const DAY_MS = 86_400_000;
 
 export class SubscriptionService {
@@ -96,7 +96,7 @@ export class SubscriptionService {
   }
 
   private requireKey(): Buffer {
-    if (!this.key) throw new HttpError(503, 'subscriptions_disabled', 'Хранение токенов не настроено: задайте SUBSCRIPTION_TOKEN_KEY');
+    if (!this.key) throw new HttpError(503, 'subscriptions_disabled', { key: 'hub.subscriptions.disabled' });
     return this.key;
   }
 
@@ -107,12 +107,12 @@ export class SubscriptionService {
 
   private async own(userId: string, id: string): Promise<SubscriptionMeta> {
     const s = await getSubscription(this.o.db, userId, id);
-    if (!s) throw new HttpError(404, 'not_found', 'Подписка не найдена');
+    if (!s) throw new HttpError(404, 'not_found', { key: 'hub.subscriptions.notFound' });
     return s;
   }
 
   private nameTaken(): HttpError {
-    return new HttpError(409, 'name_taken', 'Подписка с таким именем уже есть');
+    return new HttpError(409, 'name_taken', { key: 'hub.subscriptions.nameTaken' });
   }
 
   /** POST /api/subscriptions: at the end of the registry, auto switch off unless asked. */
@@ -271,7 +271,7 @@ export class SubscriptionService {
   async order(userId: string, ids: string[]): Promise<SubscriptionsResponse> {
     const active = (await listSubscriptions(this.o.db, userId)).filter(s => s.retired_at === null).map(s => s.id);
     const want = new Set(ids.map(i => i.toLowerCase()));
-    if (want.size !== active.length || !active.every(a => want.has(a))) throw new HttpError(422, 'bad_order', 'Порядок должен перечислять все активные подписки');
+    if (want.size !== active.length || !active.every(a => want.has(a))) throw new HttpError(422, 'bad_order', { key: 'hub.subscriptions.badOrder' });
     await this.o.db.transaction().execute(async tx => {
       for (const [i, id] of ids.entries()) await tx.updateTable('subscriptions').set({ position: i }).where('id', '=', id.toLowerCase()).where('user_id', '=', userId).execute();
     });
@@ -312,7 +312,7 @@ export class SubscriptionService {
   /** An explicitly chosen subscription for a launch: own and active, else 422 subscription_unavailable. */
   async requireActive(userId: string, id: string, provider: Provider = 'claude'): Promise<SubscriptionMeta> {
     const s = await getSubscription(this.o.db, userId, id);
-    if (!s || s.retired_at !== null || s.provider !== provider) throw new HttpError(422, 'subscription_unavailable', 'Подписка недоступна — выберите другую');
+    if (!s || s.retired_at !== null || s.provider !== provider) throw new HttpError(422, 'subscription_unavailable', { key: 'hub.subscriptions.unavailable' });
     return s;
   }
 
@@ -347,7 +347,7 @@ export class SubscriptionService {
 
   /** The token of a subscription: 409 token_unreadable when it does not decrypt with the hub's key. */
   async cred(s: Pick<SubscriptionMeta, 'id' | 'name'>): Promise<SubscriptionCredFull> {
-    if (!this.key) throw new HttpError(409, 'token_unreadable', `Токен подписки ${s.name} не расшифрован — замените токен`);
+    if (!this.key) throw new HttpError(409, 'token_unreadable', { key: 'hub.subscriptions.tokenUnreadable', params: { name: s.name } });
     const row = await this.o.db.selectFrom('subscriptions').select(['token_enc', 'token_updated_at', 'provider']).where('id', '=', s.id).executeTakeFirst();
     try {
       if (!row) throw new TokenUnreadableError();
@@ -355,7 +355,7 @@ export class SubscriptionService {
     } catch (err) {
       if (err instanceof TokenUnreadableError) {
         this.o.log.warn({ subscriptionId: s.id }, 'subscription token unreadable');
-        throw new HttpError(409, 'token_unreadable', `Токен подписки ${s.name} не расшифрован — замените токен`);
+        throw new HttpError(409, 'token_unreadable', { key: 'hub.subscriptions.tokenUnreadable', params: { name: s.name } });
       }
       throw err;
     }
@@ -430,7 +430,7 @@ export class SubscriptionService {
   async usage(userId: string, q: { from?: string | undefined; to?: string | undefined }): Promise<SubscriptionUsageResponse> {
     const to = q.to ? new Date(q.to) : this.now();
     const from = q.from ? new Date(q.from) : new Date(to.getTime() - 7 * DAY_MS);
-    if (!(from < to) || to.getTime() - from.getTime() > 366 * DAY_MS) throw new HttpError(422, 'bad_period', 'Период — не больше 366 дней, начало раньше конца');
+    if (!(from < to) || to.getTime() - from.getTime() > 366 * DAY_MS) throw new HttpError(422, 'bad_period', { key: 'hub.subscriptions.badPeriod' });
     const rows = await this.o.db
       .selectFrom('session_turns as t')
       .leftJoin('subscriptions as s', 's.id', 't.subscription_id')

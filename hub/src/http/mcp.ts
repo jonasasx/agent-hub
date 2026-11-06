@@ -12,6 +12,7 @@ import type { McpService } from '../mcp/service.js';
 import { MCP_CALLBACK_PATH } from '../mcp/service.js';
 import type { McpRegistryService } from '../mcp/registry.js';
 import { authenticate } from './auth.js';
+import { render, tr } from '../i18n.js';
 import { mcpFlowNotFoundPage, mcpSignInFailedPage, mcpSignInWaitingPage, mcpSignedInPage } from './pages.js';
 
 function parseBody<T extends z.ZodType>(schema: T, v: unknown): z.infer<T> {
@@ -93,15 +94,15 @@ export function registerMcpApi(app: FastifyInstance, deps: { db: Db; mcp: McpSer
     const prev = mcp.callbackOf(user.id, state);
     if (prev) {
       const href = `/s/${prev.sessionId}?mcp=1`;
-      if (!prev.done) return html(reply, 200, mcpSignInWaitingPage(prev.server));
-      if (prev.done.ok) return html(reply, 200, mcpSignedInPage(prev.server, href));
-      return html(reply, 200, mcpSignInFailedPage(prev.done.error ?? 'неизвестная ошибка', href));
+      if (!prev.done) return html(reply, 200, mcpSignInWaitingPage(req.locale, prev.server));
+      if (prev.done.ok) return html(reply, 200, mcpSignedInPage(req.locale, prev.server, href));
+      return html(reply, 200, mcpSignInFailedPage(req.locale, (prev.done.errorI18n ? render(prev.done.errorI18n, req.locale) : prev.done.error) ?? tr(req.locale).text('hub.page.unknownError'), href));
     }
     const f = mcp.flowFor(user.id, state);
-    if (!f || (typeof q.code !== 'string' && typeof q.error !== 'string')) return html(reply, 403, mcpFlowNotFoundPage());
+    if (!f || (typeof q.code !== 'string' && typeof q.error !== 'string')) return html(reply, 403, mcpFlowNotFoundPage(req.locale));
     const sessionHref = `/s/${f.sessionId}?mcp=1`;
     const r = await mcp.runCallback(f, `${mcp.redirectUri}${req.url.slice(req.url.indexOf('?'))}`);
-    if (r.ok) return html(reply, 200, mcpSignedInPage(f.server, sessionHref));
-    return html(reply, 200, mcpSignInFailedPage(r.error ?? 'неизвестная ошибка', sessionHref));
+    if (r.ok) return html(reply, 200, mcpSignedInPage(req.locale, f.server, sessionHref));
+    return html(reply, 200, mcpSignInFailedPage(req.locale, (r.errorI18n ? render(r.errorI18n, req.locale) : r.error) ?? tr(req.locale).text('hub.page.unknownError'), sessionHref));
   });
 }

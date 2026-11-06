@@ -16,14 +16,14 @@ export function registerBlobs(app: FastifyInstance, deps: { db: Db; store: Objec
   const { db, store, sessions } = deps;
 
   const needStore = (): ObjectStore => {
-    if (!store) throw new HttpError(503, 'storage_unavailable', 'Хранилище изображений не настроено');
+    if (!store) throw new HttpError(503, 'storage_unavailable', { key: 'hub.blobs.storageUnavailable' });
     return store;
   };
 
   /** A blob of the user: immutable by content, cached forever, never sniffed or run by the browser. */
   app.get('/api/blobs/:sha256', async (req, reply) => {
     const { sha256 } = req.params as { sha256: string };
-    if (!SHA.test(sha256)) throw new HttpError(404, 'not_found', 'Объект не найден');
+    if (!SHA.test(sha256)) throw new HttpError(404, 'not_found', { key: 'hub.blobs.notFound' });
     const own = await db
       .selectFrom('blob_owners')
       .innerJoin('blobs', 'blobs.sha256', 'blob_owners.sha256')
@@ -31,12 +31,12 @@ export function registerBlobs(app: FastifyInstance, deps: { db: Db; store: Objec
       .where('blob_owners.sha256', '=', sha256)
       .where('blob_owners.user_id', '=', req.user!.id)
       .executeTakeFirst();
-    if (!own) throw new HttpError(404, 'not_found', 'Объект не найден');
+    if (!own) throw new HttpError(404, 'not_found', { key: 'hub.blobs.notFound' });
     const etag = `"${sha256}"`;
     reply.header('ETag', etag).header('Cache-Control', 'private, max-age=31536000, immutable').header('X-Content-Type-Options', 'nosniff');
     if (req.headers['if-none-match'] === etag) return reply.code(304).send();
     const body = await needStore().get(own.s3_key);
-    if (!body) throw new HttpError(404, 'not_found', 'Объект не найден в хранилище');
+    if (!body) throw new HttpError(404, 'not_found', { key: 'hub.blobs.notInStorage' });
     // Not an image (text, PDF): shown as an attachment-free plain resource that cannot run anything.
     const image = own.mime.startsWith('image/') && own.mime !== 'image/svg+xml';
     return reply
@@ -53,12 +53,12 @@ export function registerBlobs(app: FastifyInstance, deps: { db: Db; store: Objec
     /** An image for a message (D19 step 3): signature, ≤8000 px, sha256, blobs/, uploads. */
     scope.post('/api/uploads', { bodyLimit: UPLOAD_LIMIT }, async (req, reply): Promise<UploadResponse> => {
       const body = req.body;
-      if (!Buffer.isBuffer(body) || body.length === 0) throw new HttpError(415, 'not_image', 'Пришлите изображение PNG, JPEG, GIF или WebP');
+      if (!Buffer.isBuffer(body) || body.length === 0) throw new HttpError(415, 'not_image', { key: 'hub.blobs.notImage' });
       let img;
       try {
         img = await storeImage(db, needStore(), req.user!.id, body);
       } catch (err) {
-        if (err instanceof ImageError) throw new HttpError(err.status, err.code, err.message);
+        if (err instanceof ImageError) throw new HttpError(err.status, err.code, err.i18n);
         throw err;
       }
       await db

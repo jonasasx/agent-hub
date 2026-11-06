@@ -207,7 +207,7 @@ describe('sessions API (integration)', () => {
       expect(lastCmd('session.interrupt')).toEqual({ sessionId: s.id });
       expect((r.json() as { session: SessionView }).session.status).toBe('waiting');
       const page = (await api('GET', `/api/sessions/${s.id}/events`)).json() as EventsPage;
-      expect(page.events.some(e => e.kind === 'note' && e.text === 'Ход прерван')).toBe(true);
+      expect(page.events.some(e => e.kind === 'note' && e.text === 'Turn interrupted')).toBe(true);
     });
 
     it('PATCH mode and model go to the live process; toast «mode_changed»; idle timeout validated', async () => {
@@ -374,7 +374,7 @@ describe('sessions API (integration)', () => {
       expect(lastCmd('permission.response')).toMatchObject({ requestId, behavior: 'deny' });
       const page = (await api('GET', `/api/sessions/${p.id}/events`)).json() as EventsPage;
       const req = page.events.find(e => e.kind === 'permission');
-      expect(req).toMatchObject({ request: { decision: 'deny', message: 'уснула, не дождавшись разрешения' } });
+      expect(req).toMatchObject({ request: { decision: 'deny', message: 'The session fell asleep without waiting for permission' } });
       expect((await getS(k.id)).status).toBe('working');
       offsetMs = 0;
     });
@@ -400,7 +400,7 @@ describe('sessions API (integration)', () => {
       await waitFor(() => mine().length === 1);
       expect(mine()[0]!.payload).toMatchObject({ sessionId: s.id, prompt: 'какое число я просил запомнить?' });
       const page = (await api('GET', `/api/sessions/${s.id}/events`)).json() as EventsPage;
-      expect(page.events.some(e => e.kind === 'note' && e.text === 'Поднята через resume')).toBe(true);
+      expect(page.events.some(e => e.kind === 'note' && e.text === 'Resumed')).toBe(true);
 
       await t.tdb.pool.query(`UPDATE sessions SET status = 'sleeping', process_alive = false WHERE id = $1`, [s.id]);
       const before = mine().length;
@@ -446,7 +446,7 @@ describe('sessions API (integration)', () => {
         silent.delete('session.resume');
       }
       const page = (await api('GET', `/api/sessions/${s.id}/events`)).json() as EventsPage;
-      expect(page.events.some(e => e.kind === 'note' && e.text.startsWith('Не удалось поднять сессию'))).toBe(true);
+      expect(page.events.some(e => e.kind === 'note' && e.text.startsWith('Could not resume the session'))).toBe(true);
     });
 
     it('read-only: cron → 423; missing directory → 423 and read_only_reason cwd_missing', async () => {
@@ -489,7 +489,7 @@ describe('sessions API (integration)', () => {
       const rank = (x: SessionView) => (x.status === 'permission' || x.unread ? 0 : 1);
       expect(sb.now.map(rank)).toEqual([...sb.now.map(rank)].sort());
       expect(sb.projects).toHaveLength(1);
-      expect(sb.projects[0]!.project).toEqual({ id: null, title: 'Без проекта', colorKey: 'none', path: '' });
+      expect(sb.projects[0]!.project).toEqual({ id: null, title: 'No project', i18n: { key: 'hub.api.noProject' }, colorKey: 'none', path: '' });
       expect(sb.projects[0]!.sessions).toHaveLength(5);
       const total = sb.projects[0]!.total;
       const withCron = (await api('GET', '/api/sidebar?cron=1')).json() as SidebarResponse;
@@ -819,7 +819,7 @@ describe('sessions API (integration)', () => {
       await waitFor(async () => (await getS(s.id)).lastTurnEndAt !== null);
       await new Promise(r => setTimeout(r, 100));
       const page = (await api('GET', `/api/sessions/${s.id}/events`)).json() as EventsPage;
-      expect(page.events.filter(e => e.kind === 'note').map(e => (e as { text: string }).text)).toEqual(['Ход прерван']);
+      expect(page.events.filter(e => e.kind === 'note').map(e => (e as { text: string }).text)).toEqual(['Turn interrupted']);
       // A later failing turn still gets its note.
       agentSend(agent, 'session.result', { sessionId: s.id, subtype: 'error_during_execution', isError: true, durationMs: 1, costUsd: 0, errorText: 'API 529' });
       await waitFor(async () => ((await api('GET', `/api/sessions/${s.id}/events`)).json() as EventsPage).events.some(e => e.kind === 'note' && e.text.includes('API 529')));
@@ -849,8 +849,8 @@ describe('sessions API (integration)', () => {
       // Back without the process (Stop-ScheduledTask killed it): reconcile puts the session to sleep.
       agent = await startAgent([]);
       await waitFor(async () => (await getS(s.id)).status === 'sleeping');
-      const note = await waitFor(async () => (await notes(s.id)).find(n => n.startsWith('Сообщение не доставлено')));
-      expect(note).toBe('Сообщение не доставлено — процесс Claude Code на машине завершился, отправьте ещё раз: «потерянное сообщение»');
+      const note = await waitFor(async () => (await notes(s.id)).find(n => n.startsWith('Message not delivered')));
+      expect(note).toBe('Message not delivered: the Claude Code process on the machine ended. Send it again: «потерянное сообщение»');
       // «Повторить» with the same clientUuid: resume carries the message exactly once.
       expect((await api('POST', `/api/sessions/${s.id}/messages`, { text: 'потерянное сообщение', clientUuid })).statusCode).toBe(202);
       expect((await api('POST', `/api/sessions/${s.id}/messages`, { text: 'потерянное сообщение', clientUuid })).statusCode).toBe(202);
@@ -871,11 +871,11 @@ describe('sessions API (integration)', () => {
         closeAfterOk.delete('session.send');
       }
       // Before any reconnect: the chat already tells the message waits.
-      await waitFor(async () => (await notes(s.id)).includes('HP не в сети — сообщение ожидает доставки: «в офлайн»'));
+      await waitFor(async () => (await notes(s.id)).includes('HP is offline: the message waits for delivery: «в офлайн»'));
       agent = await startAgent([]);
-      await waitFor(async () => (await notes(s.id)).some(n => n.startsWith('Сообщение не доставлено') && n.includes('«в офлайн»')));
+      await waitFor(async () => (await notes(s.id)).some(n => n.startsWith('Message not delivered') && n.includes('«в офлайн»')));
       await new Promise(r => setTimeout(r, 2 * GRACE + 200)); // two more grace periods: no second note
-      expect((await notes(s.id)).filter(n => n.startsWith('Сообщение не доставлено') && n.includes('«в офлайн»'))).toHaveLength(1);
+      expect((await notes(s.id)).filter(n => n.startsWith('Message not delivered') && n.includes('«в офлайн»'))).toHaveLength(1);
       // Structured for «Повторить»: the text, the images and the clientUuid.
       const page = (await api('GET', `/api/sessions/${s.id}/events`)).json() as EventsPage;
       const lost = page.events.find(e => e.kind === 'note' && e.undelivered) as Extract<EventsPage['events'][number], { kind: 'note' }>;
@@ -898,13 +898,13 @@ describe('sessions API (integration)', () => {
       expect((await api('POST', `/api/sessions/${s.id}/messages`, { text: 'быстрый', clientUuid })).statusCode).toBe(202);
       await waitFor(() => got.some(m => m.type === 'session.resume' && m.payload.promptUuid === clientUuid));
       await new Promise(r => setTimeout(r, GRACE + 300)); // past the grace: no note
-      expect((await notes(s.id)).some(n => n.startsWith('Сообщение не доставлено') && n.includes('«быстрый»'))).toBe(false);
+      expect((await notes(s.id)).some(n => n.startsWith('Message not delivered') && n.includes('«быстрый»'))).toBe(false);
       // The resumed process writes the line: «дошло» for the message announced as waiting, no «всё же дошло».
       const rel = `C--Users-alice-vault/${s.id}.jsonl`;
       agentSend(agent, 'repl.chunk', { relPath: rel, kind: 'main', sessionId: s.id, generation: 0, fromLine: 0, fromByte: 0, lines: [userLine(clientUuid, 'быстрый')], endByte: 100 });
       await waitFor(() => got.some(m => m.type === 'repl.ack' && m.payload.relPath === rel));
       await new Promise(r => setTimeout(r, 100));
-      expect((await notes(s.id)).some(n => n.startsWith('Сообщение всё же дошло'))).toBe(false);
+      expect((await notes(s.id)).some(n => n.startsWith('The message did reach the session after all'))).toBe(false);
     });
 
     it('M3c tail: «Повторить» after the note, then the line comes: no «всё же дошло» for the repeat', async () => {
@@ -912,13 +912,13 @@ describe('sessions API (integration)', () => {
       const clientUuid = randomUUID();
       expect((await api('POST', `/api/sessions/${s.id}/messages`, { text: 'повтор', clientUuid })).statusCode).toBe(202);
       agentSend(agent, 'session.exited', { sessionId: s.id, code: 0, reason: 'stopped' });
-      await waitFor(async () => (await notes(s.id)).some(n => n.startsWith('Сообщение не доставлено') && n.includes('«повтор»')));
+      await waitFor(async () => (await notes(s.id)).some(n => n.startsWith('Message not delivered') && n.includes('«повтор»')));
       expect((await api('POST', `/api/sessions/${s.id}/messages`, { text: 'повтор', clientUuid })).statusCode).toBe(202);
       const rel = `C--Users-alice-vault/${s.id}.jsonl`;
       agentSend(agent, 'repl.chunk', { relPath: rel, kind: 'main', sessionId: s.id, generation: 0, fromLine: 0, fromByte: 0, lines: [userLine(clientUuid, 'повтор')], endByte: 100 });
       await waitFor(() => got.some(m => m.type === 'repl.ack' && m.payload.relPath === rel));
       await new Promise(r => setTimeout(r, 100));
-      expect((await notes(s.id)).some(n => n.startsWith('Сообщение всё же дошло'))).toBe(false);
+      expect((await notes(s.id)).some(n => n.startsWith('The message did reach the session after all'))).toBe(false);
     });
 
     it('the agent exits the process while connected: the unconfirmed message gets the note', async () => {
@@ -939,7 +939,7 @@ describe('sessions API (integration)', () => {
       agentSend(agent, 'session.exited', { sessionId: s.id, code: 0, reason: 'stopped' });
       await waitFor(async () => !(await getS(s.id)).processAlive);
       await new Promise(r => setTimeout(r, GRACE + 300));
-      expect((await notes(s.id)).some(n => n.startsWith('Сообщение не доставлено'))).toBe(false);
+      expect((await notes(s.id)).some(n => n.startsWith('Message not delivered'))).toBe(false);
     });
 
     it('no cmd.ok (connection dropped on session.send): 409, the uuid stays unmarked; a line already in the transcript makes the repeat a no-op', async () => {
@@ -984,10 +984,10 @@ describe('sessions API (integration)', () => {
       const clientUuid = randomUUID();
       expect((await api('POST', `/api/sessions/${s.id}/messages`, { text: 'поздно', clientUuid })).statusCode).toBe(202);
       agentSend(agent, 'session.exited', { sessionId: s.id, code: 0, reason: 'stopped' });
-      await waitFor(async () => (await notes(s.id)).some(n => n.startsWith('Сообщение не доставлено')));
+      await waitFor(async () => (await notes(s.id)).some(n => n.startsWith('Message not delivered')));
       const rel = `C--Users-alice-vault/${s.id}.jsonl`;
       agentSend(agent, 'repl.chunk', { relPath: rel, kind: 'main', sessionId: s.id, generation: 0, fromLine: 0, fromByte: 0, lines: [userLine(clientUuid, 'поздно')], endByte: 100 });
-      await waitFor(async () => (await notes(s.id)).includes('Сообщение всё же дошло до сессии: «поздно»'));
+      await waitFor(async () => (await notes(s.id)).includes('The message did reach the session after all: «поздно»'));
       const before = got.filter(m => m.payload.promptUuid === clientUuid).length;
       expect((await api('POST', `/api/sessions/${s.id}/messages`, { text: 'поздно', clientUuid })).statusCode).toBe(202);
       await new Promise(r => setTimeout(r, 100));

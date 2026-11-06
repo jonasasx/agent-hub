@@ -115,8 +115,8 @@ export async function checkDisk(
   const last = await db.selectFrom('alert_state').select('last_sent_at').where('key', '=', DISK_ALERT_KEY).executeTakeFirst();
   if (last && now.getTime() - last.last_sent_at.getTime() < DISK_ALERT_EVERY_MS) return 'suppressed';
   const size = await sql<{ n: string }>`SELECT pg_database_size(current_database()) AS n`.execute(db);
-  const gb = (Number(size.rows[0]!.n) / 1024 ** 3).toLocaleString('ru-RU', { maximumFractionDigits: 1 });
-  const text = `Agent Hub: на ${o.hostLabel} свободно ${Math.floor(pct)}% диска, БД ${gb} ГБ`;
+  const gb = (Number(size.rows[0]!.n) / 1024 ** 3).toLocaleString('en-US', { maximumFractionDigits: 1 });
+  const text = `Agent Hub: ${o.hostLabel} has ${Math.floor(pct)}% of disk free, DB ${gb} GB`;
   if (!(await o.send(text))) return 'failed';
   await db
     .insertInto('alert_state')

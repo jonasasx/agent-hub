@@ -35,6 +35,7 @@ const me = (role: 'admin' | 'user'): MeResponse => ({
       : { id: 'u-ks', email: 'bob@example.com', role, name: 'Борис Волынкина', provider: 'google' },
   vapidPublicKey: null,
   voiceInput: false,
+  locale: null,
 });
 const sidebar = (runners: RunnerView[]): SidebarResponse => ({ now: [], projects: [], runners });
 
@@ -164,7 +165,7 @@ describe('multi-user shell', () => {
     expect(window.location.pathname).toBe('/settings/subscriptions');
     expect(await screen.findByRole('heading', { level: 2, name: 'Подписки' })).toBeInTheDocument();
     const nav = screen.getByRole('navigation', { name: 'Разделы настроек' });
-    expect([...nav.querySelectorAll('button')].map(b => b.textContent)).toEqual(['Машины', 'Подписки', 'Расход', 'Безопасность']);
+    expect([...nav.querySelectorAll('button')].map(b => b.textContent)).toEqual(['Машины', 'Подписки', 'Расход', 'Безопасность', 'Язык']);
     await user.click(screen.getByRole('button', { name: 'Расход' }));
     expect(window.location.pathname).toBe('/settings/usage');
     expect(await screen.findByRole('heading', { level: 2, name: 'Расход' })).toBeInTheDocument();

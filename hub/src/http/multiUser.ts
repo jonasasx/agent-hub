@@ -24,6 +24,7 @@ import type { UiGateway } from '../ui/uiGateway.js';
 import type { HubLimits } from './limits.js';
 import { agentWsUrl, type AgentBuild } from '../runners/agentBuild.js';
 import { HttpError } from '../sessions/service.js';
+import { tr } from '../i18n.js';
 import { SESSION_COOKIE, deleteUserSessions, findSession } from '../auth/sessions.js';
 import { InviteError, createInvite, listAdminUsers, listInvites, listSecurityEvents, logSecurity, revokeInvite, setUserStatus } from '../users/repo.js';
 import {
@@ -48,7 +49,7 @@ function parse<T extends z.ZodType>(schema: T, v: unknown): z.infer<T> {
 
 /** Requirement: Администратор не видит чужие сессии — the role check of /api/admin/*. */
 export async function requireAdmin(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  if (req.user?.role !== 'admin') return reply.code(403).send({ error: 'forbidden', message: 'Только для администратора' });
+  if (req.user?.role !== 'admin') return reply.code(403).send({ error: 'forbidden', message: tr(req.locale).text('hub.users.adminOnly') });
 }
 
 export function installCommands(publicUrl: string, code: string): { unix: string; windows: string } {
@@ -73,7 +74,7 @@ export function registerMultiUser(app: FastifyInstance, deps: { config: Config; 
   /** Requirement: Разделение пространств — another user's runner answers like a missing one. */
   const owned = async (req: FastifyRequest): Promise<RunnerRow> => {
     const r = await getOwnedRunner(db, req.user!.id, idParam(req));
-    if (!r) throw new HttpError(404, 'not_found', 'Машина не найдена');
+    if (!r) throw new HttpError(404, 'not_found', { key: 'hub.sessions.runnerNotFound' });
     return r;
   };
   const detail = async (r: RunnerRow): Promise<RunnerDetail> => ({
@@ -101,7 +102,7 @@ export function registerMultiUser(app: FastifyInstance, deps: { config: Config; 
       const res: CreateInviteResponse = { invite, url: `${config.PUBLIC_URL}/invite/${code}` };
       return reply.code(201).send(res);
     } catch (err) {
-      if (err instanceof InviteError && err.code === 'user_exists') throw new HttpError(409, 'user_exists', 'Пользователь уже есть');
+      if (err instanceof InviteError && err.code === 'user_exists') throw new HttpError(409, 'user_exists', { key: 'hub.users.exists' });
       throw err;
     }
   });
@@ -110,7 +111,8 @@ export function registerMultiUser(app: FastifyInstance, deps: { config: Config; 
     try {
       await revokeInvite(db, idParam(req));
     } catch (err) {
-      if (err instanceof InviteError) throw new HttpError(err.code === 'not_found' ? 404 : 409, err.code, err.code === 'not_found' ? 'Приглашение не найдено' : 'Приглашение уже использовано');
+      if (err instanceof InviteError)
+        throw new HttpError(err.code === 'not_found' ? 404 : 409, err.code, err.code === 'not_found' ? { key: 'hub.users.inviteNotFound' } : { key: 'hub.users.inviteUsed' });
       throw err;
     }
     return reply.code(204).send();
@@ -120,7 +122,7 @@ export function registerMultiUser(app: FastifyInstance, deps: { config: Config; 
 
   const adminUser = async (id: string) => {
     const u = (await listAdminUsers(db, r => agents.isOnline(r))).find(x => x.id === id);
-    if (!u) throw new HttpError(404, 'not_found', 'Пользователь не найден');
+    if (!u) throw new HttpError(404, 'not_found', { key: 'hub.users.notFound' });
     return u;
   };
 
@@ -128,8 +130,8 @@ export function registerMultiUser(app: FastifyInstance, deps: { config: Config; 
   // tokens are refused while the user is disabled), data kept.
   app.post('/api/admin/users/:id/disable', { preHandler: requireAdmin }, async req => {
     const id = idParam(req);
-    if (id === req.user!.id) throw new HttpError(400, 'cannot_disable_self', 'Нельзя отключить себя');
-    if (!(await setUserStatus(db, id, 'disabled'))) throw new HttpError(404, 'not_found', 'Пользователь не найден');
+    if (id === req.user!.id) throw new HttpError(400, 'cannot_disable_self', { key: 'hub.users.cannotDisableSelf' });
+    if (!(await setUserStatus(db, id, 'disabled'))) throw new HttpError(404, 'not_found', { key: 'hub.users.notFound' });
     ui.closeUser(id);
     await deleteUserSessions(db, id);
     agents.revokeUser(id);
@@ -139,7 +141,7 @@ export function registerMultiUser(app: FastifyInstance, deps: { config: Config; 
 
   app.post('/api/admin/users/:id/enable', { preHandler: requireAdmin }, async req => {
     const id = idParam(req);
-    if (!(await setUserStatus(db, id, 'active'))) throw new HttpError(404, 'not_found', 'Пользователь не найден');
+    if (!(await setUserStatus(db, id, 'active'))) throw new HttpError(404, 'not_found', { key: 'hub.users.notFound' });
     req.log.info({ userId: id }, 'user enabled');
     return adminUser(id);
   });
@@ -156,9 +158,9 @@ export function registerMultiUser(app: FastifyInstance, deps: { config: Config; 
     const b = parse(createRunnerRequestSchema, req.body);
     let r: RunnerRow;
     try {
-      r = await createPendingRunner(db, req.user!.id, { name: b.name, os: b.os });
+      r = await createPendingRunner(db, req.user!.id, { name: b.name, os: b.os, defaultName: tr(req.locale)('machines.enroll.defaultName') });
     } catch (err) {
-      if (err instanceof RunnerNameTaken) throw new HttpError(409, 'name_taken', 'Машина с таким именем уже есть');
+      if (err instanceof RunnerNameTaken) throw new HttpError(409, 'name_taken', { key: 'hub.users.machineNameTaken' });
       throw err;
     }
     return reply.code(201).send(await codeResponse(req, r));
@@ -173,10 +175,10 @@ export function registerMultiUser(app: FastifyInstance, deps: { config: Config; 
     try {
       r = await renameRunner(db, req.user!.id, idParam(req), b.name);
     } catch (err) {
-      if (err instanceof RunnerNameTaken) throw new HttpError(409, 'name_taken', 'Машина с таким именем уже есть');
+      if (err instanceof RunnerNameTaken) throw new HttpError(409, 'name_taken', { key: 'hub.users.machineNameTaken' });
       throw err;
     }
-    if (!r) throw new HttpError(404, 'not_found', 'Машина не найдена');
+    if (!r) throw new HttpError(404, 'not_found', { key: 'hub.sessions.runnerNotFound' });
     bus.emit('runner.status', r.user_id, view(r));
     return detail(r);
   });
@@ -184,7 +186,7 @@ export function registerMultiUser(app: FastifyInstance, deps: { config: Config; 
   // «Новый код» and «Переподключить»: the current token keeps working until the agent connects with the new one.
   app.post('/api/runners/:id/enroll-code', async (req): Promise<EnrollCodeResponse> => {
     const r = await owned(req);
-    if (r.state === 'disabled') throw new HttpError(409, 'runner_disabled', 'Машина отключена');
+    if (r.state === 'disabled') throw new HttpError(409, 'runner_disabled', { key: 'hub.users.machineDisabled' });
     return codeResponse(req, r);
   });
 
@@ -192,7 +194,7 @@ export function registerMultiUser(app: FastifyInstance, deps: { config: Config; 
   app.post('/api/runners/:id/disable', async (req): Promise<RunnerDetail> => {
     await owned(req);
     const r = await disableRunner(db, req.user!.id, idParam(req));
-    if (!r) throw new HttpError(404, 'not_found', 'Машина не найдена');
+    if (!r) throw new HttpError(404, 'not_found', { key: 'hub.sessions.runnerNotFound' });
     agents.revoke(r.id);
     bus.emit('runner.status', r.user_id, view(r));
     req.log.info({ runnerId: r.id }, 'runner disabled');
@@ -206,7 +208,7 @@ export function registerMultiUser(app: FastifyInstance, deps: { config: Config; 
     // the check while the first ones are still in redeem.
     if (!limits.enrollBad.hit(req.ip)) {
       req.log.warn({ ip: req.ip }, 'rate limit: enroll');
-      return reply.code(429).send({ error: 'too_many_requests', message: 'Слишком много неверных кодов, подождите минуту' });
+      return reply.code(429).send({ error: 'too_many_requests', message: tr(req.locale).text('hub.users.tooManyCodes') });
     }
     const body = enrollRequestSchema.safeParse(req.body ?? {});
     if (!body.success) return reply.code(400).send({ error: 'invalid_request' });
@@ -214,7 +216,7 @@ export function registerMultiUser(app: FastifyInstance, deps: { config: Config; 
     if (!r.ok) {
       // The value of the code is never logged.
       req.log.warn({ ip: req.ip, error: r.error }, 'enroll refused');
-      const text = { code_used: 'Код уже использован', code_expired: 'Код истёк', code_invalid: 'Код недействителен' }[r.error];
+      const text = tr(req.locale).text({ code_used: 'hub.users.codeUsed', code_expired: 'hub.users.codeExpired', code_invalid: 'hub.users.codeInvalid' }[r.error]);
       return reply.code(410).send({ error: r.error, message: text });
     }
     limits.enrollBad.release(req.ip);

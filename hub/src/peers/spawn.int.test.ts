@@ -4,7 +4,8 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PEER_TEXT_MAX, envelope, parsePeerMessage, type SessionView, type SubagentsResponse } from '@agent-hub/shared';
-import { PUBLIC_URL, connectFakeAgent, connectUi, startTestHub, waitFor, type FakeAgent, type TestHub } from '../test/harness.js';
+import { PUBLIC_URL, connectFakeAgent, connectUi, startTestHub, waitFor, type FakeAgent, type TestHub, FIXTURE_VAULT } from '../test/harness.js';
+import { seedFixtureVault } from '../test/legacyCatalog.js';
 import { REPORT_CUT_NOTE, REPORT_UNAVAILABLE } from './service.js';
 
 const VAULT = 'C:\\Users\\alice\\vault';
@@ -117,6 +118,7 @@ describe('hub subagents (integration)', () => {
     ] as const)
       tok[id] = await t.addRunner(id, name);
     cookie = await t.login();
+    await seedFixtureVault(t.tdb.db, t.hub.projects.catalog, FIXTURE_VAULT);
     agent('x1', tok.x1!, { protocol: '1.12' });
     agent('vm', tok.vm!, { protocol: '1.12', os: 'Ubuntu 24.04', homeDir: '/home/ubuntu', vaultRoot: '/home/ubuntu/vault', providers: [CODEX_OK] });
     agent('old', tok.old!, { protocol: '1.11' });
@@ -219,7 +221,7 @@ describe('hub subagents (integration)', () => {
     const c = await child(P);
     result('x1', c.sid, { subtype: 'error_during_execution', isError: true, errorText: 'процесс упал' });
     await waitFor(async () => (await reports(c.id)).length === 1);
-    expect((await reports(c.id))[0]!.text).toBe('Ход завершился ошибкой: процесс упал');
+    expect((await reports(c.id))[0]!.text).toBe('The turn ended with an error: процесс упал');
   });
 
   it('the child process ends inside the turn: the parent gets a report of it', async () => {

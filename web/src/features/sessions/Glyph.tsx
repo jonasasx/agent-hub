@@ -1,11 +1,13 @@
 // Status glyph (docs/prototype.html glyph()). Requirement: Статусы сессии — «!» permission, dot unread, ring working,
 // grey/red offline.
 import type { DisplayStatus } from '../../api/types';
+import { useT } from '../../i18n';
 import { STATUS_LABEL } from './status';
 
 export function Glyph({ status, unread, label: text }: { status: DisplayStatus; unread: boolean; label?: string }) {
+  const t = useT();
   // UI review M5: a status icon is an image with the status in words for screen readers
-  const label = text ?? (status === 'waiting' && unread ? 'новый ответ' : STATUS_LABEL[status]);
+  const label = text ?? (status === 'waiting' && unread ? t('sessions.status.newReply') : STATUS_LABEL[status]);
   const props = { role: 'img', 'aria-label': label, title: label };
   if (status === 'offline') return <span className="g-off" {...props} />;
   // `external` (S10.1) has the colour of «работает»

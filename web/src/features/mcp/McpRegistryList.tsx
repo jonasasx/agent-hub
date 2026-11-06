@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import type { UserProjectView } from '../../api/types';
 import { McpSegment } from './McpSegment';
 import { MCP_MODE_LABELS, mcpStatusLabel, mcpStatusTone } from './mcpLabels';
+import { fmt, t, useT } from '../../i18n';
 
 interface MachineOption {
   id: string;
@@ -65,16 +66,17 @@ export function McpRegistryList(props: McpRegistryListProps) {
     onRefreshStatus,
     onMachineRegistryToggle,
   } = props;
+  const t = useT();
 
   return (
     <>
       <div className="mcp-registry-actions">
         <button className="btn primary" onClick={onAdd}>
-          Добавить сервер
+          {t('mcp.list.add')}
         </button>
       </div>
       <details className="mcp-import-section">
-        <summary>Импортировать конфигурацию</summary>
+        <summary>{t('mcp.list.importSummary')}</summary>
         <ImportFields
           machines={machines}
           projects={projects}
@@ -106,12 +108,13 @@ export function McpRegistryList(props: McpRegistryListProps) {
 }
 
 function MachineRegistryList({ agents, onToggle }: { agents: McpRegistryStatus['agents']; onToggle: McpRegistryListProps['onMachineRegistryToggle'] }) {
+  const t = useT();
   if (agents.length === 0) return null;
 
   return (
-    <section className="mcp-machine-registry" aria-label="Реестр MCP на машинах">
-      <h3>Реестр MCP на машинах</h3>
-      <p>Настройка действует для новых и возобновляемых сессий. Когда реестр выключен, машина использует локальную конфигурацию MCP.</p>
+    <section className="mcp-machine-registry" aria-label={t('mcp.list.machines.title')}>
+      <h3>{t('mcp.list.machines.title')}</h3>
+      <p>{t('mcp.list.machines.note')}</p>
       {agents.map(agent => (
         <MachineRegistryRow key={agent.machineId} agent={agent} onToggle={onToggle} />
       ))}
@@ -120,15 +123,14 @@ function MachineRegistryList({ agents, onToggle }: { agents: McpRegistryStatus['
 }
 
 function MachineRegistryRow({ agent, onToggle }: { agent: McpRegistryStatus['agents'][number]; onToggle: McpRegistryListProps['onMachineRegistryToggle'] }) {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   const toggle = async (enabled: boolean) => {
     if (enabled) {
       const machineName = agent.machineName || agent.machineId;
-      const confirmed = window.confirm(
-        `Новые и возобновлённые сессии на ${machineName} будут получать MCP только из реестра; локальные .claude.json/.mcp.json и [mcp_servers] Codex перестанут использоваться. Включить?`,
-      );
+      const confirmed = window.confirm(t('mcp.list.machines.confirm', { machine: machineName }));
       if (!confirmed) return;
     }
 
@@ -148,7 +150,7 @@ function MachineRegistryRow({ agent, onToggle }: { agent: McpRegistryStatus['age
       <label>
         <input className="mcp-checkbox" type="checkbox" checked={agent.registryEnabled} disabled={busy} onChange={event => void toggle(event.target.checked)} />
         <span>{agent.machineName || agent.machineId}</span>
-        <small>{agent.online ? 'онлайн' : 'не в сети'}</small>
+        <small>{agent.online ? t('mcp.list.machines.online') : t('mcp.list.machines.offline')}</small>
       </label>
       {error && <small role="alert">{error}</small>}
     </div>
@@ -172,28 +174,29 @@ function ImportFields({
   onProjectChange: (projectId: string) => void;
   onPreview: () => void;
 }) {
+  const t = useT();
   const availableProjects = projects.filter(project => project.bindings.some(binding => binding.runnerId === machineId));
   const canImport = machines.some(machine => machine.id === machineId && machine.online);
 
   return (
     <>
-      {!machineId && <p className="mcp-field-hint">Выберите онлайн-машину для импорта.</p>}
+      {!machineId && <p className="mcp-field-hint">{t('mcp.list.import.pickMachine')}</p>}
       <div className="mcp-import-controls">
         <McpSegment
-          label="Машина для импорта"
+          label={t('mcp.list.import.machineLabel')}
           value={machineId}
           options={machines.map(machine => ({
             value: machine.id,
             label: machine.name,
-            description: machine.online ? 'В сети' : 'Не в сети',
+            description: machine.online ? t('mcp.list.import.online') : t('mcp.list.import.offline'),
             disabled: !machine.online,
           }))}
           onChange={onMachineChange}
         />
         <label>
-          Проект для импорта
+          {t('mcp.list.import.projectLabel')}
           <select className="input" value={projectId} onChange={event => onProjectChange(event.target.value)} disabled={!machineId}>
-            <option value="">Выберите проект</option>
+            <option value="">{t('mcp.list.import.pickProject')}</option>
             {availableProjects.map(project => (
               <option key={project.id} value={project.id}>
                 {project.name}
@@ -202,7 +205,7 @@ function ImportFields({
           </select>
         </label>
         <button className="btn" disabled={!canImport || !projectId} onClick={onPreview}>
-          Предпросмотр импорта
+          {t('mcp.list.import.preview')}
         </button>
       </div>
     </>
@@ -277,14 +280,15 @@ function ServerRow({
   onProjectOverrideClear: McpRegistryListProps['onProjectOverrideClear'];
   onRefreshStatus: McpRegistryListProps['onRefreshStatus'];
 }) {
+  const t = useT();
   const rename = () => {
-    const name = window.prompt('Новое имя сервера', server.name);
+    const name = window.prompt(t('mcp.list.server.renamePrompt'), server.name);
     if (!name || name === server.name) return;
     onRename(server.id, { revision: server.revision, name });
   };
 
   const remove = () => {
-    if (window.confirm(`Удалить сервер ${server.name}?`)) onDelete(server.id, server.revision);
+    if (window.confirm(t('mcp.list.server.deleteConfirm', { name: server.name }))) onDelete(server.id, server.revision);
   };
 
   return (
@@ -295,12 +299,12 @@ function ServerRow({
       </div>
       <p className="mcp-meta">
         {[
-          server.transport === 'stdio' ? '\u041a\u043e\u043c\u0430\u043d\u0434\u0430 (stdio)' : '\u0423\u0434\u0430\u043b\u0451\u043d\u043d\u044b\u0439 HTTP',
+          server.transport === 'stdio' ? t('mcp.list.server.stdio') : t('mcp.list.server.http'),
           MCP_MODE_LABELS[server.mode],
-          server.machineScope.allMachines ? '\u0432\u0441\u0435 \u043c\u0430\u0448\u0438\u043d\u044b' : server.machineScope.machineIds.join(', '),
+          server.machineScope.allMachines ? t('mcp.list.server.allMachines') : server.machineScope.machineIds.join(', '),
         ]
           .filter(Boolean)
-          .join(' \u00b7 ')}
+          .join(' · ')}
       </p>
       {server.url && <code className="mcp-target">{server.url}</code>}
       <SecretList secrets={server.secrets} />
@@ -310,13 +314,13 @@ function ServerRow({
       <ProjectOverrideControl serverId={server.id} projects={projects} onChange={onProjectOverrideChange} onClear={onProjectOverrideClear} />
       <div className="mcp-actions">
         <button className="btn ghost" onClick={() => onToggle(server.id, { revision: server.revision, enabled: !server.enabled })}>
-          {server.enabled ? 'Выключить для всех' : 'Включить для всех'}
+          {server.enabled ? t('mcp.list.server.disableAll') : t('mcp.list.server.enableAll')}
         </button>
         <button className="btn ghost" onClick={rename}>
-          Переименовать
+          {t('mcp.list.server.rename')}
         </button>
         <button className="btn danger" onClick={remove}>
-          Удалить
+          {t('mcp.list.server.delete')}
         </button>
       </div>
     </article>
@@ -332,6 +336,7 @@ function RegistryOAuthControl({
   status: McpRegistryStatus;
   onRefreshStatus: McpRegistryListProps['onRefreshStatus'];
 }) {
+  const t = useT();
   const eligibleAgents = useMemo(
     () =>
       status.agents.filter(agent => {
@@ -400,7 +405,7 @@ function RegistryOAuthControl({
     try {
       const validation = await api.mcpRegistryOAuthValidate(server.id, { machineId });
       if (validation.state !== 'checked') {
-        setError(validation.state === 'needs_auth' ? 'Сервер всё ещё требует входа.' : 'Проверка соединения не прошла.');
+        setError(validation.state === 'needs_auth' ? t('mcp.list.oauth.stillNeedsLogin') : t('mcp.list.oauth.checkFailed'));
         await onRefreshStatus();
         return;
       }
@@ -416,7 +421,7 @@ function RegistryOAuthControl({
   return (
     <section className="mcp-oauth" aria-label={`OAuth ${server.name}`}>
       <label>
-        Машина для входа
+        {t('mcp.list.oauth.machine')}
         <select className="input" value={machineId} disabled={busy || eligibleAgents.length === 0} onChange={event => setMachineId(event.target.value)}>
           {eligibleAgents.map(agent => (
             <option key={agent.machineId} value={agent.machineId}>
@@ -425,10 +430,10 @@ function RegistryOAuthControl({
           ))}
         </select>
       </label>
-      {eligibleAgents.length === 0 && <small role="note">Нет доступной онлайн-машины с поддержкой MCP OAuth.</small>}
+      {eligibleAgents.length === 0 && <small role="note">{t('mcp.list.oauth.noMachine')}</small>}
       <p className="mcp-meta" role="status">
         <span className={`pill mcp-status-pill ${mcpStatusTone(displayedState)}`}>{oauthStatusLabel(displayedState)}</span>
-        {selectedStatus?.expiresAt && selectedStatus.state !== 'needs-login' ? ` · срок токена: ${new Date(selectedStatus.expiresAt).toLocaleString()}` : ''}
+        {selectedStatus?.expiresAt && selectedStatus.state !== 'needs-login' ? t('mcp.list.oauth.tokenExpires', { date: fmt.dateTime(new Date(selectedStatus.expiresAt)) }) : ''}
       </p>
       {selectedStatus?.error && (
         <small className="bad" role="alert">
@@ -442,21 +447,21 @@ function RegistryOAuthControl({
       )}
       {selectedStatus?.state === 'signed-in' && !selectedStatus.connected && (
         <button className="btn primary" disabled={busy || !machineId} onClick={() => void validateAndConnect()}>
-          Проверить и подключить
+          {t('mcp.list.oauth.validate')}
         </button>
       )}
       {selectedStatus?.state === 'signed-in' ? (
         <button className="btn ghost" disabled={busy || !machineId} onClick={() => void revoke()}>
-          Выйти
+          {t('mcp.list.oauth.signOut')}
         </button>
       ) : (
         <button className="btn" disabled={busy || !machineId || selectedStatus?.state === 'pending'} onClick={() => void startLogin()}>
-          {busy ? 'Подготовка входа…' : 'Войти'}
+          {busy ? t('mcp.list.oauth.preparing') : t('mcp.list.oauth.signIn')}
         </button>
       )}
       {!busy && startResponse && popupBlocked && (
         <a className="btn" href={startResponse.authorizationUrl} target="_blank" rel="noreferrer">
-          Открыть страницу входа
+          {t('mcp.list.oauth.openLogin')}
         </a>
       )}
     </section>
@@ -468,6 +473,7 @@ function oauthStatusLabel(state: McpRegistryStatus['oauth'][number]['state']): s
 }
 
 function ServerConfigEditor({ server, machines, onSave }: { server: McpRegistryResponse['servers'][number]; machines: MachineOption[]; onSave: McpRegistryListProps['onUpdateServer'] }) {
+  const t = useT();
   const [mode, setMode] = useState(server.mode);
   const [allMachines, setAllMachines] = useState(server.machineScope.allMachines);
   const [machineIds, setMachineIds] = useState(server.machineScope.machineIds);
@@ -497,34 +503,34 @@ function ServerConfigEditor({ server, machines, onSave }: { server: McpRegistryR
 
   return (
     <details className="mcp-server-editor">
-      <summary>Изменить режим и доступ по машинам</summary>
+      <summary>{t('mcp.list.editor.summary')}</summary>
       <McpSegment
-        label="Режим запуска"
+        label={t('mcp.list.editor.modeLabel')}
         value={mode}
         options={[
-          { value: 'remote', label: MCP_MODE_LABELS.remote, description: 'Подключение к удалённому серверу' },
-          { value: 'machine-shared', label: MCP_MODE_LABELS['machine-shared'], description: 'Один процесс для машины' },
-          { value: 'per-session', label: MCP_MODE_LABELS['per-session'], description: 'Отдельный процесс для сессии' },
+          { value: 'remote', label: MCP_MODE_LABELS.remote, description: t('mcp.list.editor.modeRemote') },
+          { value: 'machine-shared', label: MCP_MODE_LABELS['machine-shared'], description: t('mcp.list.editor.modeShared') },
+          { value: 'per-session', label: MCP_MODE_LABELS['per-session'], description: t('mcp.list.editor.modePerSession') },
         ]}
         onChange={setMode}
       />
       <label>
         <input className="mcp-checkbox" type="checkbox" checked={allMachines} onChange={event => setAllMachines(event.target.checked)} />
-        Все машины
+        {t('mcp.list.editor.allMachines')}
       </label>
       {!allMachines && (
         <fieldset>
-          <legend>Разрешённые машины</legend>
+          <legend>{t('mcp.list.editor.allowed')}</legend>
           {machines.map(machine => (
             <label key={machine.id}>
               <input className="mcp-checkbox" type="checkbox" checked={machineIds.includes(machine.id)} onChange={() => toggleMachine(machine.id)} />
-              {machine.name} {!machine.online && <small>Не в сети</small>}
+              {machine.name} {!machine.online && <small>{t('mcp.list.editor.offline')}</small>}
             </label>
           ))}
         </fieldset>
       )}
       <button className="btn" disabled={!allMachines && machineIds.length === 0} onClick={save}>
-        Сохранить настройки
+        {t('mcp.list.editor.save')}
       </button>
     </details>
   );
@@ -541,6 +547,7 @@ function ProjectOverrideControl({
   onChange: McpRegistryListProps['onProjectOverrideChange'];
   onClear: McpRegistryListProps['onProjectOverrideClear'];
 }) {
+  const t = useT();
   const [projectId, setProjectId] = useState('');
   const [override, setOverride] = useState<McpProjectOverride | null>(null);
   const [loading, setLoading] = useState(false);
@@ -590,9 +597,9 @@ function ProjectOverrideControl({
   return (
     <div className="mcp-project-override">
       <label>
-        Переопределение для проекта
+        {t('mcp.list.override.label')}
         <select className="input" value={projectId} onChange={event => setProjectId(event.target.value)}>
-          <option value="">Выберите проект</option>
+          <option value="">{t('mcp.list.override.pickProject')}</option>
           {projects.map(project => (
             <option key={project.id} value={project.id}>
               {project.name}
@@ -602,30 +609,31 @@ function ProjectOverrideControl({
       </label>
       {projectId && (
         <label>
-          Доступность в проекте
+          {t('mcp.list.override.availability')}
           <select
             className="input"
             value={override?.enabled === null || !override ? 'inherit' : override.enabled ? 'enabled' : 'disabled'}
             disabled={loading || !override}
             onChange={event => void selectOverride(event.target.value)}
           >
-            <option value="inherit">Как в реестре</option>
-            <option value="enabled">Включён в проекте</option>
-            <option value="disabled">Выключен в проекте</option>
+            <option value="inherit">{t('mcp.list.override.inherit')}</option>
+            <option value="enabled">{t('mcp.list.override.enabled')}</option>
+            <option value="disabled">{t('mcp.list.override.disabled')}</option>
           </select>
         </label>
       )}
-      {loading && <small role="status">Загрузка override…</small>}
+      {loading && <small role="status">{t('mcp.list.override.loading')}</small>}
       {error && <small role="alert">{error}</small>}
     </div>
   );
 }
 
 function SecretList({ secrets }: { secrets: McpRegistryResponse['servers'][number]['secrets'] }) {
+  const t = useT();
   if (!secrets) return null;
   return secrets.map(secret => (
     <small key={secret.secretId}>
-      {secret.name}: {secret.state === 'set' ? 'задан' : 'нужен секрет'}
+      {secret.name}: {secret.state === 'set' ? t('mcp.list.secret.set') : t('mcp.list.secret.needed')}
     </small>
   ));
 }
@@ -646,10 +654,11 @@ function GatewayList({ serverId, status }: { serverId: string; status: McpRegist
 }
 
 function DraftList({ drafts, onContinue }: { drafts: McpRegistryResponse['drafts']; onContinue: (draft: McpRegistryDraftView) => void }) {
+  const t = useT();
   if (drafts.length === 0) return null;
   return (
-    <section aria-label="Черновики">
-      <h3>Черновики от агента и мастера</h3>
+    <section aria-label={t('mcp.list.drafts.label')}>
+      <h3>{t('mcp.list.drafts.title')}</h3>
       {drafts.map(draft => (
         <div className="mcp-row mcp-draft-row" key={draft.draftId}>
           <div className="mcp-draft-summary">
@@ -657,7 +666,7 @@ function DraftList({ drafts, onContinue }: { drafts: McpRegistryResponse['drafts
             <span className={`pill mcp-status-pill ${mcpStatusTone(draft.state)}`}>{mcpStatusLabel(draft.state)}</span>
           </div>
           <button className="btn" onClick={() => onContinue(draft)}>
-            Продолжить и подключить
+            {t('mcp.list.drafts.continue')}
           </button>
         </div>
       ))}
@@ -678,19 +687,18 @@ function ImportPreview({
   onCommit: () => void;
   onCancel: () => void;
 }) {
+  const t = useT();
   const setSelected = (serverId: string, selected: boolean) => {
     const next = selected ? [...selectedServerIds, serverId] : selectedServerIds.filter(id => id !== serverId);
     onSelectionChange(next);
   };
 
   return (
-    <section className="mcp-note info" aria-label="Предпросмотр импорта">
-      <h3>Предпросмотр импорта</h3>
-      <p>Будут просмотрены user и local записи из .claude.json, а также записи выбранного проекта из .mcp.json.</p>
-      <p>
-        {preview.servers.length} серверов; секретов найдено: {preview.secretsCaptured}.
-      </p>
-      <p>Значения секретов не возвращаются в браузер. Выбранные секреты будут зашифрованы и сохранены в хабе.</p>
+    <section className="mcp-note info" aria-label={t('mcp.list.preview.label')}>
+      <h3>{t('mcp.list.preview.title')}</h3>
+      <p>{t('mcp.list.preview.scope')}</p>
+      <p>{t('mcp.list.preview.counts', { count: preview.servers.length, secrets: preview.secretsCaptured })}</p>
+      <p>{t('mcp.list.preview.secretsNote')}</p>
       <ul className="mcp-import-servers">
         {preview.servers.map(server => {
           const secrets = server.secrets.filter(secret => secret.state === 'set');
@@ -701,7 +709,7 @@ function ImportPreview({
                 <span>{server.name}</span>
                 <small>{sourceLabel(server.source)}</small>
               </label>
-              {secrets.length > 0 && <small>Секреты для шифрования: {secrets.map(secret => secret.name).join(', ')}</small>}
+              {secrets.length > 0 && <small>{t('mcp.list.preview.secretsList', { names: secrets.map(secret => secret.name).join(', ') })}</small>}
             </li>
           );
         })}
@@ -710,10 +718,10 @@ function ImportPreview({
         <p key={warning}>{warning}</p>
       ))}
       <button className="btn primary" disabled={selectedServerIds.length === 0} onClick={onCommit}>
-        Импортировать выбранные серверы
+        {t('mcp.list.preview.commit')}
       </button>
       <button className="btn" onClick={onCancel}>
-        Отмена
+        {t('mcp.list.preview.cancel')}
       </button>
     </section>
   );
@@ -722,10 +730,10 @@ function ImportPreview({
 function sourceLabel(source: McpImportPreviewResponse['servers'][number]['source']): string {
   if (source === 'user') return '.claude.json · user';
   if (source === 'local') return '.claude.json · local';
-  return '.mcp.json · проект';
+  return t('mcp.list.preview.sourceProject');
 }
 
 function errorText(cause: unknown): string {
   if (cause instanceof Error) return cause.message;
-  return 'Не удалось обновить override';
+  return t('mcp.list.override.failed');
 }

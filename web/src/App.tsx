@@ -36,6 +36,7 @@ import { Column } from './features/toolwindows/Column';
 import { DropOverlay } from './features/toolwindows/DropOverlay';
 import { PhoneWindow } from './features/toolwindows/PhoneWindow';
 import { useDock } from './features/toolwindows/useDock';
+import { applyProfileLocale, t, useT } from './i18n';
 import { usePhone } from './features/toolwindows/usePhone';
 import {
   dropSubagentLists,
@@ -67,12 +68,13 @@ function Brand() {
 }
 
 export function SignedOut() {
+  const t = useT();
   return (
     <main className="screen">
       <div className="card">
         <Brand />
-        <h1>Вы вышли</h1>
-        <p>Чтобы продолжить, войдите снова.</p>
+        <h1>{t('workspace.app.signedOut')}</h1>
+        <p>{t('workspace.app.signInAgain')}</p>
         <a
           className="btn primary"
           href="/auth/login?return=%2F"
@@ -84,7 +86,7 @@ export function SignedOut() {
             }
           }}
         >
-          Войти
+          {t('workspace.app.signIn')}
         </a>
       </div>
     </main>
@@ -92,14 +94,15 @@ export function SignedOut() {
 }
 
 function ErrorScreen({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const t = useT();
   return (
     <main className="screen">
       <div className="card" role="alert">
         <Brand />
-        <h1>Хаб недоступен</h1>
+        <h1>{t('workspace.app.hubDown')}</h1>
         <p>{message}</p>
         <button type="button" className="btn primary" onClick={onRetry}>
-          Повторить
+          {t('workspace.app.retry')}
         </button>
       </div>
     </main>
@@ -142,11 +145,12 @@ export function App() {
   const load = useCallback(async () => {
     try {
       const me = await api.me();
+      await applyProfileLocale(me.locale ?? null);
       await loadSidebar();
       setAuth({ kind: 'signed_in', me });
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) handleUnauthorized();
-      else setAuth({ kind: 'error', message: 'Не удалось связаться с хабом. Проверьте подключение к интернету.' });
+      else setAuth({ kind: 'error', message: t('workspace.app.hubUnreachable') });
       return;
     }
     void loadModels();
@@ -263,7 +267,7 @@ export function App() {
     } catch (err) {
       // The server session may still be alive: do not pretend the user is signed out.
       if (!(err instanceof ApiError && err.status === 401)) {
-        pushToast({ title: 'Не удалось выйти', text: 'Хаб не ответил. Проверьте связь и попробуйте ещё раз.', color: 'var(--bad)' });
+        pushToast({ title: t('workspace.app.logoutFailed'), text: t('workspace.app.logoutFailedText'), color: 'var(--bad)' });
         return;
       }
     }

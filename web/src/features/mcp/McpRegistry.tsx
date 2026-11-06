@@ -7,11 +7,13 @@ import { useStore } from '../../store';
 import type { UserProjectView } from '../../api/types';
 import { McpRegistryList } from './McpRegistryList';
 import { McpWizard } from './McpWizard';
+import { t, useT } from '../../i18n';
 
 const emptyRegistry: McpRegistryResponse = { revision: 0, servers: [], drafts: [] };
 const emptyStatus: McpRegistryStatus = { revision: 0, agents: [], gateways: [], oauth: [] };
 
 export function McpRegistry({ onClose, sessionId }: { onClose: () => void; sessionId?: string }) {
+  const t = useT();
   const dialogRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const machines = useStore(state => state.runners);
@@ -147,7 +149,7 @@ export function McpRegistry({ onClose, sessionId }: { onClose: () => void; sessi
     const project = projects.find(item => item.id === importProjectId);
     const binding = project?.bindings.find(item => item.runnerId === importMachineId);
     if (!binding) {
-      setError('Выберите проект с путём для выбранной машины.');
+      setError(t('mcp.registry.pickProject'));
       return;
     }
     try {
@@ -191,7 +193,7 @@ export function McpRegistry({ onClose, sessionId }: { onClose: () => void; sessi
       onClose();
       return;
     }
-    if (!window.confirm('Закрыть мастер? Несохранённый ввод будет потерян.')) return;
+    if (!window.confirm(t('mcp.registry.confirmCloseWizard'))) return;
     setWizardOpen(false);
     setSelectedDraft(null);
   };
@@ -203,10 +205,10 @@ export function McpRegistry({ onClose, sessionId }: { onClose: () => void; sessi
       <section ref={dialogRef} className="sub-list mcp-panel mcp-registry" role="dialog" aria-modal="true" aria-labelledby="registry-title" onClick={() => notice && setNotice('')}>
         <header className="sub-head">
           <div>
-            <h2 id="registry-title">Реестр MCP</h2>
-            {!wizardOpen && <span className="mcp-when">Изменение {registry.revision}</span>}
+            <h2 id="registry-title">{t('mcp.registry.title')}</h2>
+            {!wizardOpen && <span className="mcp-when">{t('mcp.registry.revision', { revision: registry.revision })}</span>}
           </div>
-          <button ref={closeButtonRef} className="icon-btn" aria-label="Закрыть" onClick={closePanel}>
+          <button ref={closeButtonRef} className="icon-btn" aria-label={t('mcp.registry.close')} onClick={closePanel}>
             ×
           </button>
         </header>
@@ -268,15 +270,16 @@ export function McpRegistry({ onClose, sessionId }: { onClose: () => void; sessi
 }
 
 function OutdatedAgentNotice({ status }: { status: McpRegistryStatus }) {
+  const t = useT();
   const outdatedAgents = status.agents.filter(agent => agent.protocolVersion === '1.12');
   return outdatedAgents.map(agent => (
     <p role="note" className="mcp-note warn" key={agent.machineId}>
-      Агент {agent.machineName || agent.machineId} устарел (протокол 1.12). Обновите агент до версии 1.13, чтобы управлять реестром MCP.
+      {t('mcp.registry.agentOutdated', { name: agent.machineName || agent.machineId })}
     </p>
   ));
 }
 
 function errorText(cause: unknown): string {
   if (cause instanceof Error) return cause.message;
-  return 'Запрос не выполнен';
+  return t('mcp.registry.requestFailed');
 }

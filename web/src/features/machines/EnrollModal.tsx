@@ -10,7 +10,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ApiError, api } from '../../api/client';
-import { DEFAULT_MACHINE_NAME, type EnrollCodeResponse, type EnrollStage, type MachineOs, type RunnerView } from '../../api/types';
+import { type EnrollCodeResponse, type EnrollStage, type MachineOs, type RunnerView } from '../../api/types';
+import { useT } from '../../i18n';
+import { fmt } from '../../i18n';
 import { useStore } from '../../store';
 import { useDialog } from '../ui/a11y';
 import { OS_LABEL, OS_ORDER, STAGE_INDEX, claudeLoginCommand, copyText, detectOs, osFamily } from './machines';
@@ -18,16 +20,17 @@ import { OS_LABEL, OS_ORDER, STAGE_INDEX, claudeLoginCommand, copyText, detectOs
 /** Waiting this long without the code being used shows the hint about the machine's way out to the internet. */
 export const NO_CONTACT_HINT_MS = 60_000;
 
-export function CopyButton({ text, label = 'Скопировать' }: { text: string; label?: string }) {
+export function CopyButton({ text, label }: { text: string; label?: string }) {
+  const t = useT();
   const [state, setState] = useState<'idle' | 'ok' | 'fail'>('idle');
   useEffect(() => {
     if (state === 'idle') return;
-    const t = setTimeout(() => setState('idle'), 2000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setState('idle'), 2000);
+    return () => clearTimeout(timer);
   }, [state]);
   return (
     <button type="button" className="btn primary copy-btn" onClick={() => void copyText(text).then(ok => setState(ok ? 'ok' : 'fail'))}>
-      <span aria-live="polite">{state === 'ok' ? 'Скопировано' : state === 'fail' ? 'Выделите и скопируйте' : label}</span>
+      <span aria-live="polite">{state === 'ok' ? t('machines.enroll.copied') : state === 'fail' ? t('machines.enroll.copyManual') : (label ?? t('machines.enroll.copy'))}</span>
     </button>
   );
 }
@@ -70,6 +73,7 @@ function OsSwitch({ value, onChange, labelledBy }: { value: MachineOs; onChange:
 type StepState = 'done' | 'active' | 'todo';
 
 function Step({ state, children }: { state: StepState; children: React.ReactNode }) {
+  const t = useT();
   return (
     <li className={`enroll-step ${state}`} aria-current={state === 'active' ? 'step' : undefined}>
       <span className="es-mark" aria-hidden="true">
@@ -77,7 +81,7 @@ function Step({ state, children }: { state: StepState; children: React.ReactNode
       </span>
       <span className="es-text">
         {children}
-        <span className="sr-only">{state === 'done' ? ' — готово' : state === 'active' ? ' — идёт' : ''}</span>
+        <span className="sr-only">{state === 'done' ? t('machines.enroll.stepDone') : state === 'active' ? t('machines.enroll.stepActive') : ''}</span>
       </span>
     </li>
   );
@@ -85,26 +89,28 @@ function Step({ state, children }: { state: StepState; children: React.ReactNode
 
 /** The progress list of the waiting step (exported for the tests of every stage). */
 export function EnrollProgress({ stage, runner }: { stage: EnrollStage; runner: RunnerView | null }) {
+  const t = useT();
   const i = STAGE_INDEX[stage];
   // the first step is in progress from the start (waiting, code_used); each next one once the previous is done
   const st = (doneAt: number): StepState => (i >= doneAt ? 'done' : i === doneAt - 1 || doneAt === 2 ? 'active' : 'todo');
   const login = runner?.claudeLogin;
-  const claudeDone = login === 'ok' ? 'Claude: вход есть' : login === 'missing' || login === 'rejected' ? 'Claude: нет входа' : 'Claude проверен';
+  const claudeDone = login === 'ok' ? t('machines.enroll.claudeOk') : login === 'missing' || login === 'rejected' ? t('machines.enroll.claudeMissing') : t('machines.enroll.claudeChecked');
   return (
-    <ol className="enroll-steps" aria-label="Ход подключения">
-      <Step state={st(2)}>{i >= 2 ? 'Машина подключилась' : i === 1 ? 'Код принят, ставим агента…' : 'Ждём машину — запустите команду'}</Step>
-      <Step state={st(3)}>{i >= 3 ? claudeDone : 'Проверяем Claude'}</Step>
-      <Step state={st(4)}>Готово</Step>
+    <ol className="enroll-steps" aria-label={t('machines.enroll.progressLabel')}>
+      <Step state={st(2)}>{i >= 2 ? t('machines.enroll.connected') : i === 1 ? t('machines.enroll.codeUsed') : t('machines.enroll.waitingMachine')}</Step>
+      <Step state={st(3)}>{i >= 3 ? claudeDone : t('machines.enroll.checkingClaude')}</Step>
+      <Step state={st(4)}>{t('machines.enroll.ready')}</Step>
     </ol>
   );
 }
 
 export function EnrollModal({ runnerId: initialRunnerId, onClose }: { runnerId?: string; onClose: () => void }) {
+  const t = useT();
   const reconnect = !!initialRunnerId;
   const titleId = useId();
   const dialog = useRef<HTMLDivElement>(null);
   useDialog(dialog, onClose);
-  const [name, setName] = useState(DEFAULT_MACHINE_NAME);
+  const [name, setName] = useState(() => t('machines.enroll.defaultName'));
   const [os, setOs] = useState<MachineOs>(detectOs);
   const [issued, setIssued] = useState<EnrollCodeResponse | null>(null);
   const [busy, setBusy] = useState(false);
@@ -133,10 +139,10 @@ export function EnrollModal({ runnerId: initialRunnerId, onClose }: { runnerId?:
       setIssuedAt(Date.now());
       setNow(Date.now());
     } catch (err) {
-      if (err instanceof ApiError && err.code === 'name_taken') setError({ field: 'name', text: 'Машина с таким именем уже есть — выберите другое' });
-      else if (err instanceof ApiError && err.code === 'runner_disabled') setError({ field: 'form', text: 'Машина отключена — подключите её заново через «Добавить машину»' });
-      else if (err instanceof ApiError && err.code === 'not_found') setError({ field: 'form', text: 'Машина не найдена' });
-      else setError({ field: 'form', text: 'Хаб не ответил. Проверьте связь и попробуйте ещё раз.' });
+      if (err instanceof ApiError && err.code === 'name_taken') setError({ field: 'name', text: t('machines.enroll.nameTaken') });
+      else if (err instanceof ApiError && err.code === 'runner_disabled') setError({ field: 'form', text: t('machines.enroll.disabled') });
+      else if (err instanceof ApiError && err.code === 'not_found') setError({ field: 'form', text: t('machines.enroll.notFound') });
+      else setError({ field: 'form', text: t('machines.enroll.hubNoAnswer') });
     } finally {
       setBusy(false);
     }
@@ -165,7 +171,7 @@ export function EnrollModal({ runnerId: initialRunnerId, onClose }: { runnerId?:
   const submit = (e: { preventDefault(): void }) => {
     e.preventDefault();
     const n = name.trim();
-    if (!n) return setError({ field: 'name', text: 'Укажите имя машины' });
+    if (!n) return setError({ field: 'name', text: t('machines.enroll.nameRequired') });
     void issue(() => api.createRunner({ name: n, os }));
   };
 
@@ -173,7 +179,7 @@ export function EnrollModal({ runnerId: initialRunnerId, onClose }: { runnerId?:
   const showNoContact = !!issued && !expired && stage === 'waiting' && now - issuedAt >= NO_CONTACT_HINT_MS;
   const ready = stage === 'ready';
   const command = issued ? (os === 'windows' ? issued.commands.windows : issued.commands.unix) : '';
-  const until = issued ? new Date(issued.expiresAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+  const until = issued ? fmt.time(new Date(issued.expiresAt)) : '';
   const host = typeof location !== 'undefined' ? location.host : '';
   const startFirst = () => {
     if (!runner) return;
@@ -184,19 +190,19 @@ export function EnrollModal({ runnerId: initialRunnerId, onClose }: { runnerId?:
     <div className="scrim modal-top" onMouseDown={e => e.target === e.currentTarget && onClose()}>
       <div className="modal enroll" role="dialog" aria-modal="true" aria-labelledby={titleId} ref={dialog}>
         <div className="modal-head">
-          <h2 id={titleId}>{reconnect ? `Переподключить ${runner?.name ?? 'машину'}` : 'Подключить машину'}</h2>
-          <p>{reconnect ? 'Новый код. Машина работает по старому токену, пока не подключится по новому.' : 'Агент ставится одной командой. Токены копировать не нужно.'}</p>
+          <h2 id={titleId}>{reconnect ? (runner?.name ? t('machines.enroll.titleReconnect', { name: runner.name }) : t('machines.enroll.titleReconnectFallback')) : t('machines.enroll.title')}</h2>
+          <p>{reconnect ? t('machines.enroll.leadReconnect') : t('machines.enroll.lead')}</p>
         </div>
         {!issued && !reconnect ? (
           <form onSubmit={submit}>
             <div className="modal-body">
-              <ol className="enroll-path" aria-label="Шаги">
-                <li className="on">1. Имя и система</li>
-                <li>2. Команда</li>
-                <li>3. Подключение</li>
+              <ol className="enroll-path" aria-label={t('machines.enroll.pathLabel')}>
+                <li className="on">{t('machines.enroll.path1')}</li>
+                <li>{t('machines.enroll.path2')}</li>
+                <li>{t('machines.enroll.path3')}</li>
               </ol>
               <div className="field">
-                <label htmlFor={`${titleId}-name`}>Имя машины</label>
+                <label htmlFor={`${titleId}-name`}>{t('machines.enroll.nameLabel')}</label>
                 <input
                   id={`${titleId}-name`}
                   className="input"
@@ -212,13 +218,13 @@ export function EnrollModal({ runnerId: initialRunnerId, onClose }: { runnerId?:
                   </span>
                 ) : (
                   <span className="hint" id={`${titleId}-name-hint`}>
-                    Можно поменять потом в «Настройки → Машины».
+                    {t('machines.enroll.nameHint')}
                   </span>
                 )}
               </div>
               <div className="field">
                 <span className="lbl" id={`${titleId}-os`}>
-                  Система
+                  {t('machines.enroll.osLabel')}
                 </span>
                 <OsSwitch value={os} onChange={setOs} labelledBy={`${titleId}-os`} />
               </div>
@@ -230,10 +236,10 @@ export function EnrollModal({ runnerId: initialRunnerId, onClose }: { runnerId?:
             </div>
             <div className="modal-foot">
               <button type="button" className="btn ghost" onClick={onClose}>
-                Отмена
+                {t('machines.enroll.cancel')}
               </button>
               <button type="submit" className="btn primary" disabled={busy}>
-                {busy ? 'Готовим команду…' : 'Получить команду'}
+                {busy ? t('machines.enroll.preparing') : t('machines.enroll.getCommand')}
               </button>
             </div>
           </form>
@@ -241,15 +247,15 @@ export function EnrollModal({ runnerId: initialRunnerId, onClose }: { runnerId?:
           <>
             <div className="modal-body">
               {!reconnect && (
-                <ol className="enroll-path" aria-label="Шаги">
-                  <li className="done">1. Имя и система</li>
-                  <li className={stage !== 'waiting' ? 'done' : 'on'}>2. Команда</li>
-                  <li className={ready ? 'done' : stage !== 'waiting' ? 'on' : ''}>3. Подключение</li>
+                <ol className="enroll-path" aria-label={t('machines.enroll.pathLabel')}>
+                  <li className="done">{t('machines.enroll.path1')}</li>
+                  <li className={stage !== 'waiting' ? 'done' : 'on'}>{t('machines.enroll.path2')}</li>
+                  <li className={ready ? 'done' : stage !== 'waiting' ? 'on' : ''}>{t('machines.enroll.path3')}</li>
                 </ol>
               )}
               {!issued && busy && (
                 <p className="hint" role="status">
-                  <span className="spinner" aria-hidden="true" /> Готовим команду…
+                  <span className="spinner" aria-hidden="true" /> {t('machines.enroll.preparing')}
                 </p>
               )}
               {error?.field === 'form' && (
@@ -260,19 +266,17 @@ export function EnrollModal({ runnerId: initialRunnerId, onClose }: { runnerId?:
               {issued && !ready && (
                 <div className="field">
                   <span className="lbl" id={`${titleId}-cmd-os`}>
-                    Запустите на машине{os === 'windows' ? ' в PowerShell' : ' в терминале'}
+                    {os === 'windows' ? t('machines.enroll.runWindows') : t('machines.enroll.runUnix')}
                   </span>
                   <OsSwitch value={os} onChange={setOs} labelledBy={`${titleId}-cmd-os`} />
                   {expired ? (
                     <div className="err-box" role="alert">
-                      Код истёк — получите новый и запустите команду снова.
+                      {t('machines.enroll.expired')}
                     </div>
                   ) : (
                     <>
-                      <CommandBox command={command} label={`Команда установки для ${OS_LABEL[os]}`} />
-                      <span className="hint">
-                        Код одноразовый, действует до {until}. {os === 'windows' ? 'PowerShell сам запросит права администратора.' : 'sudo не нужен.'}
-                      </span>
+                      <CommandBox command={command} label={t('machines.enroll.cmdLabel', { os: OS_LABEL[os] })} />
+                      <span className="hint">{os === 'windows' ? t('machines.enroll.codeHintWindows', { until }) : t('machines.enroll.codeHintUnix', { until })}</span>
                     </>
                   )}
                 </div>
@@ -282,32 +286,30 @@ export function EnrollModal({ runnerId: initialRunnerId, onClose }: { runnerId?:
                   <EnrollProgress stage={stage} runner={runner} />
                 </div>
               )}
-              {showNoContact && (
-                <p className="hint enroll-hint">Машина не отвечает? Проверьте, что у неё есть выход в интернет на {host}:443. Если команда напечатала «Код истёк», нажмите «Новый код».</p>
-              )}
+              {showNoContact && <p className="hint enroll-hint">{t('machines.enroll.noContact', { host })}</p>}
               {ready && runner?.protectedDirsOk === false && <MacDiskWarning />}
               {ready && (runner?.claudeLogin === 'missing' || runner?.claudeLogin === 'rejected') && (
                 <div className="banner warn inline-warn" role="status">
                   <div className="b-text">
-                    <b>Нет входа в Claude.</b> Выполните на машине:
-                    <CommandBox command={claudeLoginCommand(runner.os)} label="Команда входа в Claude" />
+                    <b>{t('machines.enroll.noLoginTitle')}</b> {t('machines.enroll.noLoginRun')}
+                    <CommandBox command={claudeLoginCommand(runner.os)} label={t('machines.enroll.loginCmdLabel')} />
                   </div>
                 </div>
               )}
-              {ready && <p className="hint">Сессии будут появляться слева, по проектам — по git-репозиторию каталога.</p>}
+              {ready && <p className="hint">{t('machines.enroll.readyHint')}</p>}
             </div>
             <div className="modal-foot">
               {issued && !ready && (
                 <button type="button" className={`btn${expired ? ' primary' : ''}`} disabled={busy} onClick={() => runnerId && void issue(() => api.enrollCode(runnerId))}>
-                  Новый код
+                  {t('machines.enroll.newCode')}
                 </button>
               )}
               <button type="button" className="btn ghost" onClick={onClose}>
-                {ready ? 'Готово' : 'Закрыть'}
+                {ready ? t('machines.enroll.ready') : t('machines.enroll.close')}
               </button>
               {ready && (
                 <button type="button" className="btn primary" onClick={startFirst} autoFocus>
-                  Начать первую сессию
+                  {t('machines.enroll.startFirst')}
                 </button>
               )}
             </div>
@@ -321,11 +323,12 @@ export function EnrollModal({ runnerId: initialRunnerId, onClose }: { runnerId?:
 
 /** Requirement: macOS — «нет доступа к защищённым папкам macOS» with the way to grant it. */
 export function MacDiskWarning() {
+  const t = useT();
   return (
     <div className="banner warn inline-warn" role="status">
       <div className="b-text">
-        <b>Нет доступа к защищённым папкам macOS.</b> Агент не читает ~/Documents, ~/Desktop и ~/Downloads. Откройте «Системные настройки → Конфиденциальность и безопасность → Полный доступ к диску» и
-        добавьте <code>~/.agent-hub/node/bin/node</code>. Каталоги вне этих папок (например, ~/code) работают и так.
+        <b>{t('machines.enroll.macTitle')}</b> {t('machines.enroll.macBefore')} <code>~/.agent-hub/node/bin/node</code>
+        {t('machines.enroll.macAfter')}
       </div>
     </div>
   );

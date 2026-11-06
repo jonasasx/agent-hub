@@ -4,6 +4,7 @@ import { ApiError, api } from '../../api/client';
 import { McpServerForm, type McpMachineOption, type McpSecretField } from './McpServerForm';
 import { mcpErrorMessage } from './mcpErrors';
 import { mcpErrorText } from './actions';
+import { t, useT } from '../../i18n';
 
 export interface McpWizardState {
   step: number;
@@ -120,7 +121,7 @@ function parseEntries(text: string, state: McpWizardState, draft: McpRegistryDra
 
   for (const line of lines) {
     const separator = line.indexOf('=');
-    if (separator < 1) throw new Error('Параметры вводятся построчно в формате ИМЯ=значение');
+    if (separator < 1) throw new Error(t('mcp.wizard.paramFormat'));
 
     const name = line.slice(0, separator).trim();
     const value = line.slice(separator + 1).trim();
@@ -134,7 +135,7 @@ function parseEntries(text: string, state: McpWizardState, draft: McpRegistryDra
       }
       continue;
     }
-    if (sensitiveName.test(name)) throw new Error('Поле похоже на секрет. Введите его на шаге секретов.');
+    if (sensitiveName.test(name)) throw new Error(t('mcp.wizard.looksSecret'));
 
     entries[name] = { kind: 'literal', value };
   }
@@ -238,7 +239,7 @@ function secretBindingConflict(state: McpWizardState, draft: McpRegistryDraftVie
     if (separator <= 0) continue;
     const fieldName = line.slice(0, separator).trim();
     const key = normalize(fieldName);
-    if (fields.has(key)) return `Поле «${fieldName}» указано несколько раз. Удалите повтор или измените имя.`;
+    if (fields.has(key)) return t('mcp.wizard.dupField', { field: fieldName });
     fields.add(key);
   }
   if (!checkSecretNames) return '';
@@ -251,7 +252,7 @@ function secretBindingConflict(state: McpWizardState, draft: McpRegistryDraftVie
       if (savedSecret.secretId === bindingSecretId) continue;
       const owner = savedSecretOwner(savedSecret.secretId, binding, state, draft);
       if (owner) {
-        return `Привязка «${binding.fieldName}» использует имя секрета «${binding.secretName}», которое уже принадлежит полю «${owner}». Смените имя.`;
+        return t('mcp.wizard.bindingOwned', { field: binding.fieldName, secret: binding.secretName, owner });
       }
     }
   }
@@ -261,7 +262,7 @@ function secretBindingConflict(state: McpWizardState, draft: McpRegistryDraftVie
     for (const other of bindings.slice(index + 1)) {
       const sameSecret = secretIdForBinding(binding, state, draft) && secretIdForBinding(binding, state, draft) === secretIdForBinding(other, state, draft);
       if (!sameSecret && bindingKey === normalize(other.secretName)) {
-        return `Привязки «${binding.fieldName}» и «${other.fieldName}» используют имя секрета «${binding.secretName}». Измените имя.`;
+        return t('mcp.wizard.bindingsClash', { field: binding.fieldName, other: other.fieldName, secret: binding.secretName });
       }
     }
   }
@@ -317,14 +318,14 @@ interface MissingSecretBinding {
 }
 
 function missingSecretBindingDetails(state: McpWizardState, draft: McpRegistryDraftView | null): MissingSecretBinding | null {
-  const fieldType = state.transport === 'stdio' ? 'Переменная среды' : 'Заголовок';
+  const fieldType = state.transport === 'stdio' ? t('mcp.wizard.fieldTypeEnv') : t('mcp.wizard.fieldTypeHeader');
   const binding = secretBindings(state, draft).find(item => !isSecretSaved(item, state, draft));
   if (!binding) return null;
   if (binding.isUrl) {
-    return { message: `Секрет «${binding.secretName}» для URL не сохранён. Введите и сохраните его ниже.`, secretName: binding.secretName };
+    return { message: t('mcp.wizard.secretUrlMissing', { secret: binding.secretName }), secretName: binding.secretName };
   }
   return {
-    message: `${fieldType} «${binding.fieldName}»: секрет «${binding.secretName}» не сохранён. Введите и сохраните его ниже.`,
+    message: t('mcp.wizard.secretFieldMissing', { type: fieldType, field: binding.fieldName, secret: binding.secretName }),
     secretName: binding.secretName,
   };
 }
@@ -347,6 +348,7 @@ interface McpWizardProps {
 }
 
 export function McpWizard({ initialDraft, sessionId, machines, onDraftChange, onDone, onClose }: McpWizardProps) {
+  const t = useT();
   const { state, patch, setSecretValue } = useMcpWizard(initialDraft);
   const [draft, setDraft] = useState(initialDraft);
   const [busy, setBusy] = useState(false);
@@ -392,8 +394,8 @@ export function McpWizard({ initialDraft, sessionId, machines, onDraftChange, on
       const latest = await api.mcpRegistryDraft(currentDraft.draftId);
       setDraft(latest);
       onDraftChange(latest);
-      if (latest.state === 'connected') onDone('Черновик уже подключён. Мастер закрыт.');
-      if (latest.state === 'saved-unchecked') onDone('Черновик уже сохранён без проверки. Мастер закрыт.');
+      if (latest.state === 'connected') onDone(t('mcp.wizard.draftConnected'));
+      if (latest.state === 'saved-unchecked') onDone(t('mcp.wizard.draftSavedUnchecked'));
     } catch {
       // Keep the translated conflict message visible if the draft can no longer be read.
     }
@@ -475,7 +477,7 @@ export function McpWizard({ initialDraft, sessionId, machines, onDraftChange, on
     if (!draft) return;
     if (missingSecretBinding(state, draft)) return;
     if (state.scope === 'machines' && !state.scopeMachineIds.includes(state.machineId)) {
-      setError('Выбранная машина не входит в область сервера. Вернитесь назад и выберите машину из области.');
+      setError(t('mcp.wizard.machineOutOfScope'));
       return;
     }
     setBusy(true);
@@ -499,7 +501,7 @@ export function McpWizard({ initialDraft, sessionId, machines, onDraftChange, on
   };
 
   const connect = async () => {
-    if (!draft || !window.confirm('Подключить этот сервер?')) return;
+    if (!draft || !window.confirm(t('mcp.wizard.confirmConnect'))) return;
     setBusy(true);
     clearError();
 
@@ -524,7 +526,7 @@ export function McpWizard({ initialDraft, sessionId, machines, onDraftChange, on
   const saveUnchecked = async () => {
     if (!draft) return;
     if (missingSecretBinding(state, draft)) return;
-    if (!window.confirm('Сохранить сервер без проверки? Он будет помечен как непроверенный.')) return;
+    if (!window.confirm(t('mcp.wizard.confirmSaveUnchecked'))) return;
     setBusy(true);
     clearError();
 
@@ -602,8 +604,8 @@ export function McpWizard({ initialDraft, sessionId, machines, onDraftChange, on
     try {
       const result = await api.mcpRegistryOAuthValidate(persistedServerId, { machineId: state.machineId });
       setOauthValidationState(result.state);
-      if (result.state === 'validation-failed') setError('Проверка соединения не прошла.');
-      if (result.state === 'needs_auth') setError('Сервер всё ещё требует входа.');
+      if (result.state === 'validation-failed') setError(t('mcp.list.oauth.checkFailed'));
+      if (result.state === 'needs_auth') setError(t('mcp.list.oauth.stillNeedsLogin'));
       const status = await api.mcpRegistryStatus();
       const next = status.oauth?.find(item => item.serverId === persistedServerId && item.machineId === state.machineId);
       if (next) setOauthStatus(next);
@@ -630,13 +632,13 @@ export function McpWizard({ initialDraft, sessionId, machines, onDraftChange, on
 
   return (
     <section className="mcp-wizard">
-      <h3>{`Добавление сервера · шаг ${wizardStepNumber(state)} из ${secretBindingExists(state) ? 5 : 4}`}</h3>
+      <h3>{t('mcp.wizard.title', { step: wizardStepNumber(state), total: secretBindingExists(state) ? 5 : 4 })}</h3>
       {error && (
         <div className="mcp-error-message" role="alert">
           <p>{error}</p>
           {errorDetails && (
             <details>
-              <summary>Подробности</summary>
+              <summary>{t('mcp.form.details')}</summary>
               <pre>{errorDetails}</pre>
             </details>
           )}
@@ -683,8 +685,8 @@ function wizardStepNumber(state: McpWizardState): number {
 function errorText(error: unknown): string {
   if (error instanceof Error) {
     if ('serverMessage' in error && typeof error.serverMessage === 'string' && error.serverMessage) return error.serverMessage;
-    return error.message || 'Не выполнено';
+    return error.message || t('mcp.wizard.notDone');
   }
-  if (typeof error === 'string') return error || 'Не выполнено';
-  return String(error) || 'Не выполнено';
+  if (typeof error === 'string') return error || t('mcp.wizard.notDone');
+  return String(error) || t('mcp.wizard.notDone');
 }

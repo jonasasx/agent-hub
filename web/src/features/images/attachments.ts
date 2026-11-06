@@ -6,6 +6,7 @@
  */
 import { create } from 'zustand';
 import { ApiError, uploadImage, type AttachmentRef } from '../../api/client';
+import { t } from '../../i18n';
 import { MAX_ATTACHMENTS, normalizeImage, type Codec } from './normalize';
 import { blobUrl } from './format';
 
@@ -73,12 +74,12 @@ async function slot<T>(fn: () => Promise<T>): Promise<T> {
 
 function uploadError(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.status === 413) return 'Файл больше 4 МБ после сжатия';
-    if (err.code === 'not_image') return 'Формат не поддерживается: PNG, JPEG, GIF, WebP';
-    if (err.code === 'image_too_large') return 'Изображение больше 8000 px';
+    if (err.status === 413) return t('chat.images.err.tooBigCompressed');
+    if (err.code === 'not_image') return t('chat.images.err.format');
+    if (err.code === 'image_too_large') return t('chat.images.err.dimensions');
     if (err.serverMessage) return err.serverMessage;
   }
-  return 'Не загрузилось — уберите и прикрепите снова';
+  return t('chat.images.err.upload');
 }
 
 /** Adds files (paste, drop, «Прикрепить»): images beyond 10 are not added and a hint says so. */
@@ -86,9 +87,9 @@ export function addFiles(key: string, files: File[], codec?: Codec): void {
   const list = st().byKey[key] ?? [];
   const room = MAX_ATTACHMENTS - list.length;
   const taken = files.slice(0, Math.max(0, room));
-  setNote(key, files.length > taken.length ? `Не больше ${MAX_ATTACHMENTS} изображений в сообщении` : undefined);
+  setNote(key, files.length > taken.length ? t('chat.images.limit', { max: MAX_ATTACHMENTS }) : undefined);
   if (!taken.length) return;
-  const added: Attachment[] = taken.map(f => ({ id: `a${++seq}`, name: f.name || 'изображение', url: URL.createObjectURL(f), status: 'processing', progress: 0 }));
+  const added: Attachment[] = taken.map(f => ({ id: `a${++seq}`, name: f.name || t('chat.images.defaultName'), url: URL.createObjectURL(f), status: 'processing', progress: 0 }));
   useAttachments.setState({ byKey: { ...st().byKey, [key]: [...list, ...added] } });
   taken.forEach((file, i) => void prepare(key, added[i]!.id, file, codec));
 }
@@ -158,7 +159,7 @@ export function restoreAttachments(key: string, refs: { sha256: string; mime?: s
     .slice(0, Math.max(0, MAX_ATTACHMENTS - list.length))
     .map((r, i) => ({
       id: `r${++seq}`,
-      name: `Изображение ${list.length + i + 1}`,
+      name: t('chat.images.numbered', { n: list.length + i + 1 }),
       url: blobUrl(r.sha256),
       status: 'ready',
       progress: 1,

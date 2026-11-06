@@ -6,3 +6,4 @@ export * from './subagents.js';
 export * from './peers.js';
 export * from './mcpRegistry.js';
 export * from './files.js';
+export * from './i18n/index.js';

@@ -8,6 +8,7 @@
 import { ApiError, api } from '../../api/client';
 import type { PatchSubscriptionRequest, SubscriptionUsageResponse } from '../../api/types';
 import { useStore } from '../../store';
+import { t } from '../../i18n';
 
 const get = () => useStore.getState();
 
@@ -33,14 +34,14 @@ export async function loadSubscriptions(): Promise<void> {
 /** The Russian text of a registry error (spec scenarios «Имя занято», «Ключ шифрования не задан»). */
 export function registryError(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.code === 'name_taken') return 'Подписка с таким именем уже есть';
-    if (err.code === 'bad_order') return 'Список подписок изменился — порядок обновлён';
-    if (err.code === 'bad_token' || (err.status === 422 && !err.serverMessage)) return 'Токен не похож на claude setup-token: 20–4096 символов без пробелов';
-    if (err.code === 'subscriptions_disabled') return 'Хранение токенов не настроено: задайте SUBSCRIPTION_TOKEN_KEY';
-    if (err.status === 404) return 'Подписка не найдена — список обновлён';
+    if (err.code === 'name_taken') return t('subscriptions.error.nameTaken');
+    if (err.code === 'bad_order') return t('subscriptions.error.badOrder');
+    if (err.code === 'bad_token' || (err.status === 422 && !err.serverMessage)) return t('subscriptions.error.badToken');
+    if (err.code === 'subscriptions_disabled') return t('subscriptions.error.disabled');
+    if (err.status === 404) return t('subscriptions.error.notFound');
     if (err.serverMessage) return err.serverMessage;
   }
-  return 'Хаб не ответил. Проверьте VPN и попробуйте ещё раз.';
+  return t('subscriptions.error.hubSilent');
 }
 
 export type RegistryResult = { ok: true } | { ok: false; message: string; field?: 'name' | 'token' };
@@ -106,21 +107,21 @@ export async function loadUsage(from: string, to: string): Promise<SubscriptionU
   try {
     return await api.subscriptionUsage(from, to);
   } catch (err) {
-    return { error: err instanceof ApiError && err.status === 422 ? 'Период не подходит: не больше 366 дней, начало раньше конца' : registryError(err) };
+    return { error: err instanceof ApiError && err.status === 422 ? t('subscriptions.error.badPeriod') : registryError(err) };
   }
 }
 
 function switchError(err: unknown, sid: string): string {
   const s = get().sessions[sid];
-  const runner = get().runners.find(r => r.id === s?.runnerId)?.name ?? 'машине';
+  const runner = get().runners.find(r => r.id === s?.runnerId)?.name ?? t('subscriptions.field.machineFallback');
   if (err instanceof ApiError) {
-    if (err.code === 'agent_outdated') return `Агент на ${runner} устарел — подписку не переключить`;
-    if (err.code === 'runner_offline') return `${runner} не в сети`;
-    if (err.code === 'subscription_unavailable') return 'Подписка недоступна — выберите другую';
-    if (err.code === 'read_only') return 'Сессия только для чтения';
+    if (err.code === 'agent_outdated') return t('subscriptions.error.agentOutdated', { runner });
+    if (err.code === 'runner_offline') return t('subscriptions.head.offline', { runner });
+    if (err.code === 'subscription_unavailable') return t('subscriptions.error.unavailable');
+    if (err.code === 'read_only') return t('subscriptions.head.readOnly');
     if (err.serverMessage) return err.serverMessage;
   }
-  return 'Хаб не ответил. Проверьте VPN и попробуйте ещё раз.';
+  return t('subscriptions.error.hubSilent');
 }
 
 /**
@@ -140,7 +141,7 @@ export async function switchSubscription(sid: string, subscriptionId: string, op
     }
     useStore.setState({ pendingSwitch: null });
     if (err instanceof ApiError && err.code === 'subscription_unavailable') void loadSubscriptions();
-    get().pushToast({ title: 'Подписка не переключена', text: switchError(err, sid), color: 'var(--bad)' });
+    get().pushToast({ title: t('subscriptions.error.switchFailed'), text: switchError(err, sid), color: 'var(--bad)' });
   }
 }
 

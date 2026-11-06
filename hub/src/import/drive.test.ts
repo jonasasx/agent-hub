@@ -100,9 +100,9 @@ describe('import:drive (Postgres)', () => {
     const before = await counts();
     const r = await cli([]);
     expect(r.code).toBe(0);
-    expect(r.out.join('\n')).toContain('новых 3, дополнено 1, строк 8');
-    expect(r.out.join('\n')).toContain('сверка: session_id в Drive 4, в хабе 4, расхождение 0');
-    expect(r.out.join('\n')).toContain('машины неизвестны (только чтение): old-laptop');
+    expect(r.out.join('\n')).toContain('new 3, extended 1, lines 8');
+    expect(r.out.join('\n')).toContain('check: session_id in Drive 4, in the hub 4, missing 0');
+    expect(r.out.join('\n')).toContain('unknown machines (read only): old-laptop');
     const after = await counts();
     expect(after.sessions - before.sessions).toBe(3);
     expect(after.events - before.events).toBe(8);
@@ -174,7 +174,7 @@ describe('import:drive (Postgres)', () => {
     expect((await cursorsForRunner(t.db, 'hp')).some(c => c.relPath.startsWith('drive-import/'))).toBe(false);
     // a re-run of the import: the live file is the session's transcript now, the export differs → skipped, no change
     const again = await cli([]);
-    expect(again.out.join('\n')).toContain('новых 0, дополнено 0, строк 0');
+    expect(again.out.join('\n')).toContain('new 0, extended 0, lines 0');
     expect((await t.pool.query(`SELECT count(*)::int AS n FROM transcript_files WHERE claude_session_id = $1`, [sid])).rows[0].n).toBe(2);
   });
 
@@ -212,7 +212,7 @@ describe('import:drive (Postgres)', () => {
     const sid = randomUUID();
     drive.add(`${sid}__X1-Carbon-Gen13.jsonl`, jsonl([F.userText({ sessionId: sid, cwd: VAULT, entrypoint: 'cli' }, 'с X1')]));
     const r = await cli([]);
-    expect(r.out).toContain('  x1: новых 1, дополнено 0, строк 1');
+    expect(r.out).toContain('  x1: new 1, extended 0, lines 1');
     expect((await t.pool.query(`SELECT runner_id, rel_path FROM transcript_files WHERE claude_session_id = $1`, [sid])).rows[0]).toEqual({ runner_id: 'x1', rel_path: `drive-import/${sid}.jsonl` });
   });
 
@@ -239,7 +239,7 @@ describe('import:drive (Postgres)', () => {
     const before = await counts();
     const r = await cli([]);
     expect(r.code).toBe(0);
-    expect(r.out.join('\n')).toContain('новых 0, дополнено 0, строк 0');
+    expect(r.out.join('\n')).toContain('new 0, extended 0, lines 0');
     expect(r.out.join('\n')).toMatch(/already_complete \d+/);
     expect(await counts()).toEqual(before);
     // the unknown machine is found again by its name: no second runner
@@ -253,7 +253,7 @@ describe('import:drive (Postgres)', () => {
     const before = await counts();
     const dry = await cli(['--dry-run']);
     expect(dry.out.join('\n')).toContain('dry run: Drive');
-    expect(dry.out.join('\n')).toContain('новых 1');
+    expect(dry.out.join('\n')).toContain('new 1');
     expect(await counts()).toEqual(before);
     // The live session's file was rewritten on the machine: the Drive copy is another file now.
     await t.pool.query(`UPDATE transcript_files SET acked_byte = acked_byte + 1 WHERE claude_session_id = $1`, [live]);

@@ -10,6 +10,7 @@ import { effectivePct, fmtPct, topWindow, windowLevel } from '../limits/limitsMo
 import { windowText } from '../limits/limitTexts';
 import { useHubNow, useLimitRows } from '../limits/parts';
 import type { WinId } from './dock';
+import { useT } from '../../i18n';
 
 export interface Badge {
   kind: 'count' | 'dot' | 'warn';
@@ -20,6 +21,7 @@ export interface Badge {
 export type Badges = Partial<Record<WinId, Badge>>;
 
 export function useBadges(): Badges {
+  const t = useT();
   const sessions = useStore(s => s.sessions);
   const runners = useStore(s => s.runners);
   const showCron = useStore(s => s.showCron);
@@ -28,13 +30,13 @@ export function useBadges(): Badges {
   const rows = useLimitRows(now);
   const out: Badges = {};
   const live = nowList(Object.values(sessions), runnerIndex(runners), showCron).length;
-  if (live > 0) out.sessions = { kind: 'count', text: String(live), tip: `${live} активны` };
+  if (live > 0) out.sessions = { kind: 'count', text: String(live), tip: t('workspace.toolwindows.badgeActive', { n: live }) };
   const usable = runners.filter(usableRunner);
   const off = usable.filter(r => !r.online).map(r => r.name);
-  if (off.length) out.machines = { kind: 'dot', text: '', tip: `${off.join(', ')} не в сети` };
+  if (off.length) out.machines = { kind: 'dot', text: '', tip: t('workspace.toolwindows.badgeOffline', { names: off.join(', ') }) };
   else {
     const upd = usable.filter(r => agentMark(r) === 'updating').map(r => r.name);
-    if (upd.length) out.machines = { kind: 'dot', text: '', tip: `${upd.join(', ')} обновляется` };
+    if (upd.length) out.machines = { kind: 'dot', text: '', tip: t('workspace.toolwindows.badgeUpdating', { names: upd.join(', ') }) };
   }
   if (rows && limits) {
     let best: { pct: number; type: string } | null = null;

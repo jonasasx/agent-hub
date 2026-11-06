@@ -114,7 +114,7 @@ export function toolOf(item: CodexItem): { name: string; input: Record<string, u
       const out = typeof item.aggregatedOutput === 'string' ? item.aggregatedOutput : '';
       const code = typeof item.exitCode === 'number' ? item.exitCode : null;
       const status = String(item.status ?? '');
-      const tail = code !== null && code !== 0 ? `\n[exit code ${code}]` : status === 'declined' ? '[отклонено]' : '';
+      const tail = code !== null && code !== 0 ? `\n[exit code ${code}]` : status === 'declined' ? '[declined]' : '';
       return {
         name: 'Bash',
         input: { command: unwrapShell(String(item.command ?? '')), cwd: String(item.cwd ?? '') },
@@ -128,7 +128,7 @@ export function toolOf(item: CodexItem): { name: string; input: Record<string, u
       return {
         name: 'ApplyPatch',
         input: { changes: changes.map(c => ({ path: String(c.path ?? ''), kind: kindOf(c.kind), diff: String(c.diff ?? '') })) },
-        result: status === 'completed' ? `Изменено файлов: ${changes.length}` : status === 'declined' ? 'Правка отклонена' : `Правка не применена (${status || 'неизвестно'})`,
+        result: status === 'completed' ? `Files changed: ${changes.length}` : status === 'declined' ? 'Change declined' : `Change not applied (${status || 'unknown'})`,
         isError: status !== 'completed',
       };
     }
@@ -148,7 +148,7 @@ export function toolOf(item: CodexItem): { name: string; input: Record<string, u
     }
     case 'webSearch': {
       const q = typeof item.query === 'string' ? item.query : JSON.stringify((item as { action?: unknown }).action ?? '');
-      return { name: 'WebSearch', input: { query: q }, result: 'Поиск выполнен', isError: false };
+      return { name: 'WebSearch', input: { query: q }, result: 'Search done', isError: false };
     }
     case 'imageView':
       return { name: 'Read', input: { file_path: String(item.path ?? '') }, result: String(item.path ?? ''), isError: false };
@@ -227,7 +227,7 @@ export class MirrorWriter {
   }
 
   header(threadId: string, model: string | null): void {
-    this.write({ ...this.base(randomUUID()), type: 'system', subtype: 'agent_provider', provider: 'codex', threadId, model, content: `Codex · поток ${threadId}`, level: 'info', isMeta: true });
+    this.write({ ...this.base(randomUUID()), type: 'system', subtype: 'agent_provider', provider: 'codex', threadId, model, content: `Codex · thread ${threadId}`, level: 'info', isMeta: true });
   }
 
   user(text: string, uuid: string, images: Array<{ mime: string; data: Buffer }> = [], origin: 'human' | 'peer' = 'human'): void {
@@ -285,7 +285,7 @@ export class MirrorWriter {
       return true;
     }
     if (item.type === 'contextCompaction') {
-      this.system('compact_boundary', 'Контекст сжат', item.id);
+      this.system('compact_boundary', 'Context compacted', item.id);
       return true;
     }
     this.system('codex_item', `Codex: ${item.type}`, item.id);
@@ -295,7 +295,7 @@ export class MirrorWriter {
   plan(turnId: string, version: number, plan: Array<{ step?: unknown; status?: unknown }>, model: string | null): void {
     const id = `plan-${turnId}-${version}`;
     this.toolUse(id, 'TodoWrite', { todos: todosOf(plan) }, model);
-    this.toolResult(id, 'План обновлён', false);
+    this.toolResult(id, 'Plan updated', false);
   }
 
   /** A fork (design D11): the lines of the source with this session, new uuids and the new thread. */
@@ -305,7 +305,7 @@ export class MirrorWriter {
       const copy: Record<string, unknown> = { ...l, sessionId: this.sessionId, uuid, parentUuid: this.parent };
       if (l.type === 'system' && l.subtype === 'agent_provider') {
         copy.threadId = threadId;
-        copy.content = `Codex · поток ${threadId}`;
+        copy.content = `Codex · thread ${threadId}`;
       }
       this.write(copy);
     }

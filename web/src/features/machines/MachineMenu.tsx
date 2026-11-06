@@ -5,6 +5,8 @@
  */
 import { useState } from 'react';
 import type { RunnerView } from '../../api/types';
+import type { MessageKey } from '@agent-hub/shared';
+import { t, useT } from '../../i18n';
 import { useStore } from '../../store';
 import { menuIcon, type MachineMenuIcon } from '../toolwindows/icons';
 import { menuKeys, usePopupMenu } from '../toolwindows/useFlipMenu';
@@ -12,7 +14,7 @@ import { openToolWindow } from '../toolwindows/open';
 import { openFilesForMachine } from '../files/open';
 import { openMachineSettings } from './actions';
 import { useMachineFilter } from './machineFilter';
-import { MARK_TEXT, agentMark, runnerStatusText, runnerTooltip } from './runnerInfo';
+import { agentMark, markText, runnerStatusText, runnerTooltip } from './runnerInfo';
 
 export const dotOf = (r: RunnerView): 'ok' | 'warn' | 'bad' => (r.online ? 'ok' : r.incompatible ? 'warn' : 'bad');
 
@@ -20,29 +22,29 @@ export const dotOf = (r: RunnerView): 'ok' | 'warn' | 'bad' => (r.online ? 'ok' 
 export function chipNote(r: RunnerView): { text: string; upd: boolean } | null {
   if (!r.online) return { text: runnerStatusText(r), upd: false };
   const mark = agentMark(r);
-  return mark ? { text: MARK_TEXT[mark], upd: mark === 'updating' } : null;
+  return mark ? { text: markText(mark), upd: mark === 'updating' } : null;
 }
 
 function info(r: RunnerView): string {
   const tip = runnerTooltip(r);
   const mark = agentMark(r);
-  return r.online ? `в сети · ${tip}${mark ? ` · ${MARK_TEXT[mark]}` : ''}` : tip;
+  return r.online ? `${t('machines.status.online')} · ${tip}${mark ? ` · ${markText(mark)}` : ''}` : tip;
 }
 
 interface Item {
   icon: MachineMenuIcon;
-  text: string;
+  text: MessageKey;
   needsOnline: boolean;
   run: (r: RunnerView) => void;
 }
 
 const ITEMS: Item[] = [
-  { icon: 'new', text: 'Новая сессия', needsOnline: true, run: r => useStore.setState({ modal: { type: 'new', runnerId: r.id } }) },
-  { icon: 'files', text: 'Файлы машины', needsOnline: true, run: r => openFilesForMachine(r.id) },
-  { icon: 'mcp', text: 'MCP-серверы', needsOnline: true, run: r => openMachineSettings(r.id) },
+  { icon: 'new', text: 'machines.menu.new', needsOnline: true, run: r => useStore.setState({ modal: { type: 'new', runnerId: r.id } }) },
+  { icon: 'files', text: 'machines.menu.files', needsOnline: true, run: r => openFilesForMachine(r.id) },
+  { icon: 'mcp', text: 'machines.menu.mcp', needsOnline: true, run: r => openMachineSettings(r.id) },
   {
     icon: 'sess',
-    text: 'Сессии машины',
+    text: 'machines.menu.sessions',
     needsOnline: false,
     run: r => {
       useMachineFilter.getState().set(r.id);
@@ -52,6 +54,7 @@ const ITEMS: Item[] = [
 ];
 
 export function MachineChip({ r }: { r: RunnerView }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const { box, trigger, menu } = usePopupMenu(open, () => setOpen(false));
   const note = chipNote(r);
@@ -66,7 +69,7 @@ export function MachineChip({ r }: { r: RunnerView }) {
     return (
       <button key={item.icon} type="button" role="menuitem" className={dis ? 'dis' : undefined} aria-disabled={dis || undefined} onClick={() => act(item)}>
         <span className="tw-mi">{menuIcon(item.icon)}</span>
-        {item.text}
+        {t(item.text)}
       </button>
     );
   };
@@ -87,7 +90,7 @@ export function MachineChip({ r }: { r: RunnerView }) {
         {note && <span className={`tw-nt${note.upd ? ' upd' : ''}`}> · {note.text}</span>}
       </button>
       {open && (
-        <div ref={menu} className="tw-menu" role="menu" aria-label={`Машина ${r.name}`} onKeyDown={menuKeys}>
+        <div ref={menu} className="tw-menu" role="menu" aria-label={t('machines.menu.label', { name: r.name })} onKeyDown={menuKeys}>
           <div className="tw-mh">
             <b>{r.name}</b>
             {info(r)}
@@ -105,7 +108,7 @@ export function MachineChip({ r }: { r: RunnerView }) {
             }
           >
             <span className="tw-mi">{menuIcon('cfg')}</span>
-            Настройки машины
+            {t('machines.menu.settings')}
           </button>
         </div>
       )}

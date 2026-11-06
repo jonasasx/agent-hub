@@ -7,18 +7,22 @@
  * «Назад» from settings opened in the phone chat (the `auth` note) returns to the chat.
  */
 import { useEffect } from 'react';
+import type { MessageKey } from '@agent-hub/shared';
+import { useT } from '../../i18n';
 import { useStore, type SettingsTab } from '../../store';
 import { SubscriptionsPage, UsagePage } from '../subscriptions/SubscriptionsPage';
+import { LanguagePage } from './LanguagePage';
 import { MachinesPage } from './MachinesPage';
 import { SecurityPage } from './SecurityPage';
 import { UsersPage } from './UsersPage';
 
-const TABS: { id: SettingsTab; label: string; admin?: boolean; subs?: boolean }[] = [
-  { id: 'machines', label: 'Машины' },
-  { id: 'subscriptions', label: 'Подписки', subs: true },
-  { id: 'usage', label: 'Расход', subs: true },
-  { id: 'users', label: 'Пользователи', admin: true },
-  { id: 'security', label: 'Безопасность' },
+const TABS: { id: SettingsTab; label: MessageKey; admin?: boolean; subs?: boolean }[] = [
+  { id: 'machines', label: 'settings.tab.machines' },
+  { id: 'subscriptions', label: 'settings.tab.subscriptions', subs: true },
+  { id: 'usage', label: 'settings.tab.usage', subs: true },
+  { id: 'users', label: 'settings.tab.users', admin: true },
+  { id: 'security', label: 'settings.tab.security' },
+  { id: 'language', label: 'settings.tab.language' },
 ];
 
 type SettingsEntry = { ahSettings: SettingsTab };
@@ -28,8 +32,8 @@ const isOurs = (st: unknown): st is SettingsEntry => !!st && typeof st === 'obje
 export function settingsFromPath(path: string): SettingsTab | 'unknown' | null {
   const m = /^\/settings(?:\/([a-z-]*))?\/?$/.exec(path);
   if (!m) return null;
-  const t = m[1] || 'machines';
-  return (TABS as { id: string }[]).some(x => x.id === t) ? (t as SettingsTab) : 'unknown';
+  const name = m[1] || 'machines';
+  return (TABS as { id: string }[]).some(x => x.id === name) ? (name as SettingsTab) : 'unknown';
 }
 
 /** The phone view settings were opened from (the chat for the `auth` note): «Назад» and «←» go back to it. */
@@ -64,17 +68,18 @@ export function leaveSettingsInPlace(): void {
 }
 
 export function Settings() {
+  const t = useT();
   const tab = useStore(s => s.settings);
   const isAdmin = useStore(s => s.auth.kind === 'signed_in' && s.auth.me.user.role === 'admin');
   const hasSubs = useStore(s => s.subs !== null);
   const subsMissing = useStore(s => s.subsMissing);
   useEffect(() => {
     const onPop = () => {
-      const t = settingsFromPath(location.pathname);
-      if (!t || !isOurs(history.state)) {
+      const target = settingsFromPath(location.pathname);
+      if (!target || !isOurs(history.state)) {
         useStore.setState({ settings: null, inChat: returnInChat });
         returnInChat = false;
-      } else if (t !== 'unknown') useStore.setState({ settings: t });
+      } else if (target !== 'unknown') useStore.setState({ settings: target });
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
@@ -82,28 +87,28 @@ export function Settings() {
   if (!tab) return null;
   const isSubs = tab === 'subscriptions' || tab === 'usage';
   // hidden while the list is not loaded yet; «Страница не найдена» only once the hub said 404
-  const tabs = TABS.filter(t => (!t.admin || isAdmin) && (!t.subs || hasSubs));
+  const tabs = TABS.filter(x => (!x.admin || isAdmin) && (!x.subs || hasSubs));
   const forbidden = (tab === 'users' && !isAdmin) || (isSubs && subsMissing);
   return (
-    <div className="pane settings" role="region" aria-label="Настройки">
+    <div className="pane settings" role="region" aria-label={t('settings.title')}>
       <div className="set-top">
-        <button type="button" className="icon-btn" aria-label="Закрыть настройки" title="Закрыть" onClick={closeSettings}>
+        <button type="button" className="icon-btn" aria-label={t('settings.close')} title={t('settings.closeShort')} onClick={closeSettings}>
           ←
         </button>
-        <h1>Настройки</h1>
+        <h1>{t('settings.title')}</h1>
       </div>
-      <nav className="set-nav" aria-label="Разделы настроек">
-        {tabs.map(t => (
-          <button key={t.id} type="button" className={t.id === tab ? 'on' : ''} aria-current={t.id === tab ? 'page' : undefined} onClick={() => openSettings(t.id)}>
-            {t.label}
+      <nav className="set-nav" aria-label={t('settings.navLabel')}>
+        {tabs.map(x => (
+          <button key={x.id} type="button" className={x.id === tab ? 'on' : ''} aria-current={x.id === tab ? 'page' : undefined} onClick={() => openSettings(x.id)}>
+            {t(x.label)}
           </button>
         ))}
       </nav>
       <div className="set-body">
         {forbidden ? (
           <section>
-            <h2>Страница не найдена</h2>
-            <p className="hint">Такого раздела нет.</p>
+            <h2>{t('settings.notFound.title')}</h2>
+            <p className="hint">{t('settings.notFound.text')}</p>
           </section>
         ) : tab === 'machines' ? (
           <MachinesPage />
@@ -113,8 +118,10 @@ export function Settings() {
           <UsagePage />
         ) : tab === 'users' ? (
           <UsersPage />
-        ) : (
+        ) : tab === 'security' ? (
           <SecurityPage />
+        ) : (
+          <LanguagePage />
         )}
       </div>
     </div>

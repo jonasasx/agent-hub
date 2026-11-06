@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { PROJECT_COLORS } from '@agent-hub/shared';
 import type { ProjectRef, UserProjectView } from '../../api/types';
 import { api, ApiError } from '../../api/client';
+import { t, useT } from '../../i18n';
 import { useStore } from '../../store';
 import { useDialog, useMenu, useMenuPlacement } from '../ui/a11y';
 import { loadSidebar } from '../workspace/actions';
@@ -11,12 +12,12 @@ import { ProjectPalette } from './ProjectPalette';
 
 export function projectError(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.code === 'binding_conflict') return 'Папка уже привязана к другому проекту';
-    if (error.status === 409) return 'Название проекта уже используется';
-    if (error.status === 404) return 'Проект или машина не найдены';
-    if (error.status === 400) return 'Проверьте название и абсолютные пути папок';
+    if (error.code === 'binding_conflict') return t('projects.err.bindingConflict');
+    if (error.status === 409) return t('projects.err.nameUsed');
+    if (error.status === 404) return t('projects.err.notFound');
+    if (error.status === 400) return t('projects.err.badRequest');
   }
-  return 'Не удалось сохранить изменения. Проверьте связь и попробуйте ещё раз';
+  return t('projects.err.generic');
 }
 export function projectToast(title: string, text: string, action?: { label: string; run: () => void }) {
   useStore.getState().pushToast({ title, text, ...(action ? { action } : {}) });
@@ -35,6 +36,7 @@ export function focusSidebar() {
   setTimeout(() => document.getElementById('sidebar-projects-heading')?.focus(), 0);
 }
 export function ProjectActions({ project, total }: { project: ProjectRef; total: number }) {
+  const tr = useT();
   const [menu, setMenu] = useState(false);
   const [dialog, setDialog] = useState<'edit' | 'delete' | null>(null);
   const [item, setItem] = useState<UserProjectView | null>(null);
@@ -53,7 +55,7 @@ export function ProjectActions({ project, total }: { project: ProjectRef; total:
       const found = (await api.catalogProjects('recent', true)).find(p => p.id === project.id);
       if (!found) {
         setDialog(null);
-        projectToast('Проект не найден', 'Список проектов обновлён');
+        projectToast(t('projects.toast.notFound'), t('projects.toast.listUpdated'));
         await refreshProject(project.id!);
         focusSidebar();
         return;
@@ -61,7 +63,7 @@ export function ProjectActions({ project, total }: { project: ProjectRef; total:
       setItem(found);
     } catch {
       setDialog(null);
-      projectToast('Проект не загружен', 'Проверьте связь и попробуйте ещё раз');
+      projectToast(t('projects.toast.notLoaded'), t('projects.toast.checkConnection'));
     } finally {
       setLoading(false);
     }
@@ -72,17 +74,17 @@ export function ProjectActions({ project, total }: { project: ProjectRef; total:
       await api.hideProjectGroup(project.id!, true);
       await refreshProject(project.id!);
       focusSidebar();
-      projectToast('Скрыто', project.title, {
-        label: 'Отменить',
+      projectToast(t('projects.toast.hidden'), project.title, {
+        label: t('projects.toast.undo'),
         run: () => {
           void api
             .hideProjectGroup(project.id!, false)
             .then(() => refreshProject(project.id!))
-            .catch(error => projectToast('Группа не возвращена', projectError(error)));
+            .catch(error => projectToast(t('projects.toast.notRestored'), projectError(error)));
         },
       });
     } catch (error) {
-      projectToast('Группа не скрыта', projectError(error));
+      projectToast(t('projects.toast.notHidden'), projectError(error));
     }
   }
   async function color(value: UserProjectView['colorKey']) {
@@ -92,14 +94,14 @@ export function ProjectActions({ project, total }: { project: ProjectRef; total:
       else await api.patchCatalogProject(project.id!, { colorKey: value });
       await refreshProject(project.id!);
     } catch (error) {
-      projectToast('Цвет не изменён', projectError(error));
+      projectToast(t('projects.toast.colorFailed'), projectError(error));
     } finally {
       menuRef.current?.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')?.focus();
     }
   }
   return (
     <div className="project-actions" ref={menuRef}>
-      <button type="button" className="icon-btn" aria-label={`Действия проекта ${project.title}`} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}>
+      <button type="button" className="icon-btn" aria-label={tr('projects.actions.label', { title: project.title })} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}>
         ⋯
       </button>
       {menu && (
@@ -112,11 +114,11 @@ export function ProjectActions({ project, total }: { project: ProjectRef; total:
           </div>
           {!project.path && (
             <button type="button" role="menuitem" onClick={() => void open('edit')}>
-              Изменить проект
+              {tr('projects.actions.edit')}
             </button>
           )}
           <button type="button" className={project.path ? '' : 'danger'} role="menuitem" onClick={() => (project.path ? void hide() : void open('delete'))}>
-            {project.path ? 'Скрыть группу' : 'Удалить проект'}
+            {project.path ? tr('projects.actions.hide') : tr('projects.actions.delete')}
           </button>
         </div>
       )}
@@ -130,20 +132,21 @@ export function ProjectActions({ project, total }: { project: ProjectRef; total:
   );
 }
 function LoadingProject({ onClose }: { onClose: () => void }) {
+  const tr = useT();
   const ref = useRef<HTMLElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   useDialog(ref, onClose, close);
   return createPortal(
     <div className="scrim">
-      <section className="modal project-editor" role="dialog" aria-modal="true" aria-label="Загрузка проекта" ref={ref}>
+      <section className="modal project-editor" role="dialog" aria-modal="true" aria-label={tr('projects.actions.loadingTitle')} ref={ref}>
         <header className="modal-head">
-          <h2>Загрузка проекта</h2>
-          <button className="icon-btn" type="button" aria-label="Закрыть" ref={close} onClick={onClose}>
+          <h2>{tr('projects.actions.loadingTitle')}</h2>
+          <button className="icon-btn" type="button" aria-label={tr('projects.dialog.close')} ref={close} onClick={onClose}>
             ×
           </button>
         </header>
         <div className="modal-body" role="status">
-          <span className="spinner" /> Загружаются данные и привязки…
+          <span className="spinner" /> {tr('projects.actions.loadingText')}
         </div>
       </section>
     </div>,
@@ -151,6 +154,7 @@ function LoadingProject({ onClose }: { onClose: () => void }) {
   );
 }
 function ProjectDialog({ project, item, mode, total, onClose }: { project: ProjectRef; item: UserProjectView; mode: 'edit' | 'delete'; total: number; onClose: () => void }) {
+  const tr = useT();
   const runners = useStore(s => s.runners);
   const [name, setName] = useState(item.name);
   const [description, setDescription] = useState(item.description);
@@ -174,7 +178,7 @@ function ProjectDialog({ project, item, mode, total, onClose }: { project: Proje
   );
   async function submit() {
     if (mode === 'edit' && !name.trim()) {
-      setError('Введите название проекта');
+      setError(t('projects.new.nameRequired'));
       setNameInvalid(true);
       nameRef.current?.focus();
       return;
@@ -216,12 +220,12 @@ function ProjectDialog({ project, item, mode, total, onClose }: { project: Proje
         aria-modal="true"
         aria-hidden={picker !== null}
         aria-busy={busy}
-        aria-label={mode === 'edit' ? 'Изменить проект' : 'Удалить проект'}
+        aria-label={mode === 'edit' ? tr('projects.actions.edit') : tr('projects.actions.delete')}
         ref={ref}
       >
         <header className="modal-head">
-          <h2>{mode === 'edit' ? 'Изменить проект' : 'Удалить проект'}</h2>
-          <button type="button" className="icon-btn" aria-label="Закрыть" disabled={busy} onClick={onClose}>
+          <h2>{mode === 'edit' ? tr('projects.actions.edit') : tr('projects.actions.delete')}</h2>
+          <button type="button" className="icon-btn" aria-label={tr('projects.dialog.close')} disabled={busy} onClick={onClose}>
             ×
           </button>
         </header>
@@ -235,18 +239,18 @@ function ProjectDialog({ project, item, mode, total, onClose }: { project: Proje
           <div className="modal-body" inert={busy}>
             {mode === 'delete' ? (
               <>
-                <p>Удалить «{project.title}»?</p>
-                <p>Сессии ({total}), сообщения и транскрипты сохранятся.</p>
+                <p>{tr('projects.dialog.confirm', { title: project.title })}</p>
+                <p>{tr('projects.dialog.kept', { count: total })}</p>
                 <ul className="project-consequences">
-                  <li>Останется: сессии ({total}) и транскрипты</li>
-                  <li>Будет удалено: проект и привязки к папкам</li>
+                  <li>{tr('projects.dialog.keepItem', { count: total })}</li>
+                  <li>{tr('projects.dialog.removeItem')}</li>
                 </ul>
-                <p>Сессии вернутся в автоматические группы или в «Без проекта».</p>
+                <p>{tr('projects.dialog.moveBack')}</p>
               </>
             ) : (
               <>
                 <div className="field">
-                  <label htmlFor="project-name">Название</label>
+                  <label htmlFor="project-name">{tr('projects.dialog.name')}</label>
                   <input
                     id="project-name"
                     ref={nameRef}
@@ -269,19 +273,19 @@ function ProjectDialog({ project, item, mode, total, onClose }: { project: Proje
                   )}
                 </div>
                 <fieldset>
-                  <legend>Цвет проекта</legend>
+                  <legend>{tr('projects.palette.label')}</legend>
                   <ProjectPalette value={color} onChange={setColor} />
                 </fieldset>
                 <label className="field">
-                  Описание
+                  {tr('projects.dialog.description')}
                   <textarea className="input" maxLength={2000} value={description} onChange={event => setDescription(event.target.value)} />
                 </label>
                 <label className="field">
-                  Remote Git
+                  {tr('projects.dialog.remote')}
                   <input className="input" maxLength={2000} value={remote} onChange={event => setRemote(event.target.value)} />
                 </label>
                 <fieldset>
-                  <legend>Папки на машинах</legend>
+                  <legend>{tr('projects.dialog.folders')}</legend>
                   {Array.from(new Set([...runners.map(r => r.id), ...Object.keys(paths)])).map(id => (
                     <div className="project-binding" key={id}>
                       <label htmlFor={`binding-${id}`}>{runners.find(r => r.id === id)?.name ?? id}</label>
@@ -295,11 +299,11 @@ function ProjectDialog({ project, item, mode, total, onClose }: { project: Proje
                           onChange={event => setPaths({ ...paths, [id]: event.target.value })}
                         />
                         <button type="button" className="btn" disabled={!runners.find(r => r.id === id)?.online} onClick={() => setPicker(id)}>
-                          Выбрать…
+                          {tr('projects.dialog.choose')}
                         </button>
                         {paths[id] && (
-                          <button type="button" className="btn" aria-label={`Убрать привязку ${id}`} onClick={() => setPaths({ ...paths, [id]: '' })}>
-                            Убрать
+                          <button type="button" className="btn" aria-label={tr('projects.dialog.unbindLabel', { id })} onClick={() => setPaths({ ...paths, [id]: '' })}>
+                            {tr('projects.dialog.unbind')}
                           </button>
                         )}
                       </div>
@@ -316,10 +320,10 @@ function ProjectDialog({ project, item, mode, total, onClose }: { project: Proje
               </p>
             )}
             <button ref={cancelRef} type="button" className="btn" disabled={busy} onClick={onClose}>
-              Отмена
+              {tr('projects.dialog.cancel')}
             </button>
             <button className={`btn ${mode === 'delete' ? 'danger' : 'primary'}`} type="submit" disabled={busy}>
-              {busy ? 'Сохранение…' : mode === 'delete' ? 'Удалить проект' : 'Сохранить'}
+              {busy ? tr('projects.dialog.saving') : mode === 'delete' ? tr('projects.actions.delete') : tr('projects.dialog.save')}
             </button>
           </footer>
         </form>

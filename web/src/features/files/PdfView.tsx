@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { useT } from '../../i18n';
 import { ViewerEmpty } from './fileViews';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
@@ -21,6 +22,7 @@ interface Props {
 }
 
 export default function PdfView({ data, zoom, onPages, onPage }: Props) {
+  const t = useT();
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [ratio, setRatio] = useState(1.414);
   const [failed, setFailed] = useState(false);
@@ -78,15 +80,16 @@ export default function PdfView({ data, zoom, onPages, onPage }: Props) {
     return () => io.disconnect();
   }, [doc, zoom, onPage]);
 
-  if (failed) return <ViewerEmpty big="Не удалось открыть PDF">Файл повреждён или защищён паролем</ViewerEmpty>;
+  if (failed) return <ViewerEmpty big={t('files.pdf.openFailed')}>{t('files.pdf.openFailedHint')}</ViewerEmpty>;
   return (
     <div className="fx-pdf" style={{ '--pz': zoom } as React.CSSProperties} ref={rootRef} data-testid="pdf-view">
-      {doc ? Array.from({ length: doc.numPages }, (_, i) => <PdfPage key={i} doc={doc} n={i + 1} ratio={ratio} zoom={zoom} />) : <div className="fx-note-center">Загрузка…</div>}
+      {doc ? Array.from({ length: doc.numPages }, (_, i) => <PdfPage key={i} doc={doc} n={i + 1} ratio={ratio} zoom={zoom} />) : <div className="fx-note-center">{t('files.loading')}</div>}
     </div>
   );
 }
 
 function PdfPage({ doc, n, ratio, zoom }: { doc: PDFDocumentProxy; n: number; ratio: number; zoom: number }) {
+  const t = useT();
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [near, setNear] = useState(false);
@@ -130,11 +133,11 @@ function PdfPage({ doc, n, ratio, zoom }: { doc: PDFDocumentProxy; n: number; ra
   }, [near, doc, n, zoom]);
 
   return (
-    <div className="fx-pdf-page" ref={box} data-page={n} style={{ aspectRatio: `1 / ${ratio}` }} aria-label={`Страница ${n}`}>
+    <div className="fx-pdf-page" ref={box} data-page={n} style={{ aspectRatio: `1 / ${ratio}` }} aria-label={t('files.pdf.page', { n })}>
       <canvas ref={canvas} />
       {failed && (
         <div className="fx-note-center" role="alert">
-          Не удалось показать страницу {n}
+          {t('files.pdf.pageFailed', { n })}
         </div>
       )}
       <div className="pno">{n}</div>

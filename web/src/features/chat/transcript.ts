@@ -8,7 +8,8 @@
  * and so does a big output Claude Code saved to tool-results (its copy on the hub, `sideFiles`).
  */
 import type { HubEvent, PermissionView, SideFileRef, SubscriptionNote, TranscriptLine } from '../../api/types';
-import { parsePeerMessage } from '@agent-hub/shared';
+import { parsePeerMessage, type I18nText } from '@agent-hub/shared';
+import { t as tr, hubText } from '../../i18n';
 import { imageOfBlock, type ImageRef } from '../images/format';
 import { answeredText, askKind } from './AskCards';
 
@@ -51,7 +52,7 @@ export type ChatItem =
       diff: DiffLine[] | null;
       images: ImageRef[];
     }
-  | { kind: 'note'; id: string; text: string; undelivered?: Undelivered; subscription?: SubscriptionNote }
+  | { kind: 'note'; id: string; text: string; i18nKey?: string; undelivered?: Undelivered; subscription?: SubscriptionNote }
   | { kind: 'permission'; id: string; request: PermissionView };
 
 /** The sender of a hub peer message: the session to open, its title and machine as the sender saw them. */
@@ -68,7 +69,14 @@ type Block = Record<string, unknown> & { type?: string };
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const INTERRUPTED = /^\[Request interrupted by user/;
-const INTERRUPTED_NOTE = 'Ход прерван';
+/** The text of the hub's note «turn interrupted» as the hub sent it (Russian before it wrote English), and as the feed shows it. */
+const HUB_INTERRUPTED_TEXTS = ['Ход прерван', 'Turn interrupted'];
+const interruptedNote = () => tr('chat.tr.interrupted');
+const HUB_INTERRUPTED_KEY = 'hub.sessions.noteInterrupted';
+const isInterruptedNote = (text: string, key?: string) => key === HUB_INTERRUPTED_KEY || text === interruptedNote() || HUB_INTERRUPTED_TEXTS.includes(text);
+
+/** A hub note in the interface language: by its `i18n` key when the hub sent one, the stored text otherwise (older notes). */
+export const noteText = (ev: { text: string; i18n?: I18nText }): string => hubText(ev.text, ev.i18n);
 
 function shortCmd(s: string, max = 200): string {
   const one = s.replace(/\s+/g, ' ').trim();
@@ -99,7 +107,7 @@ export function toolTarget(name: string, input: unknown): string {
     case 'ApplyPatch': {
       // agent-providers: the file changes of Codex
       const files = Array.isArray(i.changes) ? (i.changes as Record<string, unknown>[]).map(c => str(c.path)).filter(Boolean) : [];
-      return files.length > 1 ? `${files[0]} и ещё ${files.length - 1}` : (files[0] ?? '');
+      return files.length > 1 ? tr('chat.tr.andMore', { first: files[0]!, count: files.length - 1 }) : (files[0] ?? '');
     }
     case 'Task':
     case 'Agent':
@@ -151,7 +159,7 @@ export function patchDiff(input: unknown): DiffLine[] {
   const out: DiffLine[] = [];
   for (const c of changes) {
     const kind = str(c.kind);
-    out.push({ kind: 'hunk', text: `${kind === 'add' ? 'новый файл' : kind === 'delete' ? 'удалён' : 'изменён'}: ${str(c.path)}` });
+    out.push({ kind: 'hunk', text: `${kind === 'add' ? tr('chat.tr.newFile') : kind === 'delete' ? tr('chat.tr.deleted') : tr('chat.tr.changed')}: ${str(c.path)}` });
     const lines = linesOf(str(c.diff)).filter(l => !/^(---|\+\+\+) /.test(l) && !/^diff --git /.test(l) && !/^index [0-9a-f]/.test(l));
     const unified = lines.some(l => l.startsWith('@@'));
     for (const l of lines) {
@@ -240,13 +248,13 @@ const TEAMMATE = /^<teammate-message\s+teammate_id="([^"]+)"[^>]*>([\s\S]*?)(?:<
 export function notificationText(content: string): string {
   const summary = /<summary>([\s\S]*?)<\/summary>/.exec(content)?.[1]?.trim();
   const status = /<status>([^<]+)<\/status>/.exec(content)?.[1]?.trim();
-  return `Уведомление: ${summary || (status ? `задача ${status}` : 'задача')}`;
+  return tr('chat.tr.notification', { text: summary || (status ? tr('chat.tr.taskStatus', { status }) : tr('chat.tr.task')) });
 }
 
 function userText(content: string): ChatItem | null {
   if (INTERRUPTED.test(content)) return null;
   const cmd = /<command-name>([^<]+)<\/command-name>/.exec(content);
-  if (cmd) return { kind: 'note', id: '', text: `Команда ${cmd[1]!.trim()}` };
+  if (cmd) return { kind: 'note', id: '', text: tr('chat.tr.command', { name: cmd[1]!.trim() }) };
   const t = content.trimStart();
   // change `session-peers` D8: a message of another hub session, wrapped by the hub
   const hub = parsePeerMessage(t);
@@ -255,9 +263,9 @@ function userText(content: string): ChatItem | null {
     return {
       kind: 'peer',
       id: '',
-      from: e.title || 'сессия',
+      from: e.title || tr('chat.tr.session'),
       text: hub.text,
-      session: { id: e.from, title: e.title || 'сессия', machine: e.machine, ...(e.inReplyTo ? { inReplyTo: e.inReplyTo } : {}), ...(e.kind ? { kind: e.kind } : {}) },
+      session: { id: e.from, title: e.title || tr('chat.tr.session'), machine: e.machine, ...(e.inReplyTo ? { inReplyTo: e.inReplyTo } : {}), ...(e.kind ? { kind: e.kind } : {}) },
     };
   }
   // change `subagents` S9: a teammate's message to the lead is not the user's message
@@ -278,9 +286,9 @@ function queuedItem(line: TranscriptLine, later: HubEvent[]): ChatItem | null {
   if (!a || a.type !== 'queued_command') return null;
   const prompt = typeof a.prompt === 'string' ? a.prompt : Array.isArray(a.prompt) ? a.prompt.map(b => (b && typeof b === 'object' ? str((b as { text?: unknown }).text) : '')).join('\n') : '';
   const o = a.origin;
-  if (o?.kind === 'peer') return { kind: 'peer', id: '', from: o.name ?? 'агент', text: (o.body ?? prompt).trim() };
+  if (o?.kind === 'peer') return { kind: 'peer', id: '', from: o.name ?? tr('chat.tr.agent'), text: (o.body ?? prompt).trim() };
   if (o?.kind === 'task-notification' || prompt.trimStart().startsWith('<task-notification'))
-    return { kind: 'note', id: '', text: o?.summary ? `Уведомление: ${o.summary}` : notificationText(prompt) };
+    return { kind: 'note', id: '', text: o?.summary ? tr('chat.tr.notification', { text: o.summary }) : notificationText(prompt) };
   const fromUserText = userText(prompt);
   if (fromUserText?.kind !== 'user') return fromUserText;
   const same = later.slice(0, 50).some(e => {
@@ -296,11 +304,11 @@ function queuedItem(line: TranscriptLine, later: HubEvent[]): ChatItem | null {
 function systemNote(line: TranscriptLine): string | null {
   switch (line.subtype) {
     case 'compact_boundary':
-      return 'Контекст сжат';
+      return tr('chat.tr.compacted');
     case 'api_error': {
       const formatted = str((line.error as { formatted?: unknown } | undefined)?.formatted);
       const what = line.content ? str(line.content) : formatted;
-      return `Ошибка API${what ? `: ${what}` : ''}`;
+      return what ? tr('chat.tr.apiErrorWhat', { what }) : tr('chat.tr.apiError');
     }
     case 'informational':
       return str(line.content) || null;
@@ -420,12 +428,12 @@ export function buildChat(events: HubEvent[]): ChatItem[] {
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i]!;
       if (it.kind === 'user') return false;
-      if (it.kind === 'note' && it.text === INTERRUPTED_NOTE) return true;
+      if (it.kind === 'note' && isInterruptedNote(it.text, it.i18nKey)) return true;
     }
     return false;
   };
   const pushInterrupted = (id: string) => {
-    if (!interruptedInTurn()) push({ kind: 'note', id: '', text: INTERRUPTED_NOTE }, id);
+    if (!interruptedInTurn()) push({ kind: 'note', id: '', text: interruptedNote() }, id);
   };
   // QA obs 3: the retries of one API error (Claude Code writes a line per attempt) are one note with their count
   let apiError: { item: Extract<ChatItem, { kind: 'note' }>; text: string; n: number } | null = null;
@@ -436,8 +444,8 @@ export function buildChat(events: HubEvent[]): ChatItem[] {
       if (!imageNote(ev)) {
         const u = undeliveredOf(ev);
         const sub = subscriptionOf(ev);
-        if (ev.text === INTERRUPTED_NOTE && !u && !sub) pushInterrupted(ev.id);
-        else push({ kind: 'note', id: '', text: ev.text, ...(u ? { undelivered: u } : {}), ...(sub ? { subscription: sub } : {}) }, ev.id);
+        if (isInterruptedNote(ev.text, ev.i18n?.key) && !u && !sub) pushInterrupted(ev.id);
+        else push({ kind: 'note', id: '', text: noteText(ev), ...(ev.i18n ? { i18nKey: ev.i18n.key } : {}), ...(u ? { undelivered: u } : {}), ...(sub ? { subscription: sub } : {}) }, ev.id);
       }
       continue;
     }
@@ -445,7 +453,7 @@ export function buildChat(events: HubEvent[]): ChatItem[] {
       const r = ev.request;
       if (r.resolvedAt && r.decision && askKind(r) !== 'tool') push({ kind: 'note', id: '', text: answeredText(r) }, ev.id);
       else if (r.resolvedAt && r.decision) {
-        const verdict = r.decision === 'deny' ? 'запрещено' : r.decision === 'allow_session' ? 'разрешено в этой сессии' : 'разрешено';
+        const verdict = r.decision === 'deny' ? tr('chat.tr.denied') : r.decision === 'allow_session' ? tr('chat.tr.allowedSession') : tr('chat.tr.allowed');
         push({ kind: 'note', id: '', text: `${r.toolName}: ${verdict}${r.message ? ` — ${r.message}` : ''}` }, ev.id);
       } else push({ kind: 'permission', id: '', request: r }, ev.id);
       continue;
@@ -522,7 +530,7 @@ export function buildChat(events: HubEvent[]): ChatItem[] {
       if (!t) continue;
       if (line.subtype === 'api_error' && apiError && items.at(-1) === apiError.item && apiError.text === t) {
         apiError.n++;
-        apiError.item.text = `${t} (попыток: ${apiError.n})`;
+        apiError.item.text = tr('chat.tr.attempts', { text: t, n: apiError.n });
         continue;
       }
       push({ kind: 'note', id: '', text: t }, ev.id);

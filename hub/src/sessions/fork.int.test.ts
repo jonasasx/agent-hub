@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { HandoffDraftView, SessionView } from '@agent-hub/shared';
 import type { MemoryStore } from '../storage/objectStore.js';
-import { FIXTURE_MAPPING, FIXTURE_VAULT, PUBLIC_URL, agentSend, autoReply, connectFakeAgent, connectUi, startTestHub, waitFor, type FakeAgent, type TestHub } from '../test/harness.js';
+import { FIXTURE_VAULT, PUBLIC_URL, agentSend, autoReply, connectFakeAgent, connectUi, startTestHub, waitFor, type FakeAgent, type TestHub } from '../test/harness.js';
+import { seedFixtureVault } from '../test/legacyCatalog.js';
 import * as F from '../test/transcriptFixtures.js';
 import { buildTranscript, scrubSidePaths } from './handoff.js';
 
@@ -41,11 +42,12 @@ describe('fork (integration)', () => {
   }
 
   beforeAll(async () => {
-    t = await startTestHub({ env: { VAULT_DIR: FIXTURE_VAULT, LEGACY_PATHS_FILE: FIXTURE_MAPPING, HANDOFF_MODEL: 'haiku' }, sessions: { idleCheckMs: 0 } });
+    t = await startTestHub({ env: { HANDOFF_MODEL: 'haiku' }, sessions: { idleCheckMs: 0 } });
     const hpToken = await t.addRunner('hp', 'HP');
     const vmToken = await t.addRunner('vm', 'ВМ .3');
     await t.tdb.pool.query(`UPDATE runners SET is_utility = true WHERE id = 'vm'`);
     cookie = await t.login();
+    await seedFixtureVault(t.tdb.db, t.hub.projects.catalog, FIXTURE_VAULT);
     hp = connectFakeAgent(t.wsBase, hpToken);
     vm = connectFakeAgent(t.wsBase, vmToken, { hostname: 'vault', os: 'Ubuntu 24.04', homeDir: '/home/ubuntu', vaultRoot: '/home/ubuntu/vault' });
     for (const [a, replies] of [
@@ -79,7 +81,7 @@ describe('fork (integration)', () => {
     const res = await api('POST', `/api/sessions/${src}/fork`, { mode: 'copy' });
     expect(res.statusCode).toBe(201);
     const v = res.json() as SessionView;
-    expect(forks).toEqual([{ sourceSessionId: sid, cwd: o.cwd, title: 'запомни 4817 (копия)' }]);
+    expect(forks).toEqual([{ sourceSessionId: sid, cwd: o.cwd, title: 'запомни 4817 (copy)' }]);
     expect(v).toMatchObject({
       id: copySid,
       runnerId: 'hp',
@@ -90,7 +92,7 @@ describe('fork (integration)', () => {
       model: 'haiku',
       forkOf: { id: src, title: 'запомни 4817' },
       projectSource: 'inherited',
-      projectEvidence: 'унаследовано от родителя',
+      projectEvidence: 'inherited from the parent',
     });
     expect(v.project.id).toBe(before.project_id);
     expect((await t.tdb.pool.query(`SELECT fork_mode FROM sessions WHERE id = $1`, [copySid])).rows[0].fork_mode).toBe('copy');
@@ -108,22 +110,22 @@ describe('fork (integration)', () => {
     await waitFor(() => got.some(m => m.type === 'session.resume' && m.payload.sessionId === copySid));
   });
 
-  it('copies of one source are numbered: «X (копия)», «X (копия 2)», «X (копия 3)»; a copy of a copy counts from the base', async () => {
+  it('copies of one source are numbered: «X (copy)», «X (copy 2)», «X (copy 3)»; a copy of a copy counts from the base', async () => {
     const sid = randomUUID();
     const o = { sessionId: sid, cwd: VAULT, entrypoint: 'cli' as const };
     const src = await chunk(hp, sid, `c--Users-alice-vault/${sid}.jsonl`, [F.userText(o, 'нумерация_копий 50%'), F.assistantText(o, 'ок')]);
     const titles: string[] = [];
     hpReply.set('session.fork', p => (titles.push(String(p.title)), { newSessionId: randomUUID() }));
     for (let i = 0; i < 3; i++) expect((await api('POST', `/api/sessions/${src}/fork`, { mode: 'copy' })).statusCode).toBe(201);
-    expect(titles).toEqual(['нумерация_копий 50% (копия)', 'нумерация_копий 50% (копия 2)', 'нумерация_копий 50% (копия 3)']);
-    const copy = (await t.tdb.pool.query<{ id: string }>(`SELECT id FROM sessions WHERE title = 'нумерация_копий 50% (копия 2)'`)).rows[0]!.id;
+    expect(titles).toEqual(['нумерация_копий 50% (copy)', 'нумерация_копий 50% (copy 2)', 'нумерация_копий 50% (copy 3)']);
+    const copy = (await t.tdb.pool.query<{ id: string }>(`SELECT id FROM sessions WHERE title = 'нумерация_копий 50% (copy 2)'`)).rows[0]!.id;
     expect((await api('POST', `/api/sessions/${copy}/fork`, { mode: 'copy' })).statusCode).toBe(201);
-    expect(titles[3]).toBe('нумерация_копий 50% (копия 4)');
+    expect(titles[3]).toBe('нумерация_копий 50% (copy 4)');
     // copies of the source and of a copy at once (different sessions, not serialised): the names differ
     titles.length = 0;
     const res = await Promise.all([api('POST', `/api/sessions/${src}/fork`, { mode: 'copy' }), api('POST', `/api/sessions/${copy}/fork`, { mode: 'copy' })]);
     expect(res.map(r => r.statusCode)).toEqual([201, 201]);
-    expect([...titles].sort()).toEqual(['нумерация_копий 50% (копия 5)', 'нумерация_копий 50% (копия 6)']);
+    expect([...titles].sort()).toEqual(['нумерация_копий 50% (copy 5)', 'нумерация_копий 50% (copy 6)']);
     hpReply.delete('session.fork');
   });
 
@@ -226,7 +228,7 @@ describe('fork (integration)', () => {
     const src = await chunk(hp, sid, `c--Users-alice-vault/${sid}.jsonl`, [F.userText(o, 'цель: починить сборку'), toolUse, toolResult, F.assistantText(o, 'Сборка падает на шаге lint')]);
     await store.put(`side/hp/${sid}/tool-results/b1.txt`, Buffer.from('ПОЛНЫЙ ТЕКСТ ВЫВОДА: ошибка в lint на строке 42'));
     const transcript = await buildTranscript(t.tdb.db, store, { id: src, runner_id: 'hp' });
-    expect(transcript).toContain('Пользователь: цель: починить сборку');
+    expect(transcript).toContain('User: цель: починить сборку');
     expect(transcript).toContain('Tool: Bash cat big.log');
     expect(transcript).toContain('ПОЛНЫЙ ТЕКСТ ВЫВОДА: ошибка в lint на строке 42');
     expect(transcript).not.toContain('tool-results\\b1.txt');
@@ -244,7 +246,7 @@ describe('fork (integration)', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]!.p.model).toBe('haiku');
     expect(String(calls[0]!.p.systemPrompt)).toMatch(
-      /## Цель[\s\S]*## Что сделано[\s\S]*## Текущее состояние[\s\S]*## Решения и почему[\s\S]*## Открытые вопросы[\s\S]*## Ключевые файлы и команды[\s\S]*## Следующий шаг/,
+      /## Goal[\s\S]*## What was done[\s\S]*## Current state[\s\S]*## Decisions and why[\s\S]*## Open questions[\s\S]*## Key files and commands[\s\S]*## Next step/,
     );
     expect(String(calls[0]!.p.transcript)).toContain('ПОЛНЫЙ ТЕКСТ ВЫВОДА');
     await waitFor(() => ui.received.some(m => m.type === 'handoff.draft'));
@@ -258,13 +260,18 @@ describe('fork (integration)', () => {
     const d2 = (await api('POST', `/api/sessions/${src}/handoff-drafts`)).json() as HandoffDraftView;
     await t.hub.handoff.flush();
     expect((await api('GET', `/api/handoff-drafts/${d2.id}`)).json()).toMatchObject({ status: 'ready', text: 'от HP' });
-    // a failure is an error with a Russian text; «Повторить» makes a new draft
+    // a failure is an error with an English text and its key; «Повторить» makes a new draft
     hpReply.set('handoff.generate', () => {
       throw Object.assign(new Error('the model did not answer'), { code: 'generation_failed' });
     });
     const d3 = (await api('POST', `/api/sessions/${src}/handoff-drafts`)).json() as HandoffDraftView;
     await t.hub.handoff.flush();
-    expect((await api('GET', `/api/handoff-drafts/${d3.id}`)).json()).toMatchObject({ status: 'error', text: null, error: expect.stringMatching(/^Не удалось сгенерировать промпт/) });
+    expect((await api('GET', `/api/handoff-drafts/${d3.id}`)).json()).toMatchObject({
+      status: 'error',
+      text: null,
+      error: expect.stringMatching(/^Could not generate the prompt/),
+      errorI18n: { key: 'hub.handoff.failed' },
+    });
     expect((await api('GET', `/api/handoff-drafts/${randomUUID()}`)).statusCode).toBe(404);
     // one draft in the works per session: a repeated request while it is generated gets the same draft
     let gens = 0;
@@ -306,7 +313,7 @@ describe('fork (integration)', () => {
       forkOf: { id: src },
       project: { title: '01-ledger' },
       projectSource: 'inherited',
-      projectEvidence: 'унаследовано от родителя',
+      projectEvidence: 'inherited from the parent',
     });
     const start = await waitFor(() => got.find(m => m.type === 'session.start' && m.payload.sessionId === v.id));
     expect(start.payload).toMatchObject({ cwd: '/home/ubuntu/vault', prompt: '## Цель\nПродолжить бухгалтерию' });
@@ -321,6 +328,6 @@ describe('fork (integration)', () => {
   it('scrubSidePaths: Windows and POSIX paths of side files', () => {
     const s =
       'a C:\\Users\\x\\.claude\\projects\\p\\0f8fad5b-d9cb-469f-a165-70867728950e\\tool-results\\b1.txt b /home/u/.claude/projects/p/0f8fad5b-d9cb-469f-a165-70867728950e/tool-results/x-2.json c';
-    expect(scrubSidePaths(s)).toBe('a [вывод b1.txt] b [вывод x-2.json] c');
+    expect(scrubSidePaths(s)).toBe('a [output b1.txt] b [output x-2.json] c');
   });
 });

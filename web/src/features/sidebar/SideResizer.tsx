@@ -7,11 +7,14 @@ import { useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { sideOpen } from '../toolwindows/dock';
 import { useDock } from '../toolwindows/useDock';
 import { SIDE_DEFAULT, SIDE_MAX, SIDE_MIN, clampSideWidth, reservedFor, type WidthSide } from './sideWidth';
+import { useT } from '../../i18n';
+import type { MessageKey } from '@agent-hub/shared';
 
 const STEP = 16;
-const LABEL: Record<WidthSide, string> = { left: 'Ширина панели', right: 'Ширина правой панели' };
+const LABEL: Record<WidthSide, MessageKey> = { left: 'workspace.sidebar.widthLeft', right: 'workspace.sidebar.widthRight' };
 
 export function SideResizer({ side = 'left' }: { side?: WidthSide }) {
+  const t = useT();
   const dock = useDock(s => s.dock);
   const setWidth = useDock(s => s.setWidth);
   const [dragging, setDragging] = useState(false);
@@ -64,12 +67,12 @@ export function SideResizer({ side = 'left' }: { side?: WidthSide }) {
       className={`side-resizer ${side}${dragging ? ' dragging' : ''}`}
       role="separator"
       aria-orientation="vertical"
-      aria-label={LABEL[side]}
+      aria-label={t(LABEL[side])}
       aria-valuemin={SIDE_MIN}
       aria-valuemax={SIDE_MAX}
       aria-valuenow={width}
       tabIndex={0}
-      title="Потяните, чтобы изменить ширину. Двойной клик — по умолчанию"
+      title={t('workspace.sidebar.resizeHint')}
       onPointerDown={onPointerDown}
       onDoubleClick={() => setWidth(side, SIDE_DEFAULT)}
       onKeyDown={onKeyDown}

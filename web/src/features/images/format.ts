@@ -2,6 +2,7 @@
  * Image references, captions and format detection (design.md D19). Requirement (chat-images): Изображения от агента
  * в чате (caption «PNG · 1280×720 · 184 КБ»); Форматы и размеры изображений пользователя (format by content).
  */
+import { fmt, t } from '../../i18n';
 
 /** An image stored in the hub (`blobs/<sha256>`): a `$blob` of an image block, an upload or a shown local file. */
 export interface ImageRef {
@@ -19,9 +20,9 @@ export type ImageMime = (typeof IMAGE_MIMES)[number];
 
 /** «184 КБ», «1,2 МБ», «512 Б». */
 export function formatBytes(n: number): string {
-  if (n < 1024) return `${n} Б`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} КБ`;
-  return `${(n / 1024 / 1024).toFixed(1).replace('.', ',')} МБ`;
+  if (n < 1024) return t('chat.images.size.b', { n });
+  if (n < 1024 * 1024) return t('chat.images.size.kb', { n: Math.round(n / 1024) });
+  return t('chat.images.size.mb', { n: fmt.number(n / 1024 / 1024, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) });
 }
 
 /** «PNG · 1280×720 · 184 КБ»; parts that are unknown are left out. */

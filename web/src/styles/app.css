@@ -746,6 +746,11 @@ select.mini { max-width: 18ch; } /* L9 */
 .set-head h2, .set-body h2 { font-size: 15px; margin: 0; flex: 1; }
 .set-sub { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--faint); margin: 14px 0 2px; font-weight: 600; list-style: none; }
 .set-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.lang-list { display: flex; flex-direction: column; gap: 6px; max-width: 420px; }
+.lang-opt { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--side); padding: 10px 14px; font-size: 13px; cursor: pointer; min-width: 0; overflow-wrap: anywhere; }
+.lang-opt.on { border-color: var(--accent); background: var(--accent-soft); }
+.lang-opt:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+.lang-opt input { flex: none; accent-color: var(--accent); }
 
 .mcards, .ulist, .ilist, .slist, .elist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .mcard, .urow { border: 1px solid var(--line); border-radius: 10px; background: var(--side); padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }

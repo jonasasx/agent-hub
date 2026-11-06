@@ -27,7 +27,7 @@ function openSocket(url: string, headers: Record<string, string>, h: SocketHandl
   };
 }
 
-export function createHubClient(s: Session, hubUrl: string, userAgent: string, handlers: Pick<HubClientDeps, 'onState' | 'onSeed' | 'onMessage' | 'onHealth'>): HubClient {
+export function createHubClient(s: Session, hubUrl: string, userAgent: string, handlers: Pick<HubClientDeps, 'onState' | 'onSeed' | 'onLocale' | 'onMessage' | 'onHealth'>): HubClient {
   const client = new HubClient({
     hubUrl,
     userAgent,

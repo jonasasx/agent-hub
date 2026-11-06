@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest';
 import {
   MCP_API_ERRORS,
   MCP_PENDING_ACTIONS,
-  MCP_TEXTS,
   MCP_VIEW_REASONS,
   mcpActionRequestSchema,
   mcpAuthCallbackRequestSchema,
@@ -16,6 +15,15 @@ import {
   type SessionView,
   type UiServerMessage,
 } from './index.js';
+
+/** The Russian texts the hub sends on a `ru` request (the dictionaries hold the same). */
+const MCP_TEXTS = {
+  agentOutdated: 'Управление MCP требует обновления агента',
+  resigninHint: 'Прежний вход сброшен — завершите вход, иначе сервер останется без входа',
+  stateMismatch: 'Адрес не от этой попытки входа или без кода — вставьте адрес со страницы этой попытки',
+  processExited: 'Вход прерван: процесс сессии завершился — нажмите «Войти» ещё раз',
+  logoutUnsupported: 'Выход из хаба не поддерживается этой версией Claude Code на машине — выполните claude mcp logout <сервер> в терминале',
+} as const;
 
 const SID = '6f1c2a3b-4d5e-4f60-8a71-92b3c4d5e6f7';
 

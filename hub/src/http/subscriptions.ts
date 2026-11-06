@@ -16,13 +16,14 @@ import {
   type SwitchSubscriptionResponse,
   type RefreshLimitsResponse,
   type SubscriptionLimitsResponse,
+  type I18nText,
 } from '@agent-hub/shared';
 import { HttpError, type SessionService } from '../sessions/service.js';
 import type { SubscriptionService } from '../subscriptions/service.js';
 import type { LimitsService } from '../subscriptions/limits.js';
 
 /** A body error: 422 with `code` when only the token is wrong (bad_token), else 400 as elsewhere. The value is never echoed. */
-function parseBody<T extends z.ZodType>(schema: T, v: unknown, code422?: { field: string; code: string; message: string }): z.infer<T> {
+function parseBody<T extends z.ZodType>(schema: T, v: unknown, code422?: { field: string; code: string; message: I18nText }): z.infer<T> {
   const r = schema.safeParse(v ?? {});
   if (r.success) return r.data;
   if (code422 && r.error.issues.every(i => i.path[0] === code422.field)) throw new HttpError(422, code422.code, code422.message);
@@ -30,7 +31,7 @@ function parseBody<T extends z.ZodType>(schema: T, v: unknown, code422?: { field
   throw new HttpError(400, 'invalid_request', r.error.issues.map(i => `${i.path.join('.') || 'body'}: ${i.message}`).join('; '));
 }
 
-const BAD_TOKEN = { field: 'token', code: 'bad_token', message: 'Токен — от 20 до 4096 символов без пробелов' };
+const BAD_TOKEN = { field: 'token', code: 'bad_token', message: { key: 'hub.subscriptions.badToken' } };
 
 export function registerSubscriptionsApi(app: FastifyInstance, deps: { subscriptions: SubscriptionService; sessions: SessionService; limits?: LimitsService }): void {
   const { subscriptions, sessions, limits } = deps;
@@ -40,7 +41,7 @@ export function registerSubscriptionsApi(app: FastifyInstance, deps: { subscript
 
   app.post('/api/subscriptions', async (req, reply) => {
     // 503 first: without a key nothing is stored, whatever the body
-    if (!subscriptions.enabled) throw new HttpError(503, 'subscriptions_disabled', 'Хранение токенов не настроено: задайте SUBSCRIPTION_TOKEN_KEY');
+    if (!subscriptions.enabled) throw new HttpError(503, 'subscriptions_disabled', { key: 'hub.subscriptions.disabled' });
     const b = parseBody(createSubscriptionRequestSchema, req.body, BAD_TOKEN);
     const v: SubscriptionView = await subscriptions.create(req.user!.id, b);
     return reply.code(201).send(v);
@@ -52,13 +53,13 @@ export function registerSubscriptionsApi(app: FastifyInstance, deps: { subscript
   // before /:id routes: `order` and `usage` are not ids
   app.put('/api/subscriptions/order', async (req): Promise<SubscriptionsResponse> => {
     const r = putSubscriptionOrderRequestSchema.safeParse(req.body ?? {});
-    if (!r.success) throw new HttpError(422, 'bad_order', 'Порядок должен перечислять все активные подписки по одному разу');
+    if (!r.success) throw new HttpError(422, 'bad_order', { key: 'hub.subscriptions.badOrder' });
     return subscriptions.order(req.user!.id, r.data.ids);
   });
 
   app.get('/api/subscriptions/usage', async (req): Promise<SubscriptionUsageResponse> => {
     const r = subscriptionUsageQuerySchema.safeParse(req.query ?? {});
-    if (!r.success) throw new HttpError(422, 'bad_period', 'Период — не больше 366 дней, начало раньше конца');
+    if (!r.success) throw new HttpError(422, 'bad_period', { key: 'hub.subscriptions.badPeriod' });
     return subscriptions.usage(req.user!.id, r.data);
   });
 
@@ -81,10 +82,10 @@ export function registerSubscriptionsApi(app: FastifyInstance, deps: { subscript
   app.patch('/api/subscriptions/:id', async (req): Promise<SubscriptionView> => subscriptions.patch(req.user!.id, idOf(req), parseBody(patchSubscriptionRequestSchema, req.body)));
 
   app.put('/api/subscriptions/:id/token', async (req): Promise<SubscriptionView> => {
-    if (!subscriptions.enabled) throw new HttpError(503, 'subscriptions_disabled', 'Хранение токенов не настроено: задайте SUBSCRIPTION_TOKEN_KEY');
+    if (!subscriptions.enabled) throw new HttpError(503, 'subscriptions_disabled', { key: 'hub.subscriptions.disabled' });
     const b = parseBody(putSubscriptionTokenRequestSchema, req.body, BAD_TOKEN);
     // a Codex subscription is signed in again through codex-login, not by pasting a value
-    if ((await subscriptions.ownMeta(req.user!.id, idOf(req))).provider === 'codex') throw new HttpError(422, 'bad_token', 'Подписка Codex: войдите заново через ChatGPT');
+    if ((await subscriptions.ownMeta(req.user!.id, idOf(req))).provider === 'codex') throw new HttpError(422, 'bad_token', { key: 'hub.subscriptions.codexReloginToken' });
     return subscriptions.replaceToken(req.user!.id, idOf(req), b.token);
   });
 

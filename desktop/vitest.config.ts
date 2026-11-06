@@ -10,5 +10,6 @@ export default defineProject({
     name: 'desktop',
     include: ['src/**/*.test.ts'],
     environment: 'node',
+    setupFiles: ['src/test/setup.ts'],
   },
 });

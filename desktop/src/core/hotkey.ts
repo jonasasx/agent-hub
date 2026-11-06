@@ -1,4 +1,5 @@
 /** Global hotkey choices (design D12). Requirement: Глобальная горячая клавиша. */
+import { dt } from './i18n.js';
 
 export const HOTKEY_DEFAULT = 'Ctrl+Alt+Space';
 
@@ -6,11 +7,11 @@ export const HOTKEY_DEFAULT = 'Ctrl+Alt+Space';
 export const HOTKEY_CHOICES: readonly string[] = ['Ctrl+Alt+Space', 'Ctrl+Alt+A', 'Ctrl+Shift+Space', 'Ctrl+Alt+H'];
 
 export function conflictMessage(accel: string): string {
-  return `Сочетание ${accel} занято другой программой — выберите другое в меню трея`;
+  return dt('desktop.hotkey.conflict', { accel });
 }
 
 /** Label of the tray submenu: the current state of the hotkey. */
 export function hotkeyMenuLabel(hotkey: string | null, registered: boolean): string {
-  if (hotkey === null) return 'Горячая клавиша: отключена';
-  return registered ? `Горячая клавиша: ${hotkey}` : 'Горячая клавиша: не назначена';
+  if (hotkey === null) return dt('desktop.hotkey.disabled');
+  return registered ? dt('desktop.hotkey.active', { hotkey }) : dt('desktop.hotkey.unassigned');
 }

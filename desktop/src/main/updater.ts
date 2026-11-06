@@ -7,6 +7,7 @@ import { app, dialog } from 'electron';
 import electronUpdater from 'electron-updater';
 import { SingleFlight, type UpdateCheckResult, UPDATE_FIRST_CHECK_MS, UPDATE_INTERVAL_MS, manualCheckMessage, updateErrorText, updateFeedUrl, updateRequestHeaders } from '../core/updates.js';
 import { log } from './files.js';
+import { dt } from '../core/i18n.js';
 
 export class Updater {
   private ready = false;
@@ -63,7 +64,7 @@ export class Updater {
    */
   async check(manual: boolean): Promise<void> {
     if (!app.isPackaged) {
-      if (manual) void dialog.showMessageBox({ type: 'info', title: 'Agent Hub', message: `Обновления проверяются только в установленной сборке (версия ${app.getVersion()}).` });
+      if (manual) void dialog.showMessageBox({ type: 'info', title: 'Agent Hub', message: dt('desktop.updates.notPackaged', { version: app.getVersion() }) });
       return;
     }
     let r = await this.flight.run(() => this.runCheck(manual));

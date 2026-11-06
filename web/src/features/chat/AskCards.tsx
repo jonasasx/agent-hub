@@ -12,6 +12,7 @@
 import { useContext, useId, useState } from 'react';
 import type { DecideExtra } from '../../api/client';
 import type { PermissionDecision, PermissionView } from '../../api/types';
+import { t, useT } from '../../i18n';
 import { Markdown } from './Markdown';
 import { AgentProvider } from './agentName';
 import { PROVIDER_LABELS } from '../../api/types';
@@ -61,28 +62,29 @@ export const isRecommended = (label: string) => RECOMMENDED.test(label);
 /** The resolved note: «Вы ответили: …» from the answers the hub kept. */
 export function answeredText(r: PermissionView): string {
   if (askKind(r) === 'plan') {
-    if (r.decision === 'deny') return `План: продолжить планирование${r.message ? ` — ${r.message}` : ''}`;
-    return 'План утверждён';
+    if (r.decision === 'deny') return r.message ? t('chat.ask.planContinueWith', { message: r.message }) : t('chat.ask.planContinue');
+    return t('chat.ask.planApproved');
   }
-  if (r.decision === 'deny') return 'Вопрос без ответа';
+  if (r.decision === 'deny') return t('chat.ask.unanswered');
   // change `subagents` S10.2: «<вопрос> — <ответ>» per line, in the order of the questions
   const answers = (r as PermissionView & { answers?: Record<string, string | string[]> | null }).answers ?? (r.input?.answers as Record<string, string | string[]> | undefined) ?? {};
   const text = (v: string | string[] | undefined) => (Array.isArray(v) ? v.map(cleanLabel).join(', ') : v ? cleanLabel(v) : '');
   const qs = questionsOf(r);
-  const pairs = qs.length ? qs.map(q => `${q.question} — ${text(answers[q.question]) || 'без ответа'}`) : Object.entries(answers).map(([q, v]) => `${q} — ${text(v)}`);
-  return pairs.length ? `Вы ответили:\n${pairs.join('\n')}` : 'Вы ответили';
+  const pairs = qs.length ? qs.map(q => `${q.question} — ${text(answers[q.question]) || t('chat.ask.noAnswer')}`) : Object.entries(answers).map(([q, v]) => `${q} — ${text(v)}`);
+  return pairs.length ? `${t('chat.ask.answeredColon')}\n${pairs.join('\n')}` : t('chat.ask.answered');
 }
 
 type Decide = (d: PermissionDecision, extra?: DecideExtra) => void;
 
 export function QuestionCard({ request, disabled, onDecide }: { request: PermissionView; disabled: boolean; onDecide: Decide }) {
+  const t = useT();
   const agent = PROVIDER_LABELS[useContext(AgentProvider)];
   const qs = questionsOf(request);
   const base = useId();
   const [picked, setPicked] = useState<Record<number, string[]>>({});
   const [other, setOther] = useState<Record<number, string>>({});
   // client-versions D4: a started answer blocks a silent reload
-  useUnsavedInput(!disabled && (Object.values(picked).some(l => l.length > 0) || Object.values(other).some(t => t.trim() !== '')));
+  useUnsavedInput(!disabled && (Object.values(picked).some(l => l.length > 0) || Object.values(other).some(v => v.trim() !== '')));
   /** The hub's contract: the label for one choice, the labels for several, the own text for «Свой ответ». */
   const answerOf = (i: number): string | string[] => {
     const sel = picked[i] ?? [];
@@ -102,12 +104,12 @@ export function QuestionCard({ request, disabled, onDecide }: { request: Permiss
     onDecide('allow', { answers: Object.fromEntries(qs.map((q, i) => [q.question, answerOf(i)])) });
   };
   return (
-    <div className="perm ask" role="group" aria-label={`${agent} задаёт вопрос`}>
+    <div className="perm ask" role="group" aria-label={t('chat.ask.asks', { agent })}>
       <div className="p-head">
         <span className="g-perm" aria-hidden="true">
           ?
         </span>
-        {qs.length > 1 ? `${agent} задаёт ${qs.length} вопроса` : `${agent} задаёт вопрос`}
+        {qs.length > 1 ? t('chat.ask.asksMany', { agent, count: qs.length }) : t('chat.ask.asks', { agent })}
       </div>
       {qs.map((q, i) => {
         const name = `${base}-q${i}`;
@@ -116,7 +118,7 @@ export function QuestionCard({ request, disabled, onDecide }: { request: Permiss
             <legend>
               {q.header && <span className="ask-chip">{q.header}</span>}
               <span className="ask-text">{q.question}</span>
-              {q.multiSelect && <span className="ask-multi">можно несколько</span>}
+              {q.multiSelect && <span className="ask-multi">{t('chat.ask.multi')}</span>}
             </legend>
             <div className="ask-opts">
               {q.options.map(o => {
@@ -134,7 +136,7 @@ export function QuestionCard({ request, disabled, onDecide }: { request: Permiss
                     <span className="ask-body">
                       <b>
                         {cleanLabel(o.label)}
-                        {rec && <span className="ask-rec">рекомендуется</span>}
+                        {rec && <span className="ask-rec">{t('chat.ask.recommended')}</span>}
                       </b>
                       {o.description && <span>{o.description}</span>}
                     </span>
@@ -143,11 +145,11 @@ export function QuestionCard({ request, disabled, onDecide }: { request: Permiss
               })}
             </div>
             <label className="ask-other">
-              <span>Свой ответ</span>
+              <span>{t('chat.ask.other')}</span>
               <input
                 className="input"
                 value={other[i] ?? ''}
-                placeholder={q.multiSelect ? 'Добавить свой вариант' : 'Ответить своими словами'}
+                placeholder={q.multiSelect ? t('chat.ask.addOwn') : t('chat.ask.answerOwn')}
                 onChange={e => setOther(o => ({ ...o, [i]: e.target.value }))}
               />
             </label>
@@ -155,11 +157,11 @@ export function QuestionCard({ request, disabled, onDecide }: { request: Permiss
         );
       })}
       <div className="p-actions">
-        <button type="button" className="btn primary" disabled={disabled || !complete} title={complete ? undefined : 'Ответьте на каждый вопрос'} onClick={submit}>
-          Ответить
+        <button type="button" className="btn primary" disabled={disabled || !complete} title={complete ? undefined : t('chat.ask.answerEach')} onClick={submit}>
+          {t('chat.ask.answer')}
         </button>
         <button type="button" className="btn" disabled={disabled} onClick={() => onDecide('deny')}>
-          Не отвечать
+          {t('chat.ask.decline')}
         </button>
       </div>
     </div>
@@ -167,6 +169,7 @@ export function QuestionCard({ request, disabled, onDecide }: { request: Permiss
 }
 
 export function PlanCard({ request, disabled, onDecide }: { request: PermissionView; disabled: boolean; onDecide: Decide }) {
+  const t = useT();
   const agent = PROVIDER_LABELS[useContext(AgentProvider)];
   const plan = typeof request.input?.plan === 'string' ? request.input.plan : '';
   const [more, setMore] = useState(false);
@@ -174,33 +177,33 @@ export function PlanCard({ request, disabled, onDecide }: { request: PermissionV
   useUnsavedInput(!disabled && comment.trim() !== '');
   const id = useId();
   return (
-    <div className="perm ask plan" role="group" aria-label={`План ${agent}`}>
+    <div className="perm ask plan" role="group" aria-label={t('chat.ask.planOf', { agent })}>
       <div className="p-head">
         <span className="g-perm" aria-hidden="true">
           ✓
         </span>
-        {agent} предлагает план
+        {t('chat.ask.proposesPlan', { agent })}
       </div>
       <div className="plan-body md">
-        <Markdown text={plan || '_План пуст_'} />
+        <Markdown text={plan || t('chat.ask.planEmpty')} />
       </div>
       {more && (
         <label className="ask-other" htmlFor={`${id}-c`}>
-          <span>Что поправить в плане</span>
+          <span>{t('chat.ask.planFix')}</span>
           <textarea id={`${id}-c`} className="input" value={comment} disabled={disabled} onChange={e => setComment(e.target.value)} autoFocus />
         </label>
       )}
       <div className="p-actions">
         <button type="button" className="btn primary" disabled={disabled} onClick={() => onDecide('allow')}>
-          Утвердить план
+          {t('chat.ask.approve')}
         </button>
         {!more ? (
           <button type="button" className="btn" disabled={disabled} onClick={() => setMore(true)}>
-            Продолжить планирование
+            {t('chat.ask.planContinue')}
           </button>
         ) : (
-          <button type="button" className="btn" disabled={disabled} onClick={() => onDecide('deny', { message: comment.trim() || 'Продолжить планирование' })}>
-            Отправить и продолжить планирование
+          <button type="button" className="btn" disabled={disabled} onClick={() => onDecide('deny', { message: comment.trim() || t('chat.ask.planContinue') })}>
+            {t('chat.ask.sendContinue')}
           </button>
         )}
       </div>

@@ -7,8 +7,10 @@ import { WINDOWS } from './windows';
 import { IconBack } from './icons';
 import { useDock } from './useDock';
 import { usePhone } from './usePhone';
+import { useT } from '../../i18n';
 
 export function PhoneWindow() {
+  const t = useT();
   const phone = usePhone();
   const id = useDock(s => s.phoneWin);
   if (!phone || !id) return null;
@@ -17,7 +19,7 @@ export function PhoneWindow() {
   return (
     <section className="tw-phone" data-id={id} aria-label={def.title}>
       <div className="tw-head">
-        <button type="button" className="tw-hbtn tw-back" aria-label="Назад" title="Назад" onClick={backFromWindow}>
+        <button type="button" className="tw-hbtn tw-back" aria-label={t('workspace.toolwindows.back')} title={t('workspace.toolwindows.back')} onClick={backFromWindow}>
           {IconBack}
         </button>
         <span className="tw-title">{def.title}</span>

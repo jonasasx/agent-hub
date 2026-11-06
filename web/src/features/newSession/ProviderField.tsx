@@ -3,13 +3,14 @@
  * offered when the machine reported it signed in; otherwise the option is disabled with the reason. The models of the
  * chosen provider: Claude — the hub's list, Codex — the machine's report.
  */
+import { t, useT } from '../../i18n';
 import { PROVIDER_LABELS, PROVIDERS, type ModelOption, type Provider, type RunnerView } from '../../api/types';
 
 /** Why a provider is not offered on the machine; null — it is. */
 export function providerUnavailable(r: RunnerView | undefined, p: Provider): string | null {
   if (p === 'claude' || !r) return null;
   const st = r.providers?.find(x => x.id === p);
-  if (!st) return 'нет на машине — обновите агента';
+  if (!st) return t('newSession.provider.missing');
   return null;
 }
 
@@ -27,10 +28,11 @@ export function accountLine(r: RunnerView | undefined, p: Provider): string | nu
 }
 
 export function ProviderField({ id, runner, value, onChange }: { id: string; runner: RunnerView | undefined; value: Provider; onChange: (p: Provider) => void }) {
+  useT();
   return (
     <div className="field">
       <span className="lbl" id={`${id}-lbl`}>
-        Агент
+        {t('newSession.provider.label')}
       </span>
       <div className="runner-opts" role="radiogroup" aria-labelledby={`${id}-lbl`}>
         {PROVIDERS.map(p => {

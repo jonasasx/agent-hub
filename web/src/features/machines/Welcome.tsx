@@ -2,9 +2,11 @@
  * Requirement (runner-enrollment): Приветственный экран — a user without machines sees this instead of the work area,
  * without the left panel; one button «Подключить машину». Scenario «Первый вход».
  */
+import { useT } from '../../i18n';
 import { useStore } from '../../store';
 
 export function Welcome({ onLogout }: { onLogout: () => void }) {
+  const t = useT();
   const email = useStore(s => (s.auth.kind === 'signed_in' ? s.auth.me.user.email : ''));
   const name = useStore(s => (s.auth.kind === 'signed_in' ? s.auth.me.user.name : null));
   return (
@@ -16,20 +18,20 @@ export function Welcome({ onLogout }: { onLogout: () => void }) {
           </div>
           Agent Hub
         </div>
-        <h1>{name ? `${name.split(' ')[0]}, добро пожаловать` : 'Добро пожаловать'}</h1>
-        <p>Подключите машину, на которой будут работать ваши агенты: свой компьютер, сервер или ВМ.</p>
+        <h1>{name ? t('machines.welcome.titleNamed', { name: name.split(' ')[0]! }) : t('machines.welcome.title')}</h1>
+        <p>{t('machines.welcome.lead')}</p>
         <ul className="welcome-list">
-          <li>одна команда в терминале — Linux, macOS или Windows;</li>
-          <li>нужна подписка Claude: если входа нет, установщик предложит войти;</li>
-          <li>ваши машины и сессии видите только вы.</li>
+          <li>{t('machines.welcome.item1')}</li>
+          <li>{t('machines.welcome.item2')}</li>
+          <li>{t('machines.welcome.item3')}</li>
         </ul>
         <button type="button" className="btn primary welcome-cta" onClick={() => useStore.setState({ modal: { type: 'enroll' } })}>
-          Подключить машину
+          {t('machines.welcome.cta')}
         </button>
         <p className="welcome-foot">
           {email && <span>{email} · </span>}
           <button type="button" className="lnk" onClick={onLogout}>
-            Выйти
+            {t('machines.welcome.logout')}
           </button>
         </p>
       </div>

@@ -7,7 +7,8 @@
  * - the edge of the app (90 px) while the right side is not used (no window, not even a hidden one): a new slot on the right.
  * The geometry is read from the DOM into a plain `Geo` first, so the zones are plain functions of numbers.
  */
-import { WIN_TITLE, openSlots, where, type Dock, type Side, type Target, type WinId } from './dock';
+import { WIN_TITLE, openSlots, sideName, where, windowNames, type Dock, type Side, type Target, type WinId } from './dock';
+import { t } from '../../i18n';
 
 /** The pointer must move this far before a press becomes a drag. */
 export const DRAG_THRESHOLD = 6;
@@ -47,9 +48,7 @@ export interface DropTarget extends Target {
 const w = (b: Box) => b.right - b.left;
 const h = (b: Box) => b.bottom - b.top;
 const inside = (b: Box, x: number, y: number, pad = 0) => x >= b.left - pad && x <= b.right + pad && y >= b.top && y <= b.bottom;
-const sideName = (side: Side) => (side === 'left' ? 'Слева' : 'Справа');
-const names = (list: WinId[]) => list.map(id => `«${WIN_TITLE[id]}»`).join(', ');
-const tabTo = (list: WinId[]) => `Вкладкой к ${list.length > 1 ? 'окнам' : 'окну'} ${names(list)}`;
+const tabTo = (list: WinId[]) => t('workspace.toolwindows.dropTabTo', { count: list.length, names: windowNames(list) });
 
 /** The share of a window's height that counts as its top or bottom edge. */
 export function edgeShare(height: number): number {
@@ -86,7 +85,7 @@ export function dropTarget(dock: Dock, dragId: WinId, x: number, y: number, geo:
     const prev = rail.groups[si - 1]?.box;
     const next = rail.groups[si]?.box;
     const ly = prev && next ? (prev.bottom + next.top) / 2 : prev ? prev.bottom + 8 : next ? next.top - 8 : rb.top + 60;
-    return { side, si, asNew: true, ...line(ly, `${sideName(side)} · новое окно в столбике`) };
+    return { side, si, asNew: true, ...line(ly, t('workspace.toolwindows.dropNewInColumn', { side: sideName(side) })) };
   }
   // 2. an open window: its top or bottom edge — a new window above/below; the middle — a tab
   for (const p of geo.panels) {
@@ -99,15 +98,15 @@ export function dropTarget(dock: Dock, dragId: WinId, x: number, y: number, geo:
       const below = ry > 0.5;
       rect.h = Math.max(28, Math.min(h(b) / 2, 120));
       if (below) rect.t += h(b) - rect.h;
-      return { side: p.side, si: p.si + (below ? 1 : 0), asNew: true, rect, label: `${below ? 'Под' : 'Над'} «${WIN_TITLE[p.id]}»` };
+      return { side: p.side, si: p.si + (below ? 1 : 0), asNew: true, rect, label: t(below ? 'workspace.toolwindows.dropBelow' : 'workspace.toolwindows.dropAbove', { title: WIN_TITLE[p.id] }) };
     }
     const own = where(dock, dragId);
     if (p.id === dragId && own && own.slot.ids.length === 1) return null;
-    return { side: p.side, si: p.si, idx: null, rect, label: `Вкладкой к окну «${WIN_TITLE[p.id]}»` };
+    return { side: p.side, si: p.si, idx: null, rect, label: tabTo([p.id]) };
   }
   // 3. the right edge while the right side is not used
   if (!dock.right.length && ar.right - x < EDGE_ZONE) {
-    return { side: 'right', si: dock.right.length, asNew: true, rect: { l: w(ar) - edgeWidth, t: 0, w: edgeWidth, h: h(ar) }, label: 'Новое окно справа' };
+    return { side: 'right', si: dock.right.length, asNew: true, rect: { l: w(ar) - edgeWidth, t: 0, w: edgeWidth, h: h(ar) }, label: t('workspace.toolwindows.dropNewRight') };
   }
   return null;
 }

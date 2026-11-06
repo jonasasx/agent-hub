@@ -1,6 +1,5 @@
 // Task 5.3: the model of the MCP panel.
 import { describe, expect, it } from 'vitest';
-import { MCP_TEXTS } from '../../api/types';
 import { ALL_STATUSES, mcpServer, mcpView } from './fixtures';
 import {
   MCP_STATUS_LABEL,
@@ -25,6 +24,13 @@ import {
   resigninHint,
   rowLayout,
 } from './mcpModel';
+
+/** The Russian texts the hub sends on a `ru` request (the dictionaries hold the same). */
+const MCP_TEXTS = {
+  agentOutdated: 'Управление MCP требует обновления агента',
+  notHubManaged: 'MCP видны только у сессий, запущенных или продолженных хабом',
+  resigninHint: 'Прежний вход сброшен — завершите вход, иначе сервер останется без входа',
+} as const;
 
 describe('statuses', () => {
   it('every status has a label and a tone; failed → bad, needs-auth → warn, disabled without a mark', () => {

@@ -28,7 +28,7 @@ describe('/ws/ui and sidebar (integration)', () => {
   it('GET /api/me returns the user', async () => {
     const r = await t.hub.app.inject({ method: 'GET', url: '/api/me', cookies: { ah_session: session } });
     expect(r.statusCode).toBe(200);
-    expect(r.json()).toEqual({ user: { id: expect.any(String), email: 'jonasasx@gmail.com', role: 'admin', name: null, provider: 'google' }, vapidPublicKey: null, voiceInput: false });
+    expect(r.json()).toEqual({ user: { id: expect.any(String), email: 'jonasasx@gmail.com', role: 'admin', name: null, provider: 'google' }, vapidPublicKey: null, voiceInput: false, locale: null });
   });
 
   it('GET /api/sidebar lists runners with status, empty sessions until M2', async () => {

@@ -13,6 +13,7 @@ import { SlotSplitter } from './SlotSplitter';
 import { WindowMenu } from './WindowMenu';
 import { WINDOWS } from './windows';
 import { useDock } from './useDock';
+import { useT } from '../../i18n';
 
 const viewport = () => window.innerWidth;
 function onResize(cb: () => void): () => void {
@@ -22,6 +23,7 @@ function onResize(cb: () => void): () => void {
 export const useViewportWidth = () => useSyncExternalStore(onResize, viewport, () => 1280);
 
 function Header({ id }: { id: WinId }) {
+  useT();
   const def = WINDOWS[id];
   const grab = (e: PointerEvent<HTMLElement>) => {
     if ((e.target as HTMLElement).closest('.tw-hbtn')) return;
@@ -41,6 +43,7 @@ function Header({ id }: { id: WinId }) {
 }
 
 export function Column({ side }: { side: Side }) {
+  const t = useT();
   const dock = useDock(s => s.dock);
   const vw = useViewportWidth();
   const open = openSlots(dock, side);
@@ -62,7 +65,7 @@ export function Column({ side }: { side: Side }) {
         data-side={side}
         data-si={si}
         role={slot.ids.length > 1 ? 'group' : undefined}
-        aria-label={slot.ids.length > 1 ? `${WIN_TITLE[id]} (место: ${slot.ids.map(t => WIN_TITLE[t]).join(', ')})` : WIN_TITLE[id]}
+        aria-label={slot.ids.length > 1 ? t('workspace.toolwindows.place', { title: WIN_TITLE[id], all: slot.ids.map(o => WIN_TITLE[o]).join(', ') }) : WIN_TITLE[id]}
         style={{ flex: `${flex[k]!.grow} 1 ${flex[k]!.basis}` }}
       >
         <Header id={id} />

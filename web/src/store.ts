@@ -17,6 +17,7 @@ import type {
 import { emptyWorkspace, type Workspace } from './features/layout/layout';
 import { regroup, type ProjectItem } from './features/projects/projects';
 import type { McpSessionView, SubscriptionLimitsResponse } from './api/types';
+import { t } from './i18n';
 
 export interface Toast {
   action?: { label: string; run: () => void };
@@ -59,7 +60,7 @@ export type Modal =
  * «Настройки» (change `multi-user`): `/settings/<tab>`; «Пользователи» — only for role admin. claude-subscriptions P12:
  * «Подписки» and «Расход» for every user, absent when the hub has no subscriptions API.
  */
-export type SettingsTab = 'machines' | 'subscriptions' | 'usage' | 'users' | 'security';
+export type SettingsTab = 'machines' | 'subscriptions' | 'usage' | 'users' | 'security' | 'language';
 
 /** A runner of the user that can run sessions: connected at least once and not disabled. */
 export const usableRunner = (r: RunnerView) => r.state !== 'pending' && r.state !== 'disabled';
@@ -219,7 +220,7 @@ export const useStore = create<State>()((set, get) => ({
     set({ runners: prev ? get().runners.map(x => (x.id === r.id ? r : x)) : [...get().runners, r] });
     // Requirement: Онлайн-статус и переподключение — scenario «Машина возвращается».
     if (prev && !prev.online && r.online) {
-      get().pushToast({ title: `${r.name} снова в сети`, text: `Сессии на ${r.name} можно продолжать`, color: 'var(--ok)' });
+      get().pushToast({ title: t('workspace.app.runnerBackTitle', { name: r.name }), text: t('workspace.app.runnerBackText', { name: r.name }), color: 'var(--ok)' });
     }
   },
   pushToast: t => set({ toasts: [...get().toasts, { ...t, id: ++toastSeq }] }),

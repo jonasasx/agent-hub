@@ -3,44 +3,69 @@
  * agoLabel). Requirements: Статусы сессии; Раздел «Сейчас»; Дерево «Проекты».
  */
 import type { ColorKey, DisplayStatus, RunnerView, SessionSource, SessionView } from '../../api/types';
+import { fmt, t } from '../../i18n';
 
-export const STATUS_LABEL: Record<DisplayStatus, string> = {
-  working: 'работает',
-  waiting: 'ждёт ответа',
-  permission: 'ждёт разрешения',
-  sleeping: 'спит',
-  closed: 'завершена',
-  offline: 'машина недоступна',
+/**
+ * The records are getters: the label is translated at the moment of reading (render), so a language change redraws
+ * the interface and consumers that index them (`SOURCE_LABEL[s.source]`) keep working.
+ */
+export const STATUS_LABEL = {
+  get working() {
+    return t('sessions.status.working');
+  },
+  get waiting() {
+    return t('sessions.status.waiting');
+  },
+  get permission() {
+    return t('sessions.status.permission');
+  },
+  get sleeping() {
+    return t('sessions.status.sleeping');
+  },
+  get closed() {
+    return t('sessions.status.closed');
+  },
+  get offline() {
+    return t('sessions.status.offline');
+  },
   // change `subagents` S10.1: the generic label; the exact one («работает в терминале») is externalText(s)
-  external: 'работает вне хаба',
-};
+  get external() {
+    return t('sessions.status.external');
+  },
+} as Record<DisplayStatus, string>;
 
-export const SOURCE_LABEL: Record<SessionSource, string> = {
-  hub: 'хаб',
-  terminal: 'терминал',
-  orca: 'Orca',
-  desktop: 'desktop-приложение',
-  sdk: 'SDK',
-  cron: 'cron',
-  drive_import: 'Drive-импорт',
-};
+export const SOURCE_LABEL = {
+  get hub() {
+    return t('sessions.source.hub');
+  },
+  get terminal() {
+    return t('sessions.source.terminal');
+  },
+  get orca() {
+    return t('sessions.source.orca');
+  },
+  get desktop() {
+    return t('sessions.source.desktop');
+  },
+  get sdk() {
+    return t('sessions.source.sdk');
+  },
+  get cron() {
+    return t('sessions.source.cron');
+  },
+  get drive_import() {
+    return t('sessions.source.drive_import');
+  },
+} as Record<SessionSource, string>;
 
-const WHERE_LABEL: Record<SessionSource, string> = {
-  hub: 'в хабе',
-  terminal: 'в терминале',
-  orca: 'в Orca',
-  desktop: 'в desktop-приложении',
-  sdk: 'через SDK',
-  cron: 'в cron',
-  drive_import: 'вне хаба',
-};
+const whereLabel = (source: SessionSource): string => t(`sessions.where.${source}`);
 
 /**
  * «работает в терминале» etc. while the transcript grows without a hub process (`externalActive`, M4a backend
  * contract: the last 3 minutes); null otherwise. Shown instead of «Завершённая сессия».
  */
 export function externalText(s: SessionView): string | null {
-  return s.externalActive ? `работает ${WHERE_LABEL[s.originSource ?? s.source]}` : null;
+  return s.externalActive ? t('sessions.status.externalWhere', { where: whereLabel(s.originSource ?? s.source) }) : null;
 }
 
 export type RunnerIndex = Record<string, RunnerView | undefined>;
@@ -78,11 +103,11 @@ export function childrenWorking(s: SessionView): number {
  */
 export function statusText(s: SessionView, st: DisplayStatus): string {
   if (st === 'external') return externalText(s) ?? STATUS_LABEL.external;
-  if (st === 'working' && childrenWorking(s) > 0) return 'работает в фоне';
+  if (st === 'working' && childrenWorking(s) > 0) return t('sessions.status.background');
   if (st === 'permission') {
     const tool = s.pendingPermission?.toolName;
-    if (tool === 'AskUserQuestion') return 'ждёт ответа на вопрос';
-    if (tool === 'ExitPlanMode') return 'ждёт утверждения плана';
+    if (tool === 'AskUserQuestion') return t('sessions.status.question');
+    if (tool === 'ExitPlanMode') return t('sessions.status.plan');
   }
   return STATUS_LABEL[st];
 }
@@ -122,20 +147,20 @@ export function tabNeedsGlyph(s: SessionView, runners: RunnerIndex): boolean {
 export function agoLabel(iso: string | null, now = Date.now()): string {
   if (!iso) return '';
   const m = Math.max(0, Math.round((now - Date.parse(iso)) / 60_000));
-  if (m < 1) return 'сейчас';
-  if (m < 60) return `${m} мин`;
-  if (m < 1440) return `${Math.round(m / 60)} ч`;
-  if (m < 2880) return 'вчера';
-  return `${Math.round(m / 1440)} дн`;
+  if (m < 1) return t('sessions.ago.now');
+  if (m < 60) return t('sessions.ago.minutes', { n: m });
+  if (m < 1440) return t('sessions.ago.hours', { n: Math.round(m / 60) });
+  if (m < 2880) return t('sessions.ago.yesterday');
+  return t('sessions.ago.days', { n: Math.round(m / 1440) });
 }
 
 /** «06:41» today, «24.10 06:41» earlier. */
 export function clockLabel(iso: string | null, now = new Date()): string {
   if (!iso) return '—';
   const d = new Date(iso);
-  const t = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const time = fmt.time(d);
   const same = d.toDateString() === now.toDateString();
-  return same ? t : `${d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} ${t}`;
+  return same ? time : `${fmt.dayMonth(d)} ${time}`;
 }
 
 /** Minutes until the hub puts the session to sleep, null when it does not count down. */
@@ -153,13 +178,13 @@ export const colorVar = (key: ColorKey | undefined) => `var(--g-${key ?? 'none'}
 export function readOnlyText(s: SessionView): string | null {
   switch (s.readOnlyReason) {
     case 'cwd_missing':
-      return 'Каталог проекта на машине удалён — только чтение.';
+      return t('sessions.readOnly.cwdMissing');
     case 'cron':
-      return 'Cron-сессия, только чтение.';
+      return t('sessions.readOnly.cron');
     case 'unknown_runner':
-      return 'Машина не подключена к хабу — только чтение.';
+      return t('sessions.readOnly.unknownRunner');
     default:
-      return s.isCron ? 'Cron-сессия, только чтение.' : null;
+      return s.isCron ? t('sessions.readOnly.cron') : null;
   }
 }
 

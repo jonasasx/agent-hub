@@ -82,6 +82,16 @@ describe('subscriptions (integration)', () => {
   const turns = async (sessionId: string) =>
     (await t.tdb.pool.query(`SELECT subscription_id, is_error, failure, input_tokens::int AS i, output_tokens::int AS o FROM session_turns WHERE session_id = $1 ORDER BY id`, [sessionId]))
       .rows as Array<{ subscription_id: string | null; is_error: boolean; failure: string | null; i: number; o: number }>;
+  /** The English text of a note: a keyed one is stored as {display, i18n} (D6). */
+  const shown = (n: { text: string }): string => {
+    if (!n.text.startsWith('{')) return n.text;
+    try {
+      const u = JSON.parse(n.text) as { display?: unknown };
+      return typeof u.display === 'string' ? u.display : n.text;
+    } catch {
+      return n.text;
+    }
+  };
   const notes = async (sessionId: string) =>
     (await t.tdb.pool.query(`SELECT kind, text FROM session_notes WHERE session_id = $1 ORDER BY id`, [sessionId])).rows as Array<{ kind: string; text: string }>;
   const waitStatus = (id: string, status: string) => waitFor(async () => (await getS(id)).status === status);
@@ -225,7 +235,7 @@ describe('subscriptions (integration)', () => {
     const r = await waitFor(() => lastCmd('session.resume', s.id));
     expect(r.subscription).toEqual({ id: B.view.id, token: B.token });
     expect((await getS(s.id)).subscription).toEqual({ id: B.view.id, name: 'Pro рабочая' });
-    expect((await notes(s.id)).map(n => n.text)).toContain('Поднята через resume · подписка Pro рабочая');
+    expect((await notes(s.id)).map(shown)).toContain('Resumed · subscription Pro рабочая');
     // resume does not change the last choice
     expect((await list()).lastChoiceId).toBe(B.view.id);
   });
@@ -300,7 +310,7 @@ describe('subscriptions (integration)', () => {
     expect(resume.prompt).toBeUndefined();
     expect((await turns(s.id)).map(x => x.subscription_id)).toEqual([A.view.id, A.view.id]);
     const sw = (await notes(s.id)).filter(n => n.kind === 'subscription_switch').map(n => JSON.parse(n.text) as { display: string; subscription: unknown });
-    expect(sw).toEqual([{ display: 'Подписка: Max личная → Pro рабочая. Первый ход пересчитает контекст без кэша', subscription: { kind: 'switch', subscriptionId: B.view.id } }]);
+    expect(sw).toMatchObject([{ display: 'Subscription: Max личная → Pro рабочая. The first turn recounts the context without cache', subscription: { kind: 'switch', subscriptionId: B.view.id } }]);
     // one note of the switch, no «Поднята через resume» beside it
     expect((await notes(s.id)).filter(n => n.kind === 'resume')).toEqual([]);
     expect((await list()).lastChoiceId).toBe(B.view.id);
@@ -327,7 +337,7 @@ describe('subscriptions (integration)', () => {
     const resume = lastCmd('session.resume', s.id)!;
     expect(resume).toMatchObject({ prompt, subscription: { id: B.view.id, token: B.token } });
     expect(resume.promptUuid).not.toBe(lastCmd('session.start', s.id)!.promptUuid);
-    expect((await notes(s.id)).map(n => n.text)).toContain('Ход прерван');
+    expect((await notes(s.id)).map(shown)).toContain('Turn interrupted');
   });
 
   it('5.3 a turn waiting for a permission answer is mid-turn: 409 turn_in_progress; with interrupt — interrupt → stop → resume', async () => {
@@ -409,7 +419,7 @@ describe('subscriptions (integration)', () => {
     result(s1.id, { isError: true, errorText: "You've hit your session limit", failure: { kind: 'subscription_limit', resetsAt, limitType: 'five_hour', message: "You've hit your session limit" } });
     await waitFor(async () => (await notes(s1.id)).some(n => n.kind === 'subscription_limit'));
     const lim = JSON.parse((await notes(s1.id)).find(n => n.kind === 'subscription_limit')!.text) as { display: string; subscription: Record<string, unknown> };
-    expect(lim.display).toMatch(/^Лимит подписки Max личная исчерпан, сброс в \d\d:\d\d$/);
+    expect(lim.display).toMatch(/^Subscription Max личная: limit reached, resets at \d\d:\d\d$/);
     expect(lim.subscription).toEqual({ kind: 'limit', subscriptionId: A.view.id, resetsAt: new Date(resetsAt).toISOString(), alternatives: [B.view.id] });
     const a = (await list()).subscriptions.find(x => x.id === A.view.id)!;
     expect(a).toMatchObject({ limitResetsAt: new Date(resetsAt).toISOString(), limitKind: 'five_hour' });
@@ -424,14 +434,14 @@ describe('subscriptions (integration)', () => {
     result(s2.id, { isError: true, failure: { kind: 'auth_rejected', message: 'Failed to authenticate. API Error: 401' } });
     await waitFor(async () => (await notes(s2.id)).some(n => n.kind === 'subscription_auth'));
     const auth = JSON.parse((await notes(s2.id)).find(n => n.kind === 'subscription_auth')!.text) as { display: string; subscription: unknown };
-    expect(auth.display).toBe('Подписка Pro рабочая: токен отклонён — выпустите новый `claude setup-token` и замените токен в настройках');
+    expect(auth.display).toBe('Subscription Pro рабочая: the token was rejected, issue a new `claude setup-token` and replace the token in settings');
     expect(auth.subscription).toEqual({ kind: 'auth', subscriptionId: B.view.id, alternatives: [] });
     expect((await list()).subscriptions.find(x => x.id === B.view.id)!.tokenRejected).toBe(true);
 
     // account_unavailable: a plain note
     const s3 = await created({ subscriptionId: A.view.id });
     result(s3.id, { isError: true, failure: { kind: 'account_unavailable', message: 'billing' } });
-    await waitFor(async () => (await notes(s3.id)).some(n => n.text.startsWith('Подписка Max личная недоступна')));
+    await waitFor(async () => (await notes(s3.id)).some(n => shown(n).startsWith('Subscription Max личная is unavailable')));
 
     // a turn of an agent 1.3 (no usage) is recorded with zeros
     const s4 = await created({ subscriptionId: A.view.id });
@@ -459,8 +469,8 @@ describe('subscriptions (integration)', () => {
     await waitFor(async () => (await notes(s.id)).some(n => n.kind === 'subscription_limit'), 10_000);
     const ns = await notes(s.id);
     expect(ns.filter(n => n.kind === 'subscription_switch').map(n => (JSON.parse(n.text) as { display: string }).display)).toEqual([
-      'Автопереключение: Max личная → Pro рабочая',
-      'Автопереключение: Pro рабочая → Team',
+      'Auto switch: Max личная → Pro рабочая',
+      'Auto switch: Pro рабочая → Team',
     ]);
     const lim = JSON.parse(ns.find(n => n.kind === 'subscription_limit')!.text) as { display: string; subscription: { subscriptionId: string; alternatives: string[] } };
     expect(lim.subscription).toMatchObject({ subscriptionId: C.view.id, alternatives: [] });
@@ -532,7 +542,7 @@ describe('subscriptions (integration)', () => {
       { subscriptionId: A.view.id, name: 'Max личная', turns: 3, inputTokens: 30, outputTokens: 6, cacheReadTokens: 300, cacheCreationTokens: 21, limitHits: 0 },
       { subscriptionId: B.view.id, name: 'Pro рабочая', turns: 2, inputTokens: 200, outputTokens: 40, cacheReadTokens: 2000, cacheCreationTokens: 140, limitHits: 0 },
       { subscriptionId: D.view.id, name: 'Разовая', turns: 1, inputTokens: 10, outputTokens: 2, cacheReadTokens: 100, cacheCreationTokens: 7, limitHits: 1 },
-      { subscriptionId: null, name: 'Вход машины', turns: 1, inputTokens: 10, outputTokens: 2, cacheReadTokens: 100, cacheCreationTokens: 7, limitHits: 0 },
+      { subscriptionId: null, name: 'Machine login', turns: 1, inputTokens: 10, outputTokens: 2, cacheReadTokens: 100, cacheCreationTokens: 7, limitHits: 0 },
     ]);
     const long = await api('GET', `/api/subscriptions/usage?from=2025-01-01T00:00:00Z&to=2026-10-01T00:00:00Z`);
     expect(long.statusCode).toBe(422);
@@ -591,7 +601,12 @@ describe('subscriptions (integration)', () => {
     const r = await api('POST', `/api/sessions/${src}/handoff-drafts`, body);
     expect(r.statusCode, r.body).toBe(202);
     await t.hub.handoff.flush();
-    const row = (await api('GET', `/api/handoff-drafts/${(r.json() as { id: string }).id}`)).json() as { status: string; text: string | null; error: string | null };
+    const row = (await api('GET', `/api/handoff-drafts/${(r.json() as { id: string }).id}`)).json() as {
+      status: string;
+      text: string | null;
+      error: string | null;
+      errorI18n?: { key: string; params?: Record<string, string> };
+    };
     return {
       row,
       gen: got
@@ -626,7 +641,8 @@ describe('subscriptions (integration)', () => {
     d = await draft(src);
     expect(d.gen).toEqual([B.view.id]);
     expect(d.row.status).toBe('error');
-    expect(d.row.error).toMatch(/^Не удалось сгенерировать промпт: лимит подписки Pro рабочая до \d\d:\d\d — выберите другую подписку и повторите$/);
+    expect(d.row.error).toMatch(/^Could not generate the prompt: the limit of subscription Pro рабочая is reached until \d\d:\d\d: pick another subscription and retry$/);
+    expect(d.row.errorI18n).toMatchObject({ key: 'hub.handoff.limitSubUntil', params: { name: 'Pro рабочая' } });
     expect((await list()).subscriptions.find(x => x.id === B.view.id)).toMatchObject({ limitResetsAt: new Date(resetsAt).toISOString(), limitKind: 'five_hour' });
     // the next draft without a choice goes under A (B is limited now)
     d = await draft(src);
@@ -635,7 +651,8 @@ describe('subscriptions (integration)', () => {
     // a rejected token: the text and the mark
     handoffFails.push({ kind: 'auth_rejected', message: 'Failed to authenticate. API Error: 401' });
     d = await draft(src, { subscriptionId: C.view.id });
-    expect(d.row.error).toBe('Не удалось сгенерировать промпт: токен подписки Team отклонён — замените токен');
+    expect(d.row.error).toBe('Could not generate the prompt: the token of subscription Team was rejected: replace the token');
+    expect(d.row.errorI18n).toEqual({ key: 'hub.handoff.tokenRejectedSub', params: { name: 'Team' } });
     expect((await list()).subscriptions.find(x => x.id === C.view.id)!.tokenRejected).toBe(true);
     await t.tdb.pool.query(`UPDATE subscriptions SET token_rejected_at = NULL, limit_resets_at = NULL, limit_kind = NULL WHERE user_id = $1`, [userId]);
   });
@@ -674,7 +691,7 @@ describe('subscriptions (integration)', () => {
     await api('PUT', `/api/subscriptions/${E.id}/token`, { token: newer });
     const stops = cmds('session.stop', s.id).length;
     result(s.id, { isError: true, failure: { kind: 'auth_rejected', message: 'Failed to authenticate. API Error: 401' } });
-    await waitFor(async () => (await notes(s.id)).some(n => n.kind === 'error' && n.text.includes('отклонён прежний токен')));
+    await waitFor(async () => (await notes(s.id)).some(n => n.kind === 'error' && shown(n).includes('the process token was rejected')));
     expect((await notes(s.id)).filter(n => n.kind === 'subscription_auth')).toEqual([]);
     expect((await list()).subscriptions.find(x => x.id === E.id)!.tokenRejected).toBe(false);
     await waitFor(() => cmds('session.stop', s.id).length > stops);

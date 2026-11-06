@@ -6,6 +6,7 @@
  */
 import { useMemo, type ReactNode } from 'react';
 import { FileImageContext, Markdown } from '../chat/Markdown';
+import { useT } from '../../i18n';
 import { clampScale } from '../images/zoom';
 import { formatBytes } from '../images/format';
 import { openLightbox } from '../images/ImagePreview';
@@ -100,17 +101,19 @@ export function ViewerEmpty({ big, children, action }: { big: string; children?:
 
 /** «5 МБ»: whole megabytes without «,0». */
 export function megabytes(n: number): string {
-  return formatBytes(n).replace(',0 ', ' ');
+  return formatBytes(n).replace(/[.,]0 /, ' ');
 }
 
 export function TooLarge({ size, limit }: { size: number | null; limit: number }) {
-  return <ViewerEmpty big={size ? `Файл слишком большой (${megabytes(size)} из ${megabytes(limit)})` : `Файл слишком большой (лимит ${megabytes(limit)})`} />;
+  const t = useT();
+  return <ViewerEmpty big={size ? t('files.viewer.tooLarge', { size: megabytes(size), limit: megabytes(limit) }) : t('files.viewer.tooLargeLimit', { limit: megabytes(limit) })} />;
 }
 
 /** The binary class: no download (read-only). */
 export function Unsupported({ name, size, mime }: { name: string; size: number; mime: string }) {
+  const t = useT();
   return (
-    <ViewerEmpty big="Нельзя показать">
+    <ViewerEmpty big={t('files.error.unsupported')}>
       {name} · {formatBytes(size)} · {mime}
     </ViewerEmpty>
   );

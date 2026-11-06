@@ -14,7 +14,6 @@ import {
   fsReadResultSchema,
   pathFitsPlatform,
   platformOfHome,
-  LOCAL_PATH_MESSAGE,
   type FsErrorCode,
   type FsFileKind,
   type FsListResponse,
@@ -23,6 +22,7 @@ import {
 import type { Db } from '../db/db.js';
 import type { AgentConnection, AgentGateway, CommandError } from '../runners/agentGateway.js';
 import { HttpError } from '../sessions/service.js';
+import type { I18nText } from '@agent-hub/shared';
 import { RateLimiter } from './limits.js';
 
 export interface FsRouteOptions {
@@ -73,25 +73,25 @@ export class KeyedGate {
   }
 }
 
-const MESSAGES: Record<FsErrorCode, string> = {
-  invalid_request: 'Некорректный запрос',
-  invalid_path: LOCAL_PATH_MESSAGE,
-  forbidden_origin: 'Запрос с другого источника',
-  restricted: 'Доступ закрыт',
-  outside_root: 'Путь вне разрешённой папки',
-  runner_not_found: 'Машина или сессия не найдена',
-  not_found: 'Не найдено',
-  runner_offline: 'Машина не в сети',
-  root_unknown: 'Папка машины неизвестна: обновите агента или переподключите машину',
-  capability_unavailable: 'Агент не умеет показывать файлы: обновите агента на машине',
-  too_large: 'Файл слишком большой',
-  not_directory: 'Это не папка',
-  not_file: 'Это не файл',
-  too_many_requests: 'Слишком много запросов',
-  io_error: 'Ошибка чтения на машине',
-  agent_timeout: 'Машина не отвечает',
-  permission_denied: 'Нет доступа',
-  unsupported: 'Нельзя показать этот файл',
+const MESSAGES: Record<FsErrorCode, I18nText> = {
+  invalid_request: { key: 'hub.files.invalidRequest' },
+  invalid_path: { key: 'hub.files.invalidPath' },
+  forbidden_origin: { key: 'hub.files.forbiddenOrigin' },
+  restricted: { key: 'hub.files.restricted' },
+  outside_root: { key: 'hub.files.outsideRoot' },
+  runner_not_found: { key: 'hub.files.runnerNotFound' },
+  not_found: { key: 'hub.files.notFound' },
+  runner_offline: { key: 'hub.files.runnerOffline' },
+  root_unknown: { key: 'hub.files.rootUnknown' },
+  capability_unavailable: { key: 'hub.files.capabilityUnavailable' },
+  too_large: { key: 'hub.files.tooLarge' },
+  not_directory: { key: 'hub.files.notDirectory' },
+  not_file: { key: 'hub.files.notFile' },
+  too_many_requests: { key: 'hub.files.tooManyRequests' },
+  io_error: { key: 'hub.files.ioError' },
+  agent_timeout: { key: 'hub.files.agentTimeout' },
+  permission_denied: { key: 'hub.files.permissionDenied' },
+  unsupported: { key: 'hub.files.unsupported' },
 };
 
 function fail(code: FsErrorCode): HttpError {

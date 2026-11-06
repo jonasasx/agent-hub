@@ -4,6 +4,7 @@
  * exactly one slot (a hidden window is a closed slot: its icon stays in the rail); an empty slot disappears; `act ∈ ids`.
  */
 import { SIDE_DEFAULT } from '../sidebar/sideWidth';
+import { t } from '../../i18n';
 
 export type WinId = 'sessions' | 'files' | 'machines' | 'subs';
 export type Side = 'left' | 'right';
@@ -25,7 +26,23 @@ export interface Dock {
 
 export const WIN_IDS: readonly WinId[] = ['sessions', 'files', 'machines', 'subs'];
 export const SIDES: readonly Side[] = ['left', 'right'];
-export const WIN_TITLE: Record<WinId, string> = { sessions: 'Сессии', files: 'Файлы', machines: 'Машины', subs: 'Подписки' };
+/** Getters: the title is read at render time, so a language change shows at once. */
+export const WIN_TITLE: Record<WinId, string> = {
+  get sessions() {
+    return t('workspace.toolwindows.titleSessions');
+  },
+  get files() {
+    return t('workspace.toolwindows.titleFiles');
+  },
+  get machines() {
+    return t('workspace.toolwindows.titleMachines');
+  },
+  get subs() {
+    return t('workspace.toolwindows.titleSubs');
+  },
+};
+export const sideName = (side: Side): string => (side === 'left' ? t('workspace.toolwindows.sideLeft') : t('workspace.toolwindows.sideRight'));
+export const windowNames = (ids: WinId[]): string => ids.map(id => `«${WIN_TITLE[id]}»`).join(', ');
 /** The minimal height of a slot, px. */
 export const SLOT_MIN = 64;
 

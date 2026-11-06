@@ -6,6 +6,7 @@ import { createContext, memo, useContext, useState } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { isAbsoluteLocalPath } from '../../api/types';
+import { t, useT } from '../../i18n';
 import { ApiError, api } from '../../api/client';
 import { ImageGroup, picOf } from '../images/ImagePreview';
 import type { ImageRef } from '../images/format';
@@ -24,17 +25,18 @@ const shown = new Map<string, ImageRef>();
 
 function showError(err: unknown, runner: string): string {
   if (err instanceof ApiError) {
-    if (err.code === 'file_not_found') return `Файл не найден на ${runner}`;
-    if (err.code === 'image_too_large') return 'Файл больше 20 МБ';
-    if (err.code === 'runner_offline') return `${runner} не в сети`;
-    if (err.code === 'agent_outdated') return `Обновите агент на ${runner}: он не умеет отдавать изображения`;
-    if (err.code === 'not_image') return 'Это не изображение PNG, JPEG, GIF или WebP';
+    if (err.code === 'file_not_found') return t('chat.md.fileNotFound', { runner });
+    if (err.code === 'image_too_large') return t('chat.md.tooLarge');
+    if (err.code === 'runner_offline') return t('chat.md.offline', { runner });
+    if (err.code === 'agent_outdated') return t('chat.md.outdated', { runner });
+    if (err.code === 'not_image') return t('chat.md.notImage');
     if (err.serverMessage) return err.serverMessage;
   }
-  return 'Не удалось получить изображение';
+  return t('chat.md.failed');
 }
 
 function LocalImage({ path, alt }: { path: string; alt: string }) {
+  const t = useT();
   const src = useContext(ImageSourceContext);
   const key = `${src?.sessionId}:${path}`;
   const [img, setImg] = useState<ImageRef | undefined>(() => src?.known[path] ?? shown.get(key));
@@ -59,7 +61,7 @@ function LocalImage({ path, alt }: { path: string; alt: string }) {
   return (
     <span className="md-local-img">
       <button type="button" className="btn" disabled={state === 'loading'} onClick={() => void load()} title={path}>
-        {state === 'loading' ? 'Загрузка…' : 'Показать изображение'}
+        {state === 'loading' ? t('chat.md.loading') : t('chat.md.show')}
       </button>{' '}
       <span className="md-img-path">
         {alt ? `${alt} · ` : ''}
@@ -82,21 +84,22 @@ function LocalImage({ path, alt }: { path: string; alt: string }) {
 export const FileImageContext = createContext<((path: string) => string | null) | null>(null);
 
 function MdImg({ src, alt }: { src?: unknown; alt?: string }) {
+  const t = useT();
   const resolve = useContext(FileImageContext);
   const url = decodePath(typeof src === 'string' ? src : '');
   if (resolve && !/^https?:\/\//i.test(url)) {
     const href = resolve(url);
     if (href) return <img className="md-file-img" src={href} alt={alt ?? ''} loading="lazy" />;
-    return <span className="md-img-blocked">{alt ? `[${alt}]` : '[изображение вне папки]'}</span>;
+    return <span className="md-img-blocked">{alt ? `[${alt}]` : `[${t('chat.md.outsideFolder')}]`}</span>;
   }
   if (isAbsoluteLocalPath(url)) return <LocalImage path={url} alt={alt ?? ''} />;
   if (/^https?:\/\//i.test(url))
     return (
       <a href={url} target="_blank" rel="noreferrer noopener" className="md-ext-img">
-        {alt || 'изображение'} ({url})
+        {alt || t('chat.md.image')} ({url})
       </a>
     );
-  return <span>{alt ? `[${alt}]` : '[изображение]'}</span>;
+  return <span>{alt ? `[${alt}]` : `[${t('chat.md.image')}]`}</span>;
 }
 
 const components: Components = {

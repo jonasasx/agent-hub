@@ -7,6 +7,7 @@
  * Requirement: Совместимость со старым агентом — a machine without `fs.browse` is shown with «Обновите агента».
  */
 import type { RunnerView, SessionView } from '../../api/types';
+import { hubText } from '../../i18n';
 import { usableRunner } from '../../store';
 import { isInside, parentOf, samePath } from './paths';
 
@@ -64,7 +65,7 @@ export const sessionSourceKey = (sessionId: string) => `session:${sessionId}`;
 export const machineSourceKey = (runnerId: string) => `machine:${runnerId}`;
 
 export function projectNameOf(s: SessionView): string {
-  return s.catalogProject?.name ?? s.project.title;
+  return s.catalogProject?.name ?? hubText(s.project.title, s.project.i18n);
 }
 
 /** The machine chip to select when there is no session: the first online machine that can show files, else the first. */

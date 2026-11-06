@@ -12,7 +12,7 @@ export type ToolResult = { content: Array<{ type: 'text'; text: string }>; isErr
 const ok = (value: unknown): ToolResult => ({ content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] });
 const fail = (err: unknown): ToolResult => {
   const e = err instanceof PeersError ? err : null;
-  const text = e ? `${e.code}: ${e.message}${e.retryAfterSec !== undefined ? ` (повторить через ${e.retryAfterSec} с)` : ''}` : `error: ${err instanceof Error ? err.message : String(err)}`;
+  const text = e ? `${e.code}: ${e.message}${e.retryAfterSec !== undefined ? ` (retry in ${e.retryAfterSec} s)` : ''}` : `error: ${err instanceof Error ? err.message : String(err)}`;
   return { content: [{ type: 'text', text }], isError: true };
 };
 
@@ -36,44 +36,44 @@ export function peersToolDefs(sessionId: string, client: Pick<PeersClient, 'requ
     }
   };
   const listShape = {
-    machine: z.string().max(200).optional().describe('часть имени машины, например X1'),
-    project: z.string().max(1000).optional().describe('часть каталога проекта'),
+    machine: z.string().max(200).optional().describe('part of the machine name, e.g. X1'),
+    project: z.string().max(1000).optional().describe('part of the project directory'),
     status: z.enum(PEER_SESSION_STATUSES).optional(),
-    limit: z.number().int().min(1).max(PEER_LIST_MAX).optional().describe('по умолчанию 50'),
+    limit: z.number().int().min(1).max(PEER_LIST_MAX).optional().describe('default 50'),
   };
-  const getShape = { session: z.guid().describe('id сессии из sessions_list') };
+  const getShape = { session: z.guid().describe('session id from sessions_list') };
   const sendShape = {
-    to: z.guid().describe('id сессии-адресата из sessions_list'),
+    to: z.guid().describe('id of the recipient session from sessions_list'),
     text: z.string().min(1).max(PEER_TEXT_MAX),
-    inReplyTo: z.guid().optional().describe('id peer-сообщения, на которое вы отвечаете (атрибут id тега)'),
+    inReplyTo: z.guid().optional().describe('id of the peer message you are replying to (the id attribute of the tag)'),
   };
   const spawnShape = {
-    task: z.string().min(1).max(PEER_TEXT_MAX).describe('задание субагенту: что сделать и что вернуть в итоге'),
-    provider: z.enum(PROVIDERS).optional().describe('вендор: claude или codex; по умолчанию — как у этой сессии'),
-    machine: z.string().max(200).optional().describe('имя машины (X1, HP, VM…); по умолчанию — эта машина'),
-    cwd: z.string().max(1000).optional().describe('каталог; обязателен на другой машине, по умолчанию — каталог этой сессии'),
-    model: z.string().max(200).optional().describe('модель; по умолчанию — как у этой сессии при том же вендоре, иначе модель по умолчанию'),
-    title: z.string().max(200).optional().describe('заголовок вкладки; по умолчанию — из задания'),
+    task: z.string().min(1).max(PEER_TEXT_MAX).describe('task for the subagent: what to do and what to return in the end'),
+    provider: z.enum(PROVIDERS).optional().describe('vendor: claude or codex; defaults to the vendor of this session'),
+    machine: z.string().max(200).optional().describe('machine name (X1, HP, VM...); defaults to this machine'),
+    cwd: z.string().max(1000).optional().describe('directory; required on another machine, defaults to the directory of this session'),
+    model: z.string().max(200).optional().describe('model; defaults to the model of this session for the same vendor, otherwise the default model'),
+    title: z.string().max(200).optional().describe('tab title; defaults to one derived from the task'),
   };
   const defs: PeerToolDef[] = [
     {
       name: PEERS_TOOLS.list,
       description:
-        'Список сессий Agent Hub этого владельца на всех машинах (X1, HP, ВМ): id, заголовок, машина, каталог, статус (working, waiting, permission, sleeping, closed), живой ли процесс, время последней активности; своя сессия помечена self. Фильтры — по машине, подстроке каталога проекта, статусу.',
+        'List the Agent Hub sessions of this owner on all machines (X1, HP, VM): id, title, machine, directory, status (working, waiting, permission, sleeping, closed), whether the process is alive, time of last activity; your own session is marked self. Filters: by machine, by a substring of the project directory, by status.',
       shape: listShape,
       readOnly: true,
       run: a => call({ op: 'list', ...(a as z.infer<z.ZodObject<typeof listShape>>), sessionId }),
     },
     {
       name: PEERS_TOOLS.get,
-      description: 'Подробности одной сессии Agent Hub по id из sessions_list: статус, машина, каталог, число работающих субагентов и фоновых задач.',
+      description: 'Details of one Agent Hub session by id from sessions_list: status, machine, directory, number of running subagents and background tasks.',
       shape: getShape,
       readOnly: true,
       run: a => call({ op: 'get', sessionId, target: String(a.session) }),
     },
     {
       name: PEERS_TOOLS.send,
-      description: `Написать другой сессии Agent Hub, в том числе на другой машине: замена SendMessage для связи между сессиями. Сообщение придёт адресату очередным ходом с пометкой, от кого оно; спящая сессия проснётся, занятая получит его после текущего хода. Ответа в этом вызове нет: адресат отвечает отдельным сообщением, а оно приходит вам ходом пользователя с тегом peer-message. Результат: delivered, queued или resumed. Текст до ${PEER_TEXT_MAX} символов; частота ограничена.`,
+      description: `Send a message to another Agent Hub session, including one on another machine: a replacement for SendMessage for communication between sessions. The recipient gets the message as its next turn, marked with who sent it; a sleeping session wakes up, a busy one receives it after the current turn. There is no reply in this call: the recipient answers with a separate message, which reaches you as a user turn with a peer-message tag. Result: delivered, queued or resumed. Text up to ${PEER_TEXT_MAX} characters; rate limited.`,
       shape: sendShape,
       readOnly: false,
       run: a => call({ op: 'send', sessionId, to: String(a.to), text: String(a.text), ...(typeof a.inReplyTo === 'string' ? { inReplyTo: a.inReplyTo } : {}) }),
@@ -83,7 +83,7 @@ export function peersToolDefs(sessionId: string, client: Pick<PeersClient, 'requ
   if (o.spawn)
     defs.push({
       name: PEERS_TOOLS.spawn,
-      description: `Запустить субагента — новую сессию Agent Hub, в том числе другого вендора (claude, codex) или на другой машине. Задание придёт ей первым ходом. Вызов возвращается сразу: id, заголовок, машина, вендор, каталог, модель; итог хода субагента хаб пришлёт вам сам сообщением <peer-message kind="report">, ждать и опрашивать его не нужно. Продолжить работу с субагентом — session_send на его id. Не больше 10 работающих субагентов; частота ограничена, как у session_send.`,
+      description: `Start a subagent: a new Agent Hub session, including one of another vendor (claude, codex) or on another machine. The task is delivered to it as the first turn. The call returns immediately: id, title, machine, vendor, directory, model; the hub sends you the result of the subagent's turn itself as a <peer-message kind="report"> message, so there is no need to wait or poll. To continue working with the subagent, use session_send with its id. At most 10 running subagents; rate limited like session_send.`,
       shape: spawnShape,
       readOnly: false,
       run: a => {

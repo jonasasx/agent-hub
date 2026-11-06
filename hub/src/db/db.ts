@@ -339,6 +339,8 @@ export interface UserPreferencesTable {
   user_id: string;
   last_runner_id: string | null;
   last_provider: Provider | null;
+  /** change i18n D4: the interface language of the profile; NULL — the browser language. */
+  locale: string | null;
 }
 export interface ProjectSuggestionsTable {
   user_id: string;

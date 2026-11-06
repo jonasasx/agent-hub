@@ -60,7 +60,7 @@ describe('path vs runner platform (M2.1)', () => {
     expect(pathFitsPlatform('C:\\w', 'windows')).toBe(true);
     expect(pathFitsPlatform('C:\\w', null)).toBe(true);
     expect(pathFitsPlatform('\\\\h\\s', null)).toBe(false);
-    expect(badPathMessage('linux')).toBe('Путь не подходит для Linux: нужен вид /…');
-    expect(badPathMessage('windows')).toBe('Путь не подходит для Windows: нужен вид C:\\…');
+    expect(badPathMessage('linux')).toEqual({ key: 'hub.files.badPathLinux' });
+    expect(badPathMessage('windows')).toEqual({ key: 'hub.files.badPathWindows' });
   });
 });

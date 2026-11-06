@@ -11,7 +11,8 @@ import { useStore } from '../../store';
 import { useMenu } from '../ui/a11y';
 import { colorVar } from '../sessions/status';
 import { loadProjectDir, moveToProject, setPinned } from '../workspace/actions';
-import { KIND_LABEL, evidenceText, filterProjects, secondaryProject, type ProjectInfo } from './projects';
+import { hubText, useT } from '../../i18n';
+import { kindLabel, evidenceText, filterProjects, secondaryProject, type ProjectInfo } from './projects';
 import { useUnsavedInput } from '../update/unsaved';
 
 const PIN = (
@@ -21,6 +22,7 @@ const PIN = (
 );
 
 function Picker({ s, onDone }: { s: SessionView; onDone: () => void }) {
+  const tr = useT();
   const dir = useStore(st => st.projectDir);
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(0);
@@ -49,11 +51,11 @@ function Picker({ s, onDone }: { s: SessionView; onDone: () => void }) {
   };
   return (
     <>
-      <div className="m-title">Перенести в…</div>
+      <div className="m-title">{tr('projects.line.moveTo')}</div>
       <input
         className="input proj-q"
-        placeholder="Проект, система или область"
-        aria-label="Найти проект"
+        placeholder={tr('projects.line.search')}
+        aria-label={tr('projects.line.searchLabel')}
         role="combobox"
         aria-expanded
         aria-controls={`proj-list-${s.id}`}
@@ -65,9 +67,9 @@ function Picker({ s, onDone }: { s: SessionView; onDone: () => void }) {
         }}
         onKeyDown={onKey}
       />
-      <div className="proj-list" id={`proj-list-${s.id}`} role="listbox" aria-label="Проекты">
-        {!dir && <div className="hint">Загрузка…</div>}
-        {dir && !items.length && <div className="hint">Ничего не найдено</div>}
+      <div className="proj-list" id={`proj-list-${s.id}`} role="listbox" aria-label={tr('projects.line.list')}>
+        {!dir && <div className="hint">{tr('projects.line.loading')}</div>}
+        {dir && !items.length && <div className="hint">{tr('projects.line.nothing')}</div>}
         {items.map((p, i) => (
           <button
             key={p.id}
@@ -84,7 +86,7 @@ function Picker({ s, onDone }: { s: SessionView; onDone: () => void }) {
           >
             <span className="sw" />
             <span className="p-name">{p.title}</span>
-            <span className="p-kind">{p.archived ? 'архив' : KIND_LABEL[p.kind]}</span>
+            <span className="p-kind">{p.archived ? tr('projects.line.archived') : kindLabel(p.kind)}</span>
           </button>
         ))}
       </div>
@@ -92,10 +94,16 @@ function Picker({ s, onDone }: { s: SessionView; onDone: () => void }) {
   );
 }
 
-const AUTO_REASON: Record<string, string> = { cwd: 'рабочая папка', remote: 'Git remote', changed_files: 'изменённые файлы', unpinned: 'выбор без закрепления' };
+const AUTO_REASONS = {
+  cwd: 'projects.reason.cwd',
+  remote: 'projects.reason.remote',
+  changed_files: 'projects.reason.changed_files',
+  unpinned: 'projects.reason.unpinned',
+} as const;
 
 /** `note` replaces the evidence on the phone (the state of the session), `noteTitle` is its whole text. */
 export function ProjectLine({ s, note, noteTitle }: { s: SessionView; note?: string; noteTitle?: string }) {
+  const tr = useT();
   const [menu, setMenu] = useState<null | 'menu' | 'move'>(null);
   const box = useRef<HTMLSpanElement>(null);
   const btn = useRef<HTMLButtonElement>(null);
@@ -110,14 +118,15 @@ export function ProjectLine({ s, note, noteTitle }: { s: SessionView; note?: str
     if (menu) box.current?.querySelector<HTMLElement>(menu === 'menu' ? '[role="menuitem"]' : 'input')?.focus();
   }, [menu]);
   const project = s.project as ProjectInfo;
+  const projectName = hubText(project.title, project.i18n);
   const pinned = s.catalogProject ? s.catalogProjectSource !== 'auto' : s.projectSource === 'manual';
   const evidence =
     s.catalogProjectSource === 'auto'
       ? s.catalogProjectReason === 'classifier'
-        ? 'Определено по первому сообщению'
-        : `Автоматически: ${AUTO_REASON[s.catalogProjectReason ?? ''] ?? 'проект определён'}`
+        ? tr('projects.reason.classifier')
+        : tr('projects.reason.auto', { reason: tr(AUTO_REASONS[(s.catalogProjectReason ?? '') as keyof typeof AUTO_REASONS] ?? 'projects.reason.unknown') })
       : s.catalogProject
-        ? 'закреплено вручную'
+        ? tr('projects.evidence.manual')
         : evidenceText(s);
   const second = secondaryProject(s);
   return (
@@ -128,23 +137,23 @@ export function ProjectLine({ s, note, noteTitle }: { s: SessionView; note?: str
           type="button"
           className={`pill gp proj-btn${project.archived ? ' archived' : ''}`}
           style={{ '--gc': colorVar(project.colorKey) } as CSSProperties}
-          title={project.path || 'Проект не определён'}
+          title={project.path || tr('projects.line.notDetected')}
           aria-haspopup="menu"
           aria-expanded={menu !== null}
-          aria-label={`Проект: ${project.title}${pinned ? ', закреплён' : ''}`}
+          aria-label={pinned ? tr('projects.line.labelPinned', { name: projectName }) : tr('projects.line.label', { name: projectName })}
           onClick={() => setMenu(menu ? null : 'menu')}
         >
           <span className="pdot" />
-          <span className="p-name">{project.title}</span>
+          <span className="p-name">{projectName}</span>
           {pinned && PIN}
           <span className="caret" aria-hidden="true">
             ▾
           </span>
         </button>
         {menu === 'menu' && (
-          <div className="menu" role="menu" aria-label="Проект сессии">
+          <div className="menu" role="menu" aria-label={tr('projects.line.menu')}>
             <button type="button" role="menuitem" onClick={() => setMenu('move')}>
-              Перенести в…
+              {tr('projects.line.moveTo')}
             </button>
             {pinned ? (
               <button
@@ -155,7 +164,7 @@ export function ProjectLine({ s, note, noteTitle }: { s: SessionView; note?: str
                   void setPinned(s.id, false);
                 }}
               >
-                Открепить
+                {tr('projects.line.unpin')}
               </button>
             ) : (
               <button
@@ -166,27 +175,27 @@ export function ProjectLine({ s, note, noteTitle }: { s: SessionView; note?: str
                   void setPinned(s.id, true);
                 }}
               >
-                Закрепить
+                {tr('projects.line.pin')}
               </button>
             )}
           </div>
         )}
         {menu === 'move' && (
-          <div className="menu proj-menu" role="dialog" aria-label="Перенести в проект">
+          <div className="menu proj-menu" role="dialog" aria-label={tr('projects.line.moveDialog')}>
             <Picker s={s} onDone={close} />
           </div>
         )}
       </span>
-      <span className="evidence" title={note ? `${noteTitle ?? note}\nПроект: ${evidence}` : evidence}>
+      <span className="evidence" title={note ? `${noteTitle ?? note}\n${tr('projects.line.evidenceTitle', { evidence })}` : evidence}>
         {note ?? evidence}
       </span>
       {!note && s.catalogProjectSource === 'auto' && (
         <button type="button" className="evidence-change" onClick={() => setMenu('move')}>
-          изменить
+          {tr('projects.line.change')}
         </button>
       )}
       {second && (
-        <span className="pill gp sec" style={{ '--gc': colorVar(second.colorKey) } as CSSProperties} title={`Второй проект: ${second.path || second.title}`}>
+        <span className="pill gp sec" style={{ '--gc': colorVar(second.colorKey) } as CSSProperties} title={tr('projects.line.second', { name: second.path || second.title })}>
           + {second.title}
         </span>
       )}

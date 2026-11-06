@@ -1,4 +1,5 @@
 // Requirement: Браузерная сессия 30 дней
+import { isLocale, type Locale } from '@agent-hub/shared';
 import type { Db } from '../db/db.js';
 import { hashSecret, newSecret } from './secrets.js';
 
@@ -11,6 +12,8 @@ export interface AuthUser {
   role: 'admin' | 'user';
   name: string | null;
   provider: 'google' | 'keycloak';
+  /** change i18n D4: the interface language of the profile; set on a session lookup, `null` — the browser language. */
+  locale?: Locale | null;
 }
 
 export const AUTH_USER_COLUMNS = ['users.id', 'users.email', 'users.role', 'users.name', 'users.provider'] as const;
@@ -58,13 +61,16 @@ export async function findSession(db: Db, token: string | undefined, now = new D
   const row = await db
     .selectFrom('auth_sessions')
     .innerJoin('users', 'users.id', 'auth_sessions.user_id')
-    .select([...AUTH_USER_COLUMNS, 'auth_sessions.expires_at'])
+    .leftJoin('user_preferences', 'user_preferences.user_id', 'users.id')
+    .select([...AUTH_USER_COLUMNS, 'auth_sessions.expires_at', 'user_preferences.locale'])
     .where('auth_sessions.id_hash', '=', idHash)
     .where('auth_sessions.expires_at', '>', now)
     // Requirement: Отключение пользователя — a disabled user has no session (his rows are deleted too, this is the guard).
     .where('users.status', '=', 'active')
     .executeTakeFirst();
-  return row ? { user: { id: row.id, email: row.email, role: row.role, name: row.name, provider: row.provider }, idHash, expiresAt: row.expires_at } : null;
+  if (!row) return null;
+  const locale = isLocale(row.locale) ? row.locale : null;
+  return { user: { id: row.id, email: row.email, role: row.role, name: row.name, provider: row.provider, locale }, idHash, expiresAt: row.expires_at };
 }
 
 export async function findSessionUser(db: Db, token: string | undefined, now = new Date()): Promise<AuthUser | null> {

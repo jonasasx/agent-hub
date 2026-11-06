@@ -5,12 +5,12 @@ import type { CatalogDetection } from './detection.js';
 // events again, and the full rebuild of projects:reclassify. Pinned (manual) sessions are never changed.
 import type { FastifyBaseLogger } from 'fastify';
 import { sql, type Transaction } from 'kysely';
-import { platformOfHome } from '@agent-hub/shared';
+import { platformOfHome, type I18nText } from '@agent-hub/shared';
 import type { Database, Db } from '../db/db.js';
 import type { RunnerRow } from '../runners/repo.js';
 import { normalizeRemote, stripUserinfo } from './catalog.js';
 import type { ProjectCatalog } from './catalogService.js';
-import { classify, type Decision, type Evidence, type Touch } from './classify.js';
+import { classify, DELETED_EVIDENCE, type Decision, type Evidence, type Touch } from './classify.js';
 import { signalPath, toolPaths, toVaultRelative, type RunnerPaths } from './signals.js';
 import { KeyedSerial } from '../util/serial.js';
 
@@ -19,7 +19,6 @@ export const PROJECTS_CHANNEL = 'agenthub_projects_changed';
 
 /** Tool calls of an assistant line (projects:reclassify reads only them). */
 const TOOL_USES = '$.message.content[*] ? (@.type == "tool_use")';
-const REMATCH_BATCH = 50;
 
 /**
  * Runs `fn` again after a deadlock (40P01) or a serialization failure (40001): up to 3 attempts in all, with a pause of
@@ -43,7 +42,7 @@ export interface RecomputeOptions {
   dryRun?: boolean;
   /** The start touches are already current (rebuild). */
   skipStart?: boolean;
-  /** No session.upsert or toast (rematch sends one projects.changed; unpin answers with the view). */
+  /** No session.upsert or toast (unpin answers with the view). */
   quiet?: boolean;
 }
 
@@ -79,8 +78,6 @@ export interface ProjectServiceOptions {
   onDecided?: (sessionId: string, projectId: string | null) => Promise<void>;
   /** After any change of the project fields of a session (session.upsert). */
   onChanged?: (sessionId: string) => Promise<void>;
-  /** After rematch: the sidebar of these users is stale (one projects.changed instead of a session.upsert each). */
-  onBulkChanged?: (userIds: string[]) => Promise<void>;
   debounceMs?: number;
 }
 
@@ -128,7 +125,7 @@ export class ProjectService {
       for (const t of toolPaths(r.obj, runner.windows)) {
         const rel = signalPath(toVaultRelative(t.path, cwd, runner));
         if (!rel) continue;
-        const pathNorm = this.o.catalog.normalizePath(rel);
+        const pathNorm = rel;
         const k = `${r.lineNo}\u0000${t.op}\u0000${pathNorm.toLowerCase()}`;
         if (seen.has(k)) continue;
         seen.add(k);
@@ -143,12 +140,12 @@ export class ProjectService {
     if (!s.cwd) return [];
     const rel = signalPath(toVaultRelative(s.cwd, null, runner));
     if (rel) {
-      const pathNorm = this.o.catalog.normalizePath(rel);
+      const pathNorm = rel;
       return [{ session_id: s.id, file_id: mainFileId, line_no: 0, op: 'cwd', path_norm: pathNorm, project_id: this.o.catalog.matchPath(s.user_id, pathNorm) }];
     }
     if (toVaultRelative(s.cwd, null, runner) !== null) return []; // the vault root: no signal
     const remote = normalizeRemote(stripUserinfo(s.git_remote));
-    if (!remote || this.o.catalog.vaultRemotes.has(remote)) return [];
+    if (!remote) return [];
     return [{ session_id: s.id, file_id: mainFileId, line_no: 0, op: 'remote', path_norm: `remote:${remote}`, project_id: this.o.catalog.matchRemote(s.user_id, remote) }];
   }
 
@@ -320,46 +317,6 @@ export class ProjectService {
   }
 
   /**
-   * After a catalogue change: touches re-matched by path_norm (no events parsed) in batched UPDATEs, the affected
-   * unpinned sessions and the sessions of vanished projects (`orphans`) reclassified in batches, without a
-   * session.upsert each: one projects.changed per user at the end (review M4a p. 9).
-   */
-  async rematch(userIds: string[], orphans: string[] = []): Promise<number> {
-    const affected = new Set<string>(orphans);
-    for (const userId of userIds) {
-      const paths = await this.o.db
-        .selectFrom('path_touches as pt')
-        .innerJoin('sessions as s', 's.id', 'pt.session_id')
-        .select(['pt.path_norm', 'pt.project_id'])
-        .distinct()
-        .where('s.user_id', '=', userId)
-        .execute();
-      const changes = new Map<string, string | null>();
-      for (const p of paths) {
-        const id = p.path_norm.startsWith('remote:') ? this.o.catalog.matchRemote(userId, p.path_norm.slice(7)) : this.o.catalog.matchPath(userId, p.path_norm);
-        if (id !== p.project_id) changes.set(p.path_norm, id);
-      }
-      const list = [...changes];
-      for (let i = 0; i < list.length; i += 500) {
-        const values = sql.join(list.slice(i, i + 500).map(([pathNorm, id]) => sql`(${pathNorm}, ${id}::uuid)`));
-        const r = await sql<{ session_id: string }>`
-          UPDATE path_touches pt SET project_id = v.pid
-            FROM (VALUES ${values}) AS v(path_norm, pid), sessions s
-           WHERE pt.path_norm = v.path_norm AND s.id = pt.session_id AND s.user_id = ${userId}
-             AND pt.project_id IS DISTINCT FROM v.pid
-          RETURNING pt.session_id`.execute(this.o.db);
-        for (const x of r.rows) affected.add(x.session_id);
-      }
-    }
-    const ids = [...affected];
-    for (let i = 0; i < ids.length; i += REMATCH_BATCH) {
-      await Promise.all(ids.slice(i, i + REMATCH_BATCH).map(id => this.recompute(id, { quiet: true }).catch((err: unknown) => this.o.log.warn({ err, sessionId: id }, 'project recompute failed'))));
-    }
-    if (ids.length || userIds.length) await this.o.onBulkChanged?.(userIds);
-    return ids.length;
-  }
-
-  /**
    * projects:reclassify: the touches of the session rebuilt from its events (main and subagent, not superseded). Only
    * tool calls are read (jsonb_path_query); the events are read and the touches replaced in one transaction under the
    * session's touch lock, so a chunk the running hub stores meanwhile is not lost (review M4a p. 7, 8).
@@ -424,10 +381,21 @@ export class ProjectService {
   }
 }
 
+/** The «project removed» evidence as stored: English now, Russian in rows written before the texts were keyed. */
+const isDeletedEvidence = (text: string | undefined): boolean => text === DELETED_EVIDENCE || text === 'проект удалён из справочника';
+
 /** The evidence line of a session view (D9 p. 6). */
 export function evidenceOf(source: string, evidence: unknown): string | null {
   const e = evidence as Partial<Evidence> | null;
-  if (source === 'manual') return e?.text === 'проект удалён из справочника' ? e.text : 'закреплено вручную';
-  if (source === 'inherited') return 'унаследовано от родителя';
+  if (source === 'manual') return isDeletedEvidence(e?.text) ? DELETED_EVIDENCE : 'pinned manually';
+  if (source === 'inherited') return 'inherited from the parent';
   return e?.text ?? null;
+}
+
+/** The same evidence line as a key (manual, inherited, deleted); null for an automatic one, whose text stays English. */
+export function evidenceI18nOf(source: string, evidence: unknown): I18nText | null {
+  const e = evidence as Partial<Evidence> | null;
+  if (source === 'manual') return { key: isDeletedEvidence(e?.text) ? 'hub.projects.evidenceDeleted' : 'hub.projects.evidenceManual' };
+  if (source === 'inherited') return { key: 'hub.projects.evidenceInherited' };
+  return null;
 }

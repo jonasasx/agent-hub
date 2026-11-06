@@ -2,6 +2,7 @@
 import type { ProjectSuggestionAnswer } from '@agent-hub/shared';
 import type { SessionView } from '../../api/types';
 import { api, ApiError } from '../../api/client';
+import { t, useT } from '../../i18n';
 import { colorVar } from '../sessions/status';
 
 /**
@@ -10,6 +11,7 @@ import { colorVar } from '../sessions/status';
  * «Новый проект…»: a session with no fitting project always gets the offer to create one. Nothing is assigned until a click.
  */
 export function ProjectSuggestion({ s }: { s: SessionView }) {
+  const tr = useT();
   const [busy, setBusy] = useState(false);
   const [hidden, setHidden] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +29,7 @@ export function ProjectSuggestion({ s }: { s: SessionView }) {
       setHidden(suggestion.inputHash);
     } catch (err) {
       const taken = err instanceof ApiError && err.code === 'name_conflict';
-      setError(taken ? 'Проект с таким именем уже есть.' : 'Не удалось сохранить выбор. Попробуйте ещё раз.');
+      setError(taken ? t('projects.suggest.taken') : t('projects.suggest.saveFailed'));
     } finally {
       setBusy(false);
     }
@@ -39,7 +41,7 @@ export function ProjectSuggestion({ s }: { s: SessionView }) {
   return (
     <div className="banner project-suggestion" role="status">
       <div className="b-text">
-        {options.length ? 'Проект сессии не определён точно. Выберите:' : 'Подходящего проекта нет.'}
+        {options.length ? tr('projects.suggest.unsure') : tr('projects.suggest.none')}
         {error && <span role="alert"> {error}</span>}
       </div>
       {options.map(o => (
@@ -62,16 +64,16 @@ export function ProjectSuggestion({ s }: { s: SessionView }) {
             create();
           }}
         >
-          <input className="input" aria-label="Имя нового проекта" value={name} maxLength={120} autoFocus onChange={event => setName(event.target.value)} />
+          <input className="input" aria-label={tr('projects.suggest.nameLabel')} value={name} maxLength={120} autoFocus onChange={event => setName(event.target.value)} />
           <button type="submit" className="btn primary" disabled={busy || !name.trim()}>
-            Создать
+            {tr('projects.suggest.create')}
           </button>
         </form>
       ) : (
         <>
           {proposed && (
             <button type="button" className="btn primary" disabled={busy} onClick={create}>
-              Создать проект «{proposed}»
+              {tr('projects.suggest.createNamed', { name: proposed })}
             </button>
           )}
           <button
@@ -83,12 +85,12 @@ export function ProjectSuggestion({ s }: { s: SessionView }) {
               setEditing(true);
             }}
           >
-            {proposed ? 'Другое имя…' : 'Новый проект…'}
+            {proposed ? tr('projects.suggest.otherName') : tr('projects.suggest.newProject')}
           </button>
         </>
       )}
       <button type="button" className="btn" disabled={busy} onClick={() => void answer({ action: 'dismiss', inputHash: suggestion.inputHash })}>
-        Без проекта
+        {tr('projects.none')}
       </button>
     </div>
   );

@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MCP_TEXTS, type McpSessionView, type SessionView } from '../../api/types';
+import { type McpSessionView, type SessionView } from '../../api/types';
 import { useStore } from '../../store';
 import { mockFetch, resetStore, runner, session } from '../../test/factories';
 import { handleServerMessage } from '../workspace/actions';
@@ -11,6 +11,15 @@ import { App } from '../../App';
 import { McpButton, McpPanelHost, McpTreeMark } from './McpViews';
 import { loadMcp, reloadMcp } from './actions';
 import { ALL_STATUSES, authFlow, mcpServer, mcpView } from './fixtures';
+
+/** The Russian texts the hub sends on a `ru` request (the dictionaries hold the same). */
+const MCP_TEXTS = {
+  agentOutdated: 'Управление MCP требует обновления агента',
+  notHubManaged: 'MCP видны только у сессий, запущенных или продолженных хабом',
+  resigninHint: 'Прежний вход сброшен — завершите вход, иначе сервер останется без входа',
+  stateMismatch: 'Адрес не от этой попытки входа или без кода — вставьте адрес со страницы этой попытки',
+  processExited: 'Вход прерван: процесс сессии завершился — нажмите «Войти» ещё раз',
+} as const;
 
 const RUNNERS = [runner({ protocolVersion: '1.7', agentVersion: '0.2.4' })];
 

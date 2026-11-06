@@ -7,6 +7,7 @@
  * tool-results: «Показать полностью». «Сообщение не доставлено»: «Повторить» puts the message back into the composer.
  */
 import { Component, useContext, memo, useEffect, useRef, useState, type ReactNode } from 'react';
+import { t, useT } from '../../i18n';
 import { ImageGroup, picOf } from '../images/ImagePreview';
 import { blobUrl, formatBytes } from '../images/format';
 import { PROVIDER_LABELS, type PermissionDecision, type PermissionView } from '../../api/types';
@@ -23,7 +24,7 @@ import { SubscriptionNoteView } from '../subscriptions/SubscriptionNoteView';
 import { openSession } from '../workspace/actions';
 
 const MAX_SHOWN = 20_000;
-const cut = (s: string) => (s.length > MAX_SHOWN ? `${s.slice(0, MAX_SHOWN)}\n… (ещё ${s.length - MAX_SHOWN} символов)` : s);
+const cut = (s: string) => (s.length > MAX_SHOWN ? `${s.slice(0, MAX_SHOWN)}\n${t('chat.item.cutMore', { count: s.length - MAX_SHOWN })}` : s);
 
 function inputText(name: string, input: unknown): string {
   const i = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
@@ -58,6 +59,7 @@ const CHUNK = 64_000;
  * on one huge text node.
  */
 export function LongText({ text }: { text: string }) {
+  const t = useT();
   const big = text.length > 200_000;
   const [shown, setShown] = useState(big ? CHUNK * 2 : text.length);
   const end = useRef<HTMLSpanElement>(null);
@@ -82,7 +84,7 @@ export function LongText({ text }: { text: string }) {
       {shown < text.length && (
         <span className="t-more" ref={end}>
           <button type="button" className="btn ghost" onClick={more}>
-            Показать дальше · осталось {formatBytes(new Blob([text.slice(shown)]).size)}
+            {t('chat.item.showMore', { size: formatBytes(new Blob([text.slice(shown)]).size) })}
           </button>
         </span>
       )}
@@ -100,7 +102,7 @@ async function fetchText(url: string): Promise<string> {
   } catch {
     // not JSON
   }
-  throw new Error(msg || 'Не удалось загрузить');
+  throw new Error(msg || t('chat.item.loadFailed'));
 }
 
 /**
@@ -108,6 +110,7 @@ async function fetchText(url: string): Promise<string> {
  * Code saved to tool-results (`<persisted-output>`): «Показать полностью» opens the hub's copy of that file.
  */
 function ResultText({ text, blob, side }: { text: string; blob?: TextBlob; side?: SideFile }) {
+  const t = useT();
   const [full, setFull] = useState<string | null>(null);
   const [state, setState] = useState<'idle' | 'loading' | 'error'>('idle');
   const [error, setError] = useState('');
@@ -116,7 +119,7 @@ function ResultText({ text, blob, side }: { text: string; blob?: TextBlob; side?
   const size = blob ? formatBytes(blob.size) : side?.size;
   return (
     <>
-      <pre>{cut(text) || '(пусто)'}</pre>
+      <pre>{cut(text) || t('chat.item.empty')}</pre>
       {url && (
         <span className="t-more">
           <button
@@ -133,7 +136,7 @@ function ResultText({ text, blob, side }: { text: string; blob?: TextBlob; side?
               }
             }}
           >
-            {state === 'loading' ? 'Загрузка…' : `Показать полностью${size ? ` · ${size}` : ''}`}
+            {state === 'loading' ? t('chat.item.loading') : size ? t('chat.item.showFullSize', { size }) : t('chat.item.showFull')}
           </button>
           {state === 'error' && (
             <span className="md-img-error" role="status">
@@ -148,13 +151,14 @@ function ResultText({ text, blob, side }: { text: string; blob?: TextBlob; side?
 }
 
 const ToolCall = memo(function ToolCall({ item }: { item: Extract<ChatItem, { kind: 'tool' }> }) {
+  const t = useT();
   // change `subagents` S9: the chat of the subagent a call started, or of the addressee of SendMessage
   const to = item.name === 'SendMessage' && item.input && typeof item.input === 'object' ? (item.input as { to?: unknown }).to : undefined;
   return (
     <div className="tool-wrap">
       <ToolDetails item={item} />
       {isAgentCall(item.name) && <SubagentLink toolUseId={item.toolUseId} />}
-      {typeof to === 'string' && <SubagentLink target={to} label={`Чат ${to}`} />}
+      {typeof to === 'string' && <SubagentLink target={to} label={t('chat.item.chatWith', { name: to })} />}
       {item.toolUseId && isBackgroundCall(item.name, item.input) && <BackgroundStatus toolUseId={item.toolUseId} />}
       {/* screenshots and pictures read by the tool: visible without expanding the call */}
       <ImageGroup pics={item.images.map(picOf)} className="tool-imgs" />
@@ -163,6 +167,7 @@ const ToolCall = memo(function ToolCall({ item }: { item: Extract<ChatItem, { ki
 });
 
 function ToolDetails({ item }: { item: Extract<ChatItem, { kind: 'tool' }> }) {
+  const t = useT();
   return (
     <details className="tool">
       <summary>
@@ -171,8 +176,8 @@ function ToolDetails({ item }: { item: Extract<ChatItem, { kind: 'tool' }> }) {
         </span>
         <span className="tname">{item.name}</span>
         <span className="ttarget">{item.target}</span>
-        {item.result?.isError && <span className="terr">ошибка</span>}
-        {!item.result && <span className="g-work" title="выполняется" />}
+        {item.result?.isError && <span className="terr">{t('chat.item.error')}</span>}
+        {!item.result && <span className="g-work" title={t('chat.item.running')} />}
       </summary>
       {item.diff ? (
         <pre>
@@ -180,13 +185,13 @@ function ToolDetails({ item }: { item: Extract<ChatItem, { kind: 'tool' }> }) {
         </pre>
       ) : (
         <>
-          <span className="t-sec">Вход</span>
+          <span className="t-sec">{t('chat.item.input')}</span>
           <pre>{cut(inputText(item.name, item.input))}</pre>
         </>
       )}
       {item.result && !item.diff && (
         <>
-          <span className="t-sec">Результат</span>
+          <span className="t-sec">{t('chat.item.result')}</span>
           <ResultText text={item.result.text} blob={item.result.blob} side={item.result.side} />
         </>
       )}
@@ -196,13 +201,14 @@ function ToolDetails({ item }: { item: Extract<ChatItem, { kind: 'tool' }> }) {
 }
 
 export function PermissionCard({ request, disabled, onDecide, agent = 'Claude' }: { request: PermissionView; disabled: boolean; onDecide: (d: PermissionDecision) => void; agent?: string }) {
+  const t = useT();
   return (
-    <div className="perm" role="group" aria-label={`Запрос разрешения: ${request.toolName}`}>
+    <div className="perm" role="group" aria-label={t('chat.perm.request', { tool: request.toolName })}>
       <div className="p-head">
         <span className="g-perm" aria-hidden="true">
           !
         </span>
-        {agent} просит разрешение: {request.toolName}
+        {t('chat.perm.asks', { agent, tool: request.toolName })}
       </div>
       {request.toolName === 'ApplyPatch' ? (
         <pre>
@@ -213,13 +219,13 @@ export function PermissionCard({ request, disabled, onDecide, agent = 'Claude' }
       )}
       <div className="p-actions">
         <button type="button" className="btn primary" disabled={disabled} onClick={() => onDecide('allow')}>
-          Разрешить
+          {t('chat.perm.allow')}
         </button>
         <button type="button" className="btn" disabled={disabled} onClick={() => onDecide('allow_session')}>
-          Разрешать в этой сессии
+          {t('chat.perm.allowSession')}
         </button>
         <button type="button" className="btn danger" disabled={disabled} onClick={() => onDecide('deny')}>
-          Запретить
+          {t('chat.perm.deny')}
         </button>
       </div>
     </div>
@@ -242,6 +248,7 @@ export const ChatItemView = memo(function ChatItemView({
   onSwitch?: (subscriptionId: string) => void;
 }) {
   // the label over the user's messages: none in a session, «Лид» in a subagent's feed (no empty element)
+  const t = useT();
   const who = useContext(UserLabel);
   const provider = useContext(AgentProvider);
   const agent = PROVIDER_LABELS[provider];
@@ -274,7 +281,7 @@ export const ChatItemView = memo(function ChatItemView({
           {item.text}
           {item.undelivered && onRetry && !readOnly && (
             <button type="button" className="btn note-retry" onClick={() => onRetry(item.undelivered!)}>
-              Повторить
+              {t('chat.item.retry')}
             </button>
           )}
         </div>
@@ -286,7 +293,7 @@ export const ChatItemView = memo(function ChatItemView({
           {item.session ? (
             // change `session-peers` D8: another hub session — a link that opens it
             <span className="who">
-              {item.session.kind === 'spawn' ? 'Задание от сессии' : item.session.kind === 'report' ? 'Итог хода сессии' : 'От сессии'}{' '}
+              {item.session.kind === 'spawn' ? t('chat.peer.task') : item.session.kind === 'report' ? t('chat.peer.report') : t('chat.peer.from')}{' '}
               <a
                 className="peer-from"
                 href={`/s/${item.session.id}`}
@@ -301,7 +308,7 @@ export const ChatItemView = memo(function ChatItemView({
             </span>
           ) : (
             <span className="who">
-              Сообщение от {item.from} <SubagentLink target={item.from} label={`Чат ${item.from}`} />
+              {t('chat.peer.message', { name: item.from })} <SubagentLink target={item.from} label={t('chat.item.chatWith', { name: item.from })} />
             </span>
           )}
           <div className="bubble md">
@@ -332,6 +339,6 @@ export class ItemBoundary extends Component<{ id: string; children: ReactNode },
     console.error('chat item', this.props.id, err);
   }
   override render() {
-    return this.state.failed ? <div className="sysnote err">Не удалось показать сообщение</div> : this.props.children;
+    return this.state.failed ? <div className="sysnote err">{t('chat.item.renderFailed')}</div> : this.props.children;
   }
 }

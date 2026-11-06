@@ -33,14 +33,14 @@ export class PeersClient {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new PeersError('timeout', 'хаб не ответил вовремя'));
+        reject(new PeersError('timeout', 'the hub did not respond in time'));
       }, this.o.timeoutMs ?? PEERS_REQUEST_TIMEOUT_MS);
       timer.unref();
       this.pending.set(id, { resolve, reject, timer });
       if (!this.o.send(payload, id)) {
         clearTimeout(timer);
         this.pending.delete(id);
-        reject(new PeersError('hub_offline', 'нет связи с хабом'));
+        reject(new PeersError('hub_offline', 'no connection to the hub'));
       }
     });
   }

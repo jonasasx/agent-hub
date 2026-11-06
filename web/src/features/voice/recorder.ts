@@ -5,6 +5,7 @@
  * «Отмена», a recorder error — stops the tracks, so the browser's microphone indicator goes off.
  * Requirements (voice-input): Запись голоса; Ошибки доступа к микрофону; Отмена записи.
  */
+import { t } from '../../i18n';
 
 export const MIME_CANDIDATES = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus'] as const;
 export const AUDIO_BITS_PER_SECOND = 64_000;
@@ -19,15 +20,28 @@ export class MicError extends Error {
   }
 }
 
+// Getters: the text is taken in the current language at the moment of the error, not when the module loads.
 export const MIC_TEXT = {
-  denied: 'Нет доступа к микрофону. Разрешите его в настройках сайта (значок слева от адреса) или в параметрах конфиденциальности Windows',
+  get denied(): string {
+    return t('chat.voice.mic.denied');
+  },
   /** The same denial inside the desktop app: it has no address bar, only Windows privacy settings can block it. */
-  deniedApp: 'Нет доступа к микрофону. Разрешите его в параметрах Windows: Конфиденциальность и защита → Микрофон (включите доступ для классических приложений)',
-  not_found: 'Микрофон не найден',
-  busy: 'Микрофон занят другим приложением',
-  unsupported: 'Этот браузер не умеет записывать звук',
-  failed: 'Не удалось включить микрофон',
-} as const;
+  get deniedApp(): string {
+    return t('chat.voice.mic.deniedApp');
+  },
+  get not_found(): string {
+    return t('chat.voice.mic.notFound');
+  },
+  get busy(): string {
+    return t('chat.voice.mic.busy');
+  },
+  get unsupported(): string {
+    return t('chat.voice.mic.unsupported');
+  },
+  get failed(): string {
+    return t('chat.voice.mic.failed');
+  },
+};
 
 /**
  * The page runs in the Agent Hub desktop app (Electron, `desktop/`): its window has no preload, so the only sign is

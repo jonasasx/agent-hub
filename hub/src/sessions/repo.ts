@@ -3,6 +3,7 @@ import { sql, type Selectable } from 'kysely';
 import type {
   ColorKey,
   HubEvent,
+  I18nText,
   PermissionView,
   ProjectKind,
   ProjectRef,
@@ -15,7 +16,9 @@ import type {
   QuestionView,
 } from '@agent-hub/shared';
 import { supportsSubscriptions } from '../subscriptions/repo.js';
-import { evidenceOf } from '../projects/service.js';
+import { render } from '../i18n.js';
+import { tx } from '../texts.js';
+import { evidenceI18nOf, evidenceOf } from '../projects/service.js';
 import type { Db, PermissionRequestsTable, SessionsTable } from '../db/db.js';
 import { effectiveIdleTimeoutMin, sleepsAt, type SleepInput } from './status.js';
 import { sideFileRefs } from '../replication/sideLinks.js';
@@ -70,7 +73,7 @@ export interface TimeoutDefaults {
 }
 
 /** «Без проекта» (D9): project_id NULL, not a row of the catalogue. */
-export const NO_PROJECT: ProjectRef = { id: null, title: 'Без проекта', colorKey: 'none', path: '' };
+export const NO_PROJECT: ProjectRef = { id: null, title: 'No project', colorKey: 'none', path: '', i18n: { key: 'hub.api.noProject' } };
 
 const iso = (d: Date | null): string | null => (d ? d.toISOString() : null);
 
@@ -140,6 +143,7 @@ export function toSessionView(r: SessionRow, defaults: TimeoutDefaults, projects
     ...(r.project_suggestion ? { projectSuggestion: r.project_suggestion } : {}),
     projectSource: r.project_source,
     projectEvidence: evidenceOf(r.project_source, r.project_evidence),
+    ...(evidenceI18nOf(r.project_source, r.project_evidence) ? { projectEvidenceI18n: evidenceI18nOf(r.project_source, r.project_evidence)! } : {}),
     secondaryProject: r.secondary_project_id ? projectRef(projects, r.secondary_project_id) : null,
     forkOf: r.fork_of ? { id: r.fork_of, title: r.fork_title ?? '' } : null,
     spawnedBy: r.spawned_by ? { id: r.spawned_by, title: r.spawned_by_title ?? '' } : null,
@@ -312,9 +316,28 @@ export function permissionEvent(p: Selectable<PermissionRequestsTable>): HubEven
   return { kind: 'permission', id: `p:${p.request_id}`, ts: p.created_at.toISOString(), request: toPermissionView(p) };
 }
 
-export async function addNote(db: Db, sessionId: string, kind: string, text: string): Promise<HubEvent> {
-  const n = await db.insertInto('session_notes').values({ session_id: sessionId, kind, text }).returning(['id', 'ts']).executeTakeFirstOrThrow();
-  return noteEvent(`n:${n.id}`, n.ts.toISOString(), kind, text);
+/**
+ * A note of the chat. Change i18n D6: a keyed text is stored as `{display, i18n}` (display — English, for older clients and logs),
+ * the client renders `i18n` in its language. A plain string with `i18n` does the same; a plain string alone is stored as it is
+ * (JSON kinds — image, undelivered, subscription_* — carry `i18n` inside their own JSON).
+ */
+export async function addNote(db: Db, sessionId: string, kind: string, text: string | I18nText, i18n?: I18nText): Promise<HubEvent> {
+  const key = typeof text === 'string' ? i18n : text;
+  const display = typeof text === 'string' ? text : render(text, 'en');
+  const stored = key ? JSON.stringify({ display, i18n: key }) : display;
+  const n = await db.insertInto('session_notes').values({ session_id: sessionId, kind, text: stored }).returning(['id', 'ts']).executeTakeFirstOrThrow();
+  return noteEvent(`n:${n.id}`, n.ts.toISOString(), kind, stored);
+}
+
+/** `{display, i18n}` of a keyed note; null for a plain text. */
+function keyedNote(text: string): { display: string; i18n: I18nText } | null {
+  if (!text.startsWith('{')) return null;
+  try {
+    const u = JSON.parse(text) as { display?: unknown; i18n?: { key?: unknown } };
+    return typeof u.display === 'string' && typeof u.i18n?.key === 'string' ? { display: u.display, i18n: u.i18n as I18nText } : null;
+  } catch {
+    return null;
+  }
 }
 
 /** A stored note as a chat item; `kind = image` keeps {path, sha256, mime, size, width, height} as JSON (D19). */
@@ -323,7 +346,7 @@ export function noteEvent(id: string, ts: string, kind: string, text: string): H
     try {
       const i = JSON.parse(text) as { path: string; sha256: string; mime: string; size: number; width?: number; height?: number };
       const blob = { $blob: i.sha256, size: i.size, mime: i.mime, ...(i.width ? { width: i.width } : {}), ...(i.height ? { height: i.height } : {}) };
-      return { kind: 'note', id, ts, text: `Изображение: ${i.path}`, image: { path: i.path, blob } };
+      return { kind: 'note', id, ts, ...tx('hub.note.image', { path: i.path }), image: { path: i.path, blob } };
     } catch {
       // fall through: shown as text
     }
@@ -331,20 +354,22 @@ export function noteEvent(id: string, ts: string, kind: string, text: string): H
   // claude-subscriptions (P6): a limit, a rejected token, a switch — `display` stays the text for older clients
   if ((kind === 'subscription_limit' || kind === 'subscription_auth' || kind === 'subscription_switch') && text.startsWith('{')) {
     try {
-      const u = JSON.parse(text) as { display: string; subscription: SubscriptionNote };
-      return { kind: 'note', id, ts, text: u.display, subscription: u.subscription };
+      const u = JSON.parse(text) as { display: string; subscription: SubscriptionNote; i18n?: I18nText };
+      return { kind: 'note', id, ts, text: u.display, ...(u.i18n ? { i18n: u.i18n } : {}), subscription: u.subscription };
     } catch {
       // fall through: shown as text
     }
   }
   if (kind === 'undelivered' && text.startsWith('{')) {
     try {
-      const u = JSON.parse(text) as { display: string; undelivered: NonNullable<Extract<HubEvent, { kind: 'note' }>['undelivered']> };
-      return { kind: 'note', id, ts, text: u.display, undelivered: u.undelivered };
+      const u = JSON.parse(text) as { display: string; undelivered: NonNullable<Extract<HubEvent, { kind: 'note' }>['undelivered']>; i18n?: I18nText };
+      return { kind: 'note', id, ts, text: u.display, ...(u.i18n ? { i18n: u.i18n } : {}), undelivered: u.undelivered };
     } catch {
       // fall through: shown as text
     }
   }
+  const keyed = keyedNote(text);
+  if (keyed) return { kind: 'note', id, ts, text: keyed.display, i18n: keyed.i18n };
   return { kind: 'note', id, ts, text };
 }
 

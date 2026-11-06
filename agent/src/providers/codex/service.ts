@@ -90,7 +90,7 @@ export class CodexService {
       if (id && id === this.loginId) {
         this.loginId = null;
         this.d.log.info('codex sign-in ended', { ok });
-        this.d.onLoginDone(id, ok, ok ? undefined : (error ?? 'вход не завершён'));
+        this.d.onLoginDone(id, ok, ok ? undefined : (error ?? 'sign-in did not complete'));
       }
       void this.refresh();
     } else if (method === 'account/updated') {
@@ -183,8 +183,8 @@ export class CodexService {
     const credential = ok ? await this.d.homes!.takeLogin(entry.home) : (await this.d.homes!.dropTemp(entry.home), null);
     entry.client.close();
     this.d.log.info('codex subscription sign-in ended', { ok });
-    if (ok && !credential) this.d.onLoginDone(loginId, false, 'вход завершён, но учётные данные не найдены');
-    else this.d.onLoginDone(loginId, ok, ok ? undefined : (error ?? 'вход не завершён'), credential ?? undefined);
+    if (ok && !credential) this.d.onLoginDone(loginId, false, 'sign-in finished but no credentials were found');
+    else this.d.onLoginDone(loginId, ok, ok ? undefined : (error ?? 'sign-in did not complete'), credential ?? undefined);
   }
 
   async loginCancel(loginId: string): Promise<void> {

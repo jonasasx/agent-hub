@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import type { SubagentStatus } from './subagents.js';
 import type { FsAgentErrorCode, FsEntry } from './files.js';
+import type { I18nText, Locale } from './i18n/index.js';
 import { LOCAL_PATH_MESSAGE, isAbsoluteLocalPath } from './paths.js';
 import { mcpActionSchema, providerSchema, subscriptionTokenSchema, type ClaudeLogin, type McpServerSnapshot, type Provider, type ProviderLoginStart, type ProviderStatus } from './protocol.js';
 
@@ -85,6 +86,8 @@ export interface MeResponse {
   vapidPublicKey: string | null;
   /** Dictation is available: the hub has ELEVENLABS_API_KEY (change voice-input, D5). */
   voiceInput: boolean;
+  /** Change i18n D4: the interface language chosen in the profile; `null` — the browser language. */
+  locale: Locale | null;
 }
 
 export const PROJECT_COLORS = ['scanner', 'platform', 'customers', 'support', 'infra', 'tools', 'org', 'ext', 'personal', 'rose', 'lime', 'slate'] as const;
@@ -193,6 +196,8 @@ export interface ProjectRef {
   kind?: ProjectKind;
   /** A project in projects/99-archive (shown muted). */
   archived?: boolean;
+  /** The title as a key (the built-in «No project»); the client renders it in its language. */
+  i18n?: I18nText;
 }
 
 /** GET /api/projects: the catalogue for «Перенести в…»; «Без проекта» is `{id: 'none'}` (last). */
@@ -204,6 +209,8 @@ export interface ProjectListItem {
   areaPath: string | null;
   colorKey: ColorKey;
   archived: boolean;
+  /** The title as a key (the built-in «No project»). */
+  i18n?: I18nText;
 }
 
 /** PUT /api/sessions/:id/project — move = pin (D10). */
@@ -250,6 +257,8 @@ export interface SessionView {
    * for `auto`; «закреплено вручную» (or «проект удалён из справочника») for `manual`; null — «проект пока не определён».
    */
   projectEvidence: string | null;
+  /** The same evidence as a key for a manual, inherited or deleted pin; an automatic one has only the English text. */
+  projectEvidenceI18n?: I18nText;
   /** The second element with weight ≥3 (shown as a label), null when none. M4. */
   secondaryProject?: ProjectRef | null;
   forkOf: { id: string; title: string } | null;
@@ -417,7 +426,9 @@ export type HubEvent =
       kind: 'note';
       id: string;
       ts: string;
+      /** English; `i18n` is the same text as a key for the client's language (older notes have none and read as stored). */
       text: string;
+      i18n?: I18nText;
       image?: { path: string; blob: BlobRef };
       /** «Сообщение не доставлено»: the message as sent, for «Повторить» (text and images back into the composer). */
       undelivered?: { text: string; attachments: Array<{ sha256: string; mime: string; size: number; width?: number; height?: number }>; clientUuid: string };
@@ -625,7 +636,7 @@ export type HandoffDraftRequest = z.input<typeof handoffDraftRequestSchema>;
 
 /**
  * A handoff draft: POST /api/sessions/:id/handoff-drafts → 202 this (status pending); GET /api/handoff-drafts/:id; WS
- * `handoff.draft` when it is ready or failed. `error` — Russian text for the form («Повторить» creates a new draft).
+ * `handoff.draft` when it is ready or failed. `error` — the text for the form in English, `errorI18n` — the same as a key («Повторить» creates a new draft).
  */
 export interface HandoffDraftView {
   id: string;
@@ -633,6 +644,7 @@ export interface HandoffDraftView {
   status: 'pending' | 'ready' | 'error';
   text: string | null;
   error: string | null;
+  errorI18n?: I18nText;
   createdAt: string;
   finishedAt: string | null;
 }
@@ -837,7 +849,7 @@ export type UiServerMessage =
   | { type: 'session.partial'; sessionId: string; messageId: string; blockIndex: number; textDelta: string }
   | { type: 'permission.request'; sessionId: string; request: PermissionView }
   | { type: 'permission.resolved'; sessionId: string; requestId: string; decision: PermissionDecision }
-  | { type: 'toast'; kind: ToastKind; sessionId?: string; title?: string; text?: string }
+  | { type: 'toast'; kind: ToastKind; sessionId?: string; title?: string; text?: string; i18n?: I18nText }
   /** The catalogue changed and many sessions moved (M4a): reload the sidebar, «Перенести в…» and open tabs. */
   | { type: 'projects.changed' }
   /** A handoff draft is ready or failed (M4b). */
@@ -858,11 +870,11 @@ export type UiServerMessage =
    * mcp-management (M8): a sign-in attempt of a session's server. `flow` — the attempt to show (null: it ended);
    * `result` — how it ended (`ok`, `failed` with `error`, `expired`, `process_exited`). Owner only.
    */
-  | { type: 'mcp.auth'; sessionId: string; server: string; flow: McpAuthFlowView | null; result?: McpAuthResult; error?: string }
+  | { type: 'mcp.auth'; sessionId: string; server: string; flow: McpAuthFlowView | null; result?: McpAuthResult; error?: string; errorI18n?: I18nText }
   /** mcp-management (M8): the MCP block of a machine changed (a probe ended, a session snapshot with user servers). Owner only. */
   | { type: 'runner.mcp'; runnerId: string; mcp: McpMachineView }
   /** agent-providers: a device-code sign-in of a machine's provider ended. Owner only. */
-  | { type: 'provider.login'; runnerId: string; provider: Provider; loginId: string; ok: boolean; error?: string; subscriptionId?: string };
+  | { type: 'provider.login'; runnerId: string; provider: Provider; loginId: string; ok: boolean; error?: string; errorI18n?: I18nText; subscriptionId?: string };
 
 export const uiClientMessageSchema = z.discriminatedUnion('type', [
   // subagentIds (change `subagents`): chats of subagents open in this window; the hub checks the owner
@@ -934,7 +946,6 @@ export type MachineOs = (typeof MACHINE_OS)[number];
 export const INVITE_TTL_MS = 7 * 24 * 3600_000;
 export const ENROLL_CODE_TTL_MS = 15 * 60_000;
 export const SECURITY_LOG_DAYS = 90;
-export const DEFAULT_MACHINE_NAME = 'Моя машина';
 
 // --- invites (admin) ---
 
@@ -994,7 +1005,7 @@ export interface AdminUsersResponse {
 
 // --- machines (runner-enrollment) ---
 
-/** POST /api/runners → 201 EnrollCodeResponse (409 name_taken). Without a name: «Моя машина», then «Моя машина 2», … */
+/** POST /api/runners → 201 EnrollCodeResponse (409 name_taken). Without a name: the hub's default name (`machines.enroll.defaultName` in the request language), then «… 2», … */
 export const createRunnerRequestSchema = z.object({
   name: z.string().trim().min(1).max(64).optional(),
   os: z.enum(MACHINE_OS),
@@ -1367,6 +1378,8 @@ export interface McpServerView extends McpServerSnapshot {
   pendingAction?: McpPendingAction;
   /** The text of the last action's error (cmd.error), until the next action on the server. */
   lastError?: string;
+  /** i18n: `lastError` as a key, the client renders it in its language. */
+  lastErrorI18n?: I18nText;
   persistence: 'project' | 'process';
   canAuth: boolean;
   /** mcp-auth-controls A1: an OAuth server (snapshot `oauth` of an agent 1.8+; false from an older one). */
@@ -1448,6 +1461,7 @@ export interface McpMachineView {
   probing: boolean;
   /** The error of the last «Проверить» that failed (mcp_probe_timeout, …), cleared by the next success; null — none. */
   probeError: string | null;
+  probeErrorI18n?: I18nText | null;
   online: boolean;
   /** mcp-auth-controls A4: the agent is 1.8+ — «Войти заново» and «Выйти» may be offered. */
   authControls: boolean;
@@ -1491,20 +1505,12 @@ export const MCP_API_ERRORS = [
 ] as const;
 export type McpApiError = (typeof MCP_API_ERRORS)[number];
 
-/** Texts of the spec the hub sends as `message` / `lastError` / mcp.auth `error`; the web shows them as is. */
+/** Texts of an agent's refusal (`CmdError` message, English): the hub maps the error code to a `hub.mcp.*` key, the text goes to logs only. */
 export const MCP_TEXTS = {
-  agentOutdated: 'Управление MCP требует обновления агента',
-  notHubManaged: 'MCP видны только у сессий, запущенных или продолженных хабом',
-  authUnsupported: 'Вход из хаба не поддерживается этой версией Claude Code на машине — войдите командой /mcp в терминале',
-  /** mcp-auth-controls: `<сервер>` is replaced with the server's name. */
-  logoutUnsupported: 'Выход из хаба не поддерживается этой версией Claude Code на машине — выполните claude mcp logout <сервер> в терминале',
-  resigninHint: 'Прежний вход сброшен — завершите вход, иначе сервер останется без входа',
-  stateMismatch: 'Адрес не от этой попытки входа или без кода — вставьте адрес со страницы этой попытки',
-  processExited: 'Вход прерван: процесс сессии завершился — нажмите «Войти» ещё раз',
-  flowNotFound: 'Попытка входа не найдена',
-  notConnectedAfterSignIn: 'Сервер не подключился после входа',
-  machineHint: 'Войти — в панели MCP любой сессии на этой машине',
-  probeWarning: 'Проверка запускает локальные MCP-серверы машины',
+  authUnsupported: 'Sign-in from the hub is not supported by this Claude Code version on the machine: run /mcp in a terminal',
+  /** `<server>` is replaced with the server's name. */
+  logoutUnsupported: 'Sign-out from the hub is not supported by this Claude Code version on the machine: run claude mcp logout <server> in a terminal',
+  stateMismatch: 'The address is not from this sign-in attempt or has no code: paste the address from the page of this attempt',
 } as const;
 
 /** projects-catalog: the card of an unconfident classification — up to 3 projects, a new project by name, «Без проекта». */

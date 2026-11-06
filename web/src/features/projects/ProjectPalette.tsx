@@ -1,26 +1,15 @@
 import type { CSSProperties } from 'react';
 import { PROJECT_COLORS, type ProjectColorKey } from '@agent-hub/shared';
 import { colorVar } from '../sessions/status';
-export const COLOR_NAMES: Record<ProjectColorKey, string> = {
-  scanner: 'Мятный',
-  platform: 'Синий',
-  customers: 'Фиолетовый',
-  support: 'Оранжевый',
-  infra: 'Зелёный',
-  tools: 'Голубой',
-  org: 'Жёлтый',
-  ext: 'Пурпурный',
-  personal: 'Розовый',
-  rose: 'Красный',
-  lime: 'Песочный',
-  slate: 'Стальной',
-};
+import { t, useT } from '../../i18n';
+export const colorName = (key: ProjectColorKey): string => t(`projects.color.${key}`);
 export function ProjectPalette({ value, onChange }: { value: ProjectColorKey; onChange: (value: ProjectColorKey) => void }) {
+  useT();
   return (
     <div
       className="project-palette"
       role="radiogroup"
-      aria-label="Цвет проекта"
+      aria-label={t('projects.palette.label')}
       onKeyDown={event => {
         if (!['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
         event.preventDefault();
@@ -40,8 +29,8 @@ export function ProjectPalette({ value, onChange }: { value: ProjectColorKey; on
           role="radio"
           className="project-swatch"
           aria-checked={value === key}
-          aria-label={COLOR_NAMES[key]}
-          title={COLOR_NAMES[key]}
+          aria-label={colorName(key)}
+          title={colorName(key)}
           style={{ '--gc': colorVar(key) } as CSSProperties}
           onClick={() => onChange(key)}
         >

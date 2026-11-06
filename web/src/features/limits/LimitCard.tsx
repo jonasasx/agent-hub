@@ -7,11 +7,12 @@
  */
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { useStore } from '../../store';
+import { t as tNow, useT } from '../../i18n';
 import { clock } from '../subscriptions/model';
 import { closeLimitCard, refreshLimits } from './actions';
 import type { LimitOverageView, SubscriptionLimitsView } from '../../api/types';
-import { EXHAUSTION_RULES, HELD_TEXT, OVERAGE_DESC, QUIET_TEXT, REFRESH_HINT, UNKNOWN_WINDOW_DESC, WINDOW_TEXTS, reasonAdvice, reasonText, windowText } from './limitTexts';
-import { LEVEL_LONG, SOURCE_LABEL, beforeQuiet, fmtPct, heldOverQuiet, isReset, lastSource, limitedUntil, outdatedMachines, refreshLeft, relIn, windowLevel } from './limitsModel';
+import { exhaustionRules, heldText, isKnownWindow, overageDesc, quietText, reasonAdvice, reasonText, refreshHint, unknownWindowDesc, windowText } from './limitTexts';
+import { beforeQuiet, fmtPct, heldOverQuiet, isReset, lastSource, limitedUntil, levelLong, outdatedMachines, refreshLeft, relIn, sourceLabel, windowLevel } from './limitsModel';
 import { LevelBadge, LimitBar, useHubNow } from './parts';
 
 const CARD_W = 380;
@@ -23,11 +24,11 @@ function anchorOf(id: string, from: 'row' | 'chip'): HTMLElement | null {
 }
 
 export function overageText(o: LimitOverageView): string {
-  if (o.enabled === false) return 'Выключен.';
-  if (o.status === 'rejected') return o.enabled ? 'Включён, но недоступен: кредитов нет.' : 'Недоступен.';
-  if (o.inUse) return 'Используется сейчас.';
-  if (o.enabled) return 'Включён, сейчас не используется.';
-  return 'Состояние неизвестно.';
+  if (o.enabled === false) return tNow('limits.overage.off');
+  if (o.status === 'rejected') return o.enabled ? tNow('limits.overage.unavailableNoCredits') : tNow('limits.overage.unavailable');
+  if (o.inUse) return tNow('limits.overage.inUse');
+  if (o.enabled) return tNow('limits.overage.enabled');
+  return tNow('limits.overage.unknown');
 }
 
 export function LimitCard() {
@@ -37,6 +38,7 @@ export function LimitCard() {
 }
 
 function Card({ id, from }: { id: string; from: 'row' | 'chip' }) {
+  const t = useT();
   const now = useHubNow();
   const sub = useStore(s => s.subs?.subscriptions.find(x => x.id === id && !x.retired));
   const subsLoaded = useStore(s => !!s.subs);
@@ -119,14 +121,20 @@ function Card({ id, from }: { id: string; from: 'row' | 'chip' }) {
   const held = !!lim && lim.state === 'ok' && lim.windows.some(w => heldOverQuiet(w, lim, now));
   const blocked = reason === 'token_rejected' || reason === 'no_runner' || reason === 'agent_outdated';
   const why =
-    reason === 'token_rejected' ? 'Недоступно: токен отклонён.' : reason === 'no_runner' ? 'Недоступно: нет машины в сети.' : reason === 'agent_outdated' ? 'Недоступно: агент устарел.' : REFRESH_HINT;
+    reason === 'token_rejected'
+      ? t('limits.card.unavailableToken')
+      : reason === 'no_runner'
+        ? t('limits.card.unavailableNoRunner')
+        : reason === 'agent_outdated'
+          ? t('limits.card.unavailableOutdated')
+          : refreshHint();
 
   const onRefresh = async () => {
     setBusy(true);
     setNote(null);
     const r = await refreshLimits(id);
     setBusy(false);
-    if (r.ok) setNote({ ok: true, text: 'Пробный ход запрошен — данные придут в течение минуты.' });
+    if (r.ok) setNote({ ok: true, text: t('limits.card.probeRequested') });
     else if (r.message) setNote({ ok: false, text: r.message });
   };
 
@@ -140,9 +148,9 @@ function Card({ id, from }: { id: string; from: 'row' | 'chip' }) {
         <div className="lc-head">
           <h3 id="lc-h">
             {sub.name}
-            <span className="hint">Лимиты подписки · время сброса по часам браузера</span>
+            <span className="hint">{t('limits.card.subtitle')}</span>
           </h3>
-          <button type="button" className="icon-btn" aria-label="Закрыть" title="Закрыть (Esc)" onClick={() => close(true)}>
+          <button type="button" className="icon-btn" aria-label={t('limits.card.close')} title={t('limits.card.closeEsc')} onClick={() => close(true)}>
             ×
           </button>
         </div>
@@ -151,7 +159,7 @@ function Card({ id, from }: { id: string; from: 'row' | 'chip' }) {
             <div className="lc-alert">
               <LevelBadge badge="full" />
               <div>
-                <b>Исчерпана до {clock(until, new Date(now))}</b> · {relIn(until, now)}. Ходы под этой подпиской отклоняются до сброса окна «{exhaustedBy}».
+                <b>{t('limits.card.exhaustedUntil', { time: clock(until, new Date(now)) })}</b> · {relIn(until, now)}. {t('limits.card.exhaustedBody', { window: exhaustedBy })}
               </div>
             </div>
           )}
@@ -159,8 +167,8 @@ function Card({ id, from }: { id: string; from: 'row' | 'chip' }) {
             <div className="lc-alert nd">
               <LevelBadge badge="nodata" />
               <div>
-                <b>Нет данных: {reasonText(reason, outdatedMachines(runners))}.</b> {reasonAdvice(reason)}
-                {lim?.lastOkAt && ` Последние данные — ${clock(lim.lastOkAt, new Date(now))}.`}
+                <b>{t('limits.card.noData', { reason: reasonText(reason, outdatedMachines(runners)) })}</b> {reasonAdvice(reason)}
+                {lim?.lastOkAt && ` ${t('limits.card.lastData', { time: clock(lim.lastOkAt, new Date(now)) })}`}
               </div>
             </div>
           )}
@@ -168,7 +176,7 @@ function Card({ id, from }: { id: string; from: 'row' | 'chip' }) {
             <div className="lc-alert nd">
               <LevelBadge badge="neutral" />
               <div>
-                <b>Данные от {clock(lim.lastOkAt ?? lim.staleAt ?? new Date(now).toISOString(), new Date(now))}.</b> Старше часа, поэтому в предупреждениях не участвуют.
+                <b>{t('limits.card.dataFrom', { time: clock(lim.lastOkAt ?? lim.staleAt ?? new Date(now).toISOString(), new Date(now)) })}</b> {t('limits.card.staleBody')}
               </div>
             </div>
           )}
@@ -177,14 +185,14 @@ function Card({ id, from }: { id: string; from: 'row' | 'chip' }) {
               <div className="lc-alert nd">
                 <LevelBadge badge="neutral" />
                 <div>
-                  <b>Ход в {clock(lim.quietAt, new Date(now))} прошёл, лимит не исчерпан.</b> {HELD_TEXT}
+                  <b>{t('limits.card.heldTitle', { time: clock(lim.quietAt, new Date(now)) })}</b> {heldText()}
                 </div>
               </div>
             ) : (
               <div className="lc-alert nd">
                 <LevelBadge badge="quiet" />
                 <div>
-                  <b>Ниже порога предупреждения</b> · проверено в {clock(lim.quietAt, new Date(now))}. {QUIET_TEXT}
+                  <b>{t('limits.card.belowThreshold')}</b> · {t('limits.card.checkedAt', { time: clock(lim.quietAt, new Date(now)) })} {quietText()}
                 </div>
               </div>
             ))}
@@ -194,22 +202,22 @@ function Card({ id, from }: { id: string; from: 'row' | 'chip' }) {
           })}
           {lim?.overage && (
             <div className="lc-over">
-              <b>Перерасход.</b> {overageText(lim.overage)} {OVERAGE_DESC}
+              <b>{t('limits.card.overage')}</b> {overageText(lim.overage)} {overageDesc()}
             </div>
           )}
           {lim && !reason && <Meta lim={lim} now={now} />}
           <div className="lc-refresh">
             {busy ? (
               <button type="button" className="btn" disabled>
-                Проверяю…
+                {t('limits.card.checking')}
               </button>
             ) : left > 0 ? (
               <button type="button" className="btn" disabled>
-                Обновить через {left} с
+                {t('limits.card.refreshIn', { n: left })}
               </button>
             ) : (
               <button type="button" className="btn" disabled={blocked} onClick={() => void onRefresh()}>
-                Обновить
+                {t('limits.card.refresh')}
               </button>
             )}
             <span className="hint">{why}</span>
@@ -219,7 +227,7 @@ function Card({ id, from }: { id: string; from: 'row' | 'chip' }) {
               {note.text}
             </p>
           )}
-          <p className="lc-rules">{EXHAUSTION_RULES}</p>
+          <p className="lc-rules">{exhaustionRules()}</p>
         </div>
       </div>
     </>
@@ -231,65 +239,63 @@ function Card({ id, from }: { id: string; from: 'row' | 'chip' }) {
  * unless `held` (the window is at or above the threshold and its reset has not come: fix 2026-10-29).
  */
 function WindowBlock({ w, now, neutral, quietAt, held }: { w: SubscriptionLimitsView['windows'][number]; now: number; neutral: boolean; quietAt: string | null; held: boolean }) {
-  const t = windowText(w.type);
-  const known = Object.prototype.hasOwnProperty.call(WINDOW_TEXTS, w.type);
+  const t = useT();
+  const text = windowText(w.type);
+  const known = isKnownWindow(w.type);
   const reset = isReset(w, now);
   const level = reset || neutral || (quietAt && !held) ? null : windowLevel(w);
   const badge = level ?? 'neutral';
   return (
     <div className={`lw${known ? '' : ' unknown'}`}>
       <div className="lw-top">
-        <b>{t.name}</b>
+        <b>{text.name}</b>
         {level && level !== 'ok' && (
           <>
             <LevelBadge badge={level} />
-            <span className="lword">{LEVEL_LONG[level]}</span>
+            <span className="lword">{levelLong(level)}</span>
           </>
         )}
         <span className="sp" />
-        {!reset && <span className="pct">{w.utilization != null ? `${fmtPct(w.utilization)}%` : 'н/д'}</span>}
+        {!reset && <span className="pct">{w.utilization != null ? `${fmtPct(w.utilization)}%` : t('limits.card.na')}</span>}
       </div>
       {reset ? (
         <>
           <span className="lbar reset" aria-hidden="true" />
-          <div className="lw-reset">Окно сброшено в {clock(w.resetsAt!, new Date(now))}, данные обновятся.</div>
+          <div className="lw-reset">{t('limits.card.windowReset', { time: clock(w.resetsAt!, new Date(now)) })}</div>
         </>
       ) : (
         <>
-          {w.utilization != null && <LimitBar pct={w.utilization} badge={badge} label={t.name} />}
-          <div className="lw-reset">{w.resetsAt ? `сброс ${clock(w.resetsAt, new Date(now))} · ${relIn(w.resetsAt, now)}` : 'время сброса неизвестно'}</div>
-          {quietAt && held && (
-            <div className="lw-reset lw-old">
-              Значение от {clock(w.observedAt, new Date(now))}; ход в {clock(quietAt, new Date(now))} прошёл без новых данных — лимит не исчерпан.
-            </div>
-          )}
+          {w.utilization != null && <LimitBar pct={w.utilization} badge={badge} label={text.name} />}
+          <div className="lw-reset">{w.resetsAt ? t('limits.card.resetsAt', { at: clock(w.resetsAt, new Date(now)), rel: relIn(w.resetsAt, now) }) : t('limits.card.resetUnknown')}</div>
+          {quietAt && held && <div className="lw-reset lw-old">{t('limits.card.heldValue', { observed: clock(w.observedAt, new Date(now)), quiet: clock(quietAt, new Date(now)) })}</div>}
           {quietAt && !held && (
             <div className="lw-reset lw-old">
-              Последнее известное значение{w.utilization != null ? ` ${fmtPct(w.utilization)}%` : ''} от {clock(w.observedAt, new Date(now))}; проверка в {clock(quietAt, new Date(now))} — ниже порога
-              предупреждения.
+              {t('limits.card.lastKnown', {
+                pct: w.utilization != null ? ` ${fmtPct(w.utilization)}%` : '',
+                observed: clock(w.observedAt, new Date(now)),
+                quiet: clock(quietAt, new Date(now)),
+              })}
             </div>
           )}
         </>
       )}
-      <p className="lw-desc">{t.desc ?? UNKNOWN_WINDOW_DESC}</p>
+      <p className="lw-desc">{text.desc ?? unknownWindowDesc()}</p>
     </div>
   );
 }
 
 function Meta({ lim, now }: { lim: SubscriptionLimitsView; now: number }) {
+  const t = useT();
   const src = lastSource(lim);
   const n = new Date(now);
   return (
     <div className="lc-meta">
       {lim.lastOkAt ? (
-        <span>
-          Обновлено в {clock(lim.lastOkAt, n)}
-          {src ? ` · ${SOURCE_LABEL[src]}` : ''}
-        </span>
+        <span>{src ? t('limits.card.updatedAtSource', { time: clock(lim.lastOkAt, n), source: sourceLabel(src) }) : t('limits.card.updatedAt', { time: clock(lim.lastOkAt, n) })}</span>
       ) : (
-        <span>Данных об окнах ещё не было</span>
+        <span>{t('limits.card.noWindowsYet')}</span>
       )}
-      {lim.lastProbeAt && <span>Пробный ход в {clock(lim.lastProbeAt, n)}</span>}
+      {lim.lastProbeAt && <span>{t('limits.card.probeAt', { time: clock(lim.lastProbeAt, n) })}</span>}
     </div>
   );
 }

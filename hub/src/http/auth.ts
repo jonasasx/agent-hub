@@ -2,7 +2,7 @@
 // Change multi-user: Вход по приглашению (Google or Keycloak), Закрыто по умолчанию, Защита браузерных запросов,
 // Лимиты запросов, Журнал безопасности и выход везде.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { LoginProvider, LogoutAllResponse } from '@agent-hub/shared';
+import { DEFAULT_LOCALE, type Locale, type LoginProvider, type LogoutAllResponse } from '@agent-hub/shared';
 import type { Config } from '../config.js';
 import type { Db } from '../db/db.js';
 import type { OidcChecks, OidcClient } from '../auth/oidc.js';
@@ -11,6 +11,7 @@ import { chooseProviderPage, disabledPage, inviteExpiredPage, inviteInvalidPage,
 import { hashSecret } from '../auth/secrets.js';
 import { admit, findInvite, inviteStatus, logSecurity, type Admission } from '../users/repo.js';
 import type { HubLimits } from './limits.js';
+import { requestLocale, tr } from '../i18n.js';
 
 const OIDC_COOKIE = 'ah_oidc';
 const OIDC_COOKIE_TTL_S = 600;
@@ -18,6 +19,8 @@ const OIDC_COOKIE_TTL_S = 600;
 declare module 'fastify' {
   interface FastifyRequest {
     user: AuthUser | null;
+    /** change i18n D5: the language of texts for a person in the answer. */
+    locale: Locale;
   }
 }
 
@@ -166,6 +169,8 @@ export function registerAuth(
     limits: HubLimits;
     /** A browser session ended: close its sockets (4401). */
     onSessionEnded?: (sessionHash: Buffer) => void;
+    /** Tests: the language of a request without a header, a profile language or Accept-Language (default en). */
+    defaultLocale?: Locale;
   },
 ): void {
   const { config, db, oidc, limits } = deps;
@@ -179,10 +184,13 @@ export function registerAuth(
     logSecurity(db, { ip: req.ip, userAgent: req.headers['user-agent'] ?? null, ...e }).catch((err: unknown) => req.log.warn({ err }, 'security log write failed'));
 
   app.decorateRequest('user', null);
+  app.decorateRequest('locale', DEFAULT_LOCALE);
+  const localeOf = (req: FastifyRequest) => requestLocale(req.headers['x-agent-hub-locale'], req.user?.locale, req.headers['accept-language'], deps.defaultLocale);
 
   // Guard. Decisions use the matched route (or the percent-decoded path for unmatched URLs), never the raw
   // URL: "/%61pi/me" reaches the /api/me handler and must be treated as /api.
   app.addHook('onRequest', async (req, reply) => {
+    req.locale = localeOf(req);
     const path = routePath(req);
     if (MUTATING.has(req.method) && !originExempt(path) && !isAllowedOrigin(req.headers.origin, config.publicOrigins)) {
       return reply.code(403).send({ error: 'forbidden_origin' });
@@ -201,16 +209,17 @@ export function registerAuth(
     if ((matched && !isPublicRoute(path)) || (!matched && isApi)) {
       req.user = await authenticate(db, req);
       if (!req.user) return reply.code(401).send({ error: 'unauthenticated' });
+      req.locale = localeOf(req);
     }
   });
 
   const html = (reply: FastifyReply, code: number, body: string) => reply.code(code).type('text/html; charset=utf-8').send(body);
-  const tooMany = (reply: FastifyReply) => html(reply, 429, loginErrorPage('Слишком много попыток входа. Подождите минуту.'));
+  const tooMany = (req: FastifyRequest, reply: FastifyReply) => html(reply, 429, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.tooManyAttempts')));
 
   app.get('/auth/login', async (req, reply) => {
     if (!limits.loginStart.hit(req.ip)) {
       req.log.warn({ ip: req.ip }, 'rate limit: login start');
-      return tooMany(reply);
+      return tooMany(req, reply);
     }
     const providers = providersFor(req, config, oidc);
     const q = req.query as { return?: string; prompt?: string; provider?: string; invite?: string };
@@ -220,10 +229,10 @@ export function registerAuth(
     if (typeof q.invite === 'string' && q.invite) {
       const row = await findInvite(db, q.invite);
       // A usable invite decides the provider; a stale one is explained before the provider is visited.
-      if (!row) return html(reply, 404, inviteInvalidPage());
+      if (!row) return html(reply, 404, inviteInvalidPage(req.locale));
       const st = inviteStatus(row);
-      if (st === 'expired') return html(reply, 410, inviteExpiredPage());
-      if (st !== 'active') return html(reply, 410, inviteInvalidPage());
+      if (st === 'expired') return html(reply, 410, inviteExpiredPage(req.locale));
+      if (st !== 'active') return html(reply, 410, inviteInvalidPage(req.locale));
       provider = row.provider;
       invite = q.invite;
     }
@@ -235,7 +244,7 @@ export function registerAuth(
       const keep = new URLSearchParams();
       if (typeof q.return === 'string') keep.set('return', q.return);
       if (prompt) keep.set('prompt', prompt);
-      return html(reply, 200, chooseProviderPage(providers, keep.toString()));
+      return html(reply, 200, chooseProviderPage(req.locale, providers, keep.toString()));
     }
     const client = provider === 'keycloak' ? oidc.keycloak! : oidc.google;
     const base = requestPublicUrl(req, config);
@@ -244,7 +253,7 @@ export function registerAuth(
       started = await client.start({ redirectUri: `${base}/auth/callback`, ...(prompt ? { prompt } : {}) });
     } catch (err) {
       req.log.error({ err, provider }, 'oidc discovery failed');
-      return html(reply, 502, loginErrorPage(`Сервис входа ${providerLabel(provider)} недоступен.`));
+      return html(reply, 502, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.providerDown', { provider: providerLabel(provider) })));
     }
     const cookie: OidcCookie = { ...started.checks, r: safeReturnPath(q.return, base), p: provider, ...(invite ? { i: invite } : {}) };
     reply.setCookie(OIDC_COOKIE, JSON.stringify(cookie), {
@@ -275,12 +284,12 @@ export function registerAuth(
     // Scenario «Подмена state»: 400, no session.
     if (!checks || !q.state || q.state !== checks.state) {
       req.log.warn('oidc callback rejected: state mismatch or missing login cookie');
-      return html(reply, 400, loginErrorPage('Ссылка входа устарела или подменена. Начните вход заново.'));
+      return html(reply, 400, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.linkExpired')));
     }
     const provider: LoginProvider = checks.p === 'keycloak' ? 'keycloak' : 'google';
     const client = provider === 'keycloak' ? oidc.keycloak : oidc.google;
-    if (!client) return html(reply, 400, loginErrorPage('Этот способ входа выключен.'));
-    if (q.error) return html(reply, 400, loginErrorPage(`${providerLabel(provider)} вернул ошибку: ${q.error}`));
+    if (!client) return html(reply, 400, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.methodOff')));
+    if (q.error) return html(reply, 400, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.providerError', { provider: providerLabel(provider), error: String(q.error) })));
 
     const base = requestPublicUrl(req, config);
     let identity;
@@ -288,7 +297,7 @@ export function registerAuth(
       identity = await client.finish(new URL(req.url, base), checks);
     } catch (err) {
       req.log.warn({ err: (err as Error).message, provider }, 'oidc code exchange failed');
-      return html(reply, 400, loginErrorPage(`${providerLabel(provider)} не подтвердил вход. Начните вход заново.`));
+      return html(reply, 400, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.notConfirmed', { provider: providerLabel(provider) })));
     }
 
     const a = await admit(db, provider, identity, checks.i ?? null);
@@ -298,7 +307,7 @@ export function registerAuth(
       reply.clearCookie(SESSION_COOKIE, { path: '/' });
       req.log.warn({ email: identity.email, emailVerified: identity.emailVerified, provider, reason: a.reason }, 'login denied');
       void security(req, { userId: null, kind: 'login_denied', provider, email: identity.email });
-      return deniedPage(reply, a, identity.email, checks.i ?? null);
+      return deniedPage(reply, req.locale, a, identity.email, checks.i ?? null);
     }
 
     await endSession(req.cookies[SESSION_COOKIE]);
@@ -311,20 +320,20 @@ export function registerAuth(
   });
 
   /** The page of a refused login (browser and desktop app). */
-  function deniedPage(reply: FastifyReply, a: Extract<Admission, { ok: false }>, email: string | null, invite: string | null) {
+  function deniedPage(reply: FastifyReply, locale: Locale, a: Extract<Admission, { ok: false }>, email: string | null, invite: string | null) {
     switch (a.reason) {
       case 'disabled':
-        return html(reply, 403, disabledPage());
+        return html(reply, 403, disabledPage(locale));
       case 'mismatch':
       case 'wrong_provider':
-        return html(reply, 403, inviteMismatchPage(a.invite!.email, a.invite!.provider, invite, email));
+        return html(reply, 403, inviteMismatchPage(locale, a.invite!.email, a.invite!.provider, invite, email));
       case 'expired':
-        return html(reply, 410, inviteExpiredPage());
+        return html(reply, 410, inviteExpiredPage(locale));
       case 'used':
       case 'revoked':
-        return html(reply, 410, inviteInvalidPage());
+        return html(reply, 410, inviteInvalidPage(locale));
       default:
-        return html(reply, 403, inviteOnlyPage(email));
+        return html(reply, 403, inviteOnlyPage(locale, email));
     }
   }
   app.decorate('deniedLoginPage', deniedPage);
@@ -334,22 +343,22 @@ export function registerAuth(
     reply.header('Cache-Control', 'no-store').header('Referrer-Policy', 'no-referrer');
     if (!limits.invitePage.hit(req.ip)) {
       req.log.warn({ ip: req.ip }, 'rate limit: invite page');
-      return html(reply, 429, loginErrorPage('Слишком много запросов. Подождите минуту.'));
+      return html(reply, 429, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.tooManyRequests')));
     }
     const code = (req.params as { code: string }).code;
     const row = await findInvite(db, code);
-    if (!row) return html(reply, 404, inviteInvalidPage());
+    if (!row) return html(reply, 404, inviteInvalidPage(req.locale));
     const st = inviteStatus(row);
-    if (st === 'expired') return html(reply, 410, inviteExpiredPage());
-    if (st !== 'active') return html(reply, 410, inviteInvalidPage());
+    if (st === 'expired') return html(reply, 410, inviteExpiredPage(req.locale));
+    if (st !== 'active') return html(reply, 410, inviteInvalidPage(req.locale));
     if (row.provider === 'keycloak' && oidc.keycloak && !providersFor(req, config, oidc).includes('keycloak')) {
       return reply.redirect(`${config.keycloakOrigins[0]}${req.url}`, 302);
     }
-    return html(reply, 200, invitePage(row.email, row.provider, code));
+    return html(reply, 200, invitePage(req.locale, row.email, row.provider, code));
   });
 
   // Scenario «Отключение коллеги»: windows closed with 4403 come here.
-  app.get('/auth/disabled', async (_req, reply) => html(reply, 200, disabledPage()));
+  app.get('/auth/disabled', async (req, reply) => html(reply, 200, disabledPage(req.locale)));
 
   app.post('/auth/logout', async (req, reply) => {
     await endSession(req.cookies[SESSION_COOKIE]);
@@ -380,6 +389,6 @@ export function registerAuth(
 declare module 'fastify' {
   interface FastifyInstance {
     /** The page of a refused login (registerAuth); the desktop login uses the same pages. */
-    deniedLoginPage(reply: FastifyReply, a: Extract<Admission, { ok: false }>, email: string | null, invite: string | null): FastifyReply;
+    deniedLoginPage(reply: FastifyReply, locale: Locale, a: Extract<Admission, { ok: false }>, email: string | null, invite: string | null): FastifyReply;
   }
 }

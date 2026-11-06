@@ -6,6 +6,7 @@
  * Requirement (file-explorer): Просмотрщик; Крошки и действия над файлом; Машина не в сети и ошибки.
  */
 import { lazy, Suspense, useCallback, useMemo, useState } from 'react';
+import { useT } from '../../i18n';
 import { useStore } from '../../store';
 import { formatBytes } from '../images/format';
 import { parseFileTabId } from '../layout/layout';
@@ -20,20 +21,22 @@ import { useLastSessionId } from './useSource';
 
 const PdfView = lazy(() => import('./PdfView'));
 
-const ZOOMS: Array<[ImageZoom, string]> = [
-  ['fit', 'Вписать'],
-  ['1', '100%'],
-  ['2', '200%'],
+const ZOOMS: Array<[ImageZoom, 'files.viewer.fit' | 'files.viewer.zoom100' | 'files.viewer.zoom200']> = [
+  ['fit', 'files.viewer.fit'],
+  ['1', 'files.viewer.zoom100'],
+  ['2', 'files.viewer.zoom200'],
 ];
 const PDF_STEP = 0.2;
 
 export function FileViewer({ tabId }: { tabId: string }) {
+  const t = useT();
   const ref = parseFileTabId(tabId);
-  if (!ref) return <ViewerEmpty big="Файл не найден" />;
+  if (!ref) return <ViewerEmpty big={t('files.error.fileNotFound')} />;
   return <Viewer tabId={tabId} runnerId={ref.runnerId} path={ref.path} />;
 }
 
 function Viewer({ tabId, runnerId, path }: { tabId: string; runnerId: string; path: string }) {
+  const t = useT();
   const runner = useStore(s => s.runners.find(r => r.id === runnerId));
   const phone = useStore(s => s.device === 'phone');
   const sessionId = useFiles(s => s.tabSession[tabId]);
@@ -58,20 +61,20 @@ function Viewer({ tabId, runnerId, path }: { tabId: string; runnerId: string; pa
 
   const meta = useMemo(() => {
     if (state.status === 'image') return [natural ? `${natural.w}×${natural.h}` : null, state.size ? formatBytes(state.size) : null].filter(Boolean).join(' · ');
-    if (state.status === 'pdf') return `${pages ? `${pages} стр. · ` : ''}${formatBytes(state.size)}`;
-    if (state.status === 'text') return `${formatBytes(state.size)} · ${state.kind === 'markdown' ? 'Markdown' : 'текст'}`;
+    if (state.status === 'pdf') return `${pages ? `${t('files.viewer.pages', { count: pages })} · ` : ''}${formatBytes(state.size)}`;
+    if (state.status === 'text') return `${formatBytes(state.size)} · ${state.kind === 'markdown' ? 'Markdown' : t('files.viewer.text')}`;
     return '';
-  }, [state, natural, pages]);
+  }, [state, natural, pages, t]);
 
   const tools: React.ReactNode[] = [];
   if (state.status === 'text' && state.kind === 'markdown') {
     tools.push(
       <span key="md" className="fx-mini-seg">
         <button type="button" className={md === 'r' ? 'on' : ''} aria-pressed={md === 'r'} onClick={() => setMd('r')}>
-          Просмотр
+          {t('files.viewer.rendered')}
         </button>
         <button type="button" className={md === 's' ? 'on' : ''} aria-pressed={md === 's'} onClick={() => setMd('s')}>
-          Исходник
+          {t('files.viewer.source')}
         </button>
       </span>,
     );
@@ -79,9 +82,9 @@ function Viewer({ tabId, runnerId, path }: { tabId: string; runnerId: string; pa
   if (state.status === 'image') {
     tools.push(
       <span key="img" className="fx-mini-seg">
-        {ZOOMS.map(([z, t]) => (
+        {ZOOMS.map(([z, label]) => (
           <button key={z} type="button" className={zoom === z ? 'on' : ''} aria-pressed={zoom === z} onClick={() => setZoom(z)}>
-            {t}
+            {t(label)}
           </button>
         ))}
       </span>,
@@ -89,13 +92,29 @@ function Viewer({ tabId, runnerId, path }: { tabId: string; runnerId: string; pa
   }
   if (state.status === 'pdf') {
     tools.push(
-      <button key="m" type="button" className="btn sm icon ghost" title="Мельче" aria-label="Мельче" disabled={pz <= 0.6} onClick={() => setPz(Math.max(0.6, +(pz - PDF_STEP).toFixed(1)))}>
+      <button
+        key="m"
+        type="button"
+        className="btn sm icon ghost"
+        title={t('files.viewer.smaller')}
+        aria-label={t('files.viewer.smaller')}
+        disabled={pz <= 0.6}
+        onClick={() => setPz(Math.max(0.6, +(pz - PDF_STEP).toFixed(1)))}
+      >
         −
       </button>,
       <span key="p" className="fx-pg-ind" aria-live="polite">
         {page} / {pages || '…'}
       </span>,
-      <button key="p+" type="button" className="btn sm icon ghost" title="Крупнее" aria-label="Крупнее" disabled={pz >= 2} onClick={() => setPz(Math.min(2, +(pz + PDF_STEP).toFixed(1)))}>
+      <button
+        key="p+"
+        type="button"
+        className="btn sm icon ghost"
+        title={t('files.viewer.larger')}
+        aria-label={t('files.viewer.larger')}
+        disabled={pz >= 2}
+        onClick={() => setPz(Math.min(2, +(pz + PDF_STEP).toFixed(1)))}
+      >
         +
       </button>,
     );
@@ -110,24 +129,24 @@ function Viewer({ tabId, runnerId, path }: { tabId: string; runnerId: string; pa
         <div className="fx-vtools">
           {tools}
           {tools.length ? <span className="sepv" /> : null}
-          <button type="button" className="btn sm ghost opt" title="Показать в дереве" aria-label="Показать в дереве" onClick={() => revealInTree(runnerId, path, sessionId)}>
+          <button type="button" className="btn sm ghost opt" title={t('files.action.reveal')} aria-label={t('files.action.reveal')} onClick={() => revealInTree(runnerId, path, sessionId)}>
             {ICON_FOLDER_BTN}
-            {phone ? '' : ' В дереве'}
+            {phone ? '' : ` ${t('files.action.inTree')}`}
           </button>
           <button
             type="button"
             className="btn sm"
             disabled={noSession}
-            title={noSession ? 'нет активной сессии' : `Вставить путь в поле ввода сессии «${target ?? ''}»`}
-            aria-label="В сообщение"
+            title={noSession ? t('files.action.noSession') : t('files.action.mentionTitle', { title: target ?? '' })}
+            aria-label={t('files.action.mention')}
             onClick={() => insertMention(path)}
           >
-            @{phone ? '' : ' В сообщение'}
+            @{phone ? '' : ` ${t('files.action.mention')}`}
           </button>
-          <button type="button" className="btn sm icon ghost opt" title="Копировать путь" aria-label="Копировать путь" onClick={() => void copyPath(path)}>
+          <button type="button" className="btn sm icon ghost opt" title={t('files.action.copyPath')} aria-label={t('files.action.copyPath')} onClick={() => void copyPath(path)}>
             {ICON_COPY}
           </button>
-          {phone ? null : <span className="ro-note opt">только чтение</span>}
+          {phone ? null : <span className="ro-note opt">{t('files.viewer.readOnly')}</span>}
         </div>
       </div>
       <div className="fx-vbody" data-keep={`v:${tabId}`}>
@@ -139,9 +158,9 @@ function Viewer({ tabId, runnerId, path }: { tabId: string; runnerId: string; pa
   function renderBody() {
     switch (state.status) {
       case 'loading':
-        return <div className="fx-note-center">Загрузка…</div>;
+        return <div className="fx-note-center">{t('files.loading')}</div>;
       case 'offline':
-        return <ViewerEmpty big="Машина не в сети">{machineName}: файл откроется, когда машина подключится</ViewerEmpty>;
+        return <ViewerEmpty big={t('files.error.runner_offline')}>{t('files.viewer.offlineHint', { machine: machineName })}</ViewerEmpty>;
       case 'unsupported':
         return <Unsupported name={name} size={state.size} mime={state.mime} />;
       case 'toolarge':
@@ -149,10 +168,10 @@ function Viewer({ tabId, runnerId, path }: { tabId: string; runnerId: string; pa
       case 'error':
         return (
           <ViewerEmpty
-            big={state.code === 'agent_timeout' ? 'Машина не отвечает' : state.text}
+            big={state.code === 'agent_timeout' ? t('files.error.agent_timeout') : state.text}
             action={
               <button type="button" className="btn sm" onClick={reload}>
-                Повторить
+                {t('files.retry')}
               </button>
             }
           />
@@ -161,7 +180,7 @@ function Viewer({ tabId, runnerId, path }: { tabId: string; runnerId: string; pa
         return <ImageView runnerId={runnerId} path={path} sessionId={sessionId} name={name} zoom={zoom} natural={natural} onNatural={setNatural} onError={imageFailed} />;
       case 'pdf':
         return (
-          <Suspense fallback={<div className="fx-note-center">Загрузка…</div>}>
+          <Suspense fallback={<div className="fx-note-center">{t('files.loading')}</div>}>
             <PdfView data={state.data} zoom={pz} onPages={onPages} onPage={onPage} />
           </Suspense>
         );

@@ -5,6 +5,7 @@
  * Requirement (file-explorer): Окно «Файлы» и источники.
  */
 import type { CSSProperties } from 'react';
+import { useT } from '../../i18n';
 import { useStore, usableRunner } from '../../store';
 import { colorVar } from '../sessions/status';
 import { projectNameOf, type Source } from './source';
@@ -12,6 +13,7 @@ import { useFiles } from './filesStore';
 import { useLastSessionId } from './useSource';
 
 export function SourceChips({ src }: { src: Source | null }) {
+  const t = useT();
   const runners = useStore(s => s.runners).filter(usableRunner);
   const sessions = useStore(s => s.sessions);
   const sid = useLastSessionId();
@@ -19,28 +21,28 @@ export function SourceChips({ src }: { src: Source | null }) {
   const setChoice = useFiles(s => s.setChoice);
   const outdated = useFiles(s => s.outdated);
   return (
-    <div className="fx-chips" role="group" aria-label="Источник файлов">
+    <div className="fx-chips" role="group" aria-label={t('files.chips.label')}>
       {session ? (
         <button
           type="button"
           className={`fx-chip${src?.mode === 'session' ? ' on' : ''}`}
           style={{ '--gc': colorVar(session.project.colorKey) } as CSSProperties}
           aria-pressed={src?.mode === 'session'}
-          title="Папка активной сессии — меняется вместе с ней"
+          title={t('files.chips.sessionTitle')}
           onClick={() => setChoice({ kind: 'session' })}
         >
           <span className="gc" />
-          Сессия · {projectNameOf(session)}
+          {t('files.chips.session')} · {projectNameOf(session)}
         </button>
       ) : (
-        <button type="button" className="fx-chip off" disabled aria-disabled="true" title="нет активной сессии">
+        <button type="button" className="fx-chip off" disabled aria-disabled="true" title={t('files.action.noSession')}>
           <span className="gc" />
-          Сессия
+          {t('files.chips.session')}
         </button>
       )}
       {runners.map(r => {
         const on = src?.mode === 'machine' && src.runnerId === r.id;
-        const title = !r.online ? 'Машина не в сети' : outdated[r.id] ? 'Обновите агента' : `${r.name} · домашняя папка`;
+        const title = !r.online ? t('files.error.runner_offline') : outdated[r.id] ? t('files.error.capability_unavailable') : t('files.window.homeNamed', { machine: r.name });
         return (
           <button
             key={r.id}

@@ -41,6 +41,7 @@ import { snapshotOfRateLimits } from './limits.js';
 import { codexMcpServers } from './mcpConfig.js';
 import { CODEX_MIRROR_DIR, MirrorWriter, readHeader, readLines, unwrapShell, type CodexItem } from './mirror.js';
 import { initialize, RpcClient, spawnAppServer, type RpcTransport } from './rpc.js';
+import { renderProjectCatalog } from '../../projectContext.js';
 import { CodexService, type CodexModel } from './service.js';
 
 type StartPayload = PayloadOf<HubMessage, 'session.start'>;
@@ -69,7 +70,7 @@ export function policyOf(mode: PermissionMode, cwd: string): { approvalPolicy: s
   }
 }
 
-const PLAN_INSTRUCTIONS = 'Режим планирования: ничего не меняй (файлы, команды с побочными эффектами), только исследуй и предложи план.';
+const PLAN_INSTRUCTIONS = 'Planning mode: change nothing (files, commands with side effects), only investigate and propose a plan.';
 
 /** A turn error → the failure the hub knows (design D5). */
 export function failureOf(error: { message?: unknown; codexErrorInfo?: unknown } | null | undefined): TurnFailure | undefined {
@@ -242,7 +243,7 @@ export class CodexProvider implements SessionProvider {
       case 'mcp.auth.start':
       case 'mcp.auth.callback':
       case 'mcp.auth.logout':
-        throw new CmdError('mcp_not_supported', 'В сессии Codex панель MCP показывает только статусы');
+        throw new CmdError('mcp_not_supported', 'The MCP panel of a Codex session shows statuses only');
       case 'provider.login.start':
         return m.payload.forSubscription ? this.service.loginStartForSubscription() : this.service.loginStart();
       case 'limits.probe':
@@ -270,11 +271,12 @@ export class CodexProvider implements SessionProvider {
     return protocolAtLeast(this.d.hubProtocol?.() ?? null, SPAWN_PROTOCOL);
   }
 
-  private developerInstructions(peersOn: boolean, mode: PermissionMode, spawnOn = false): string {
-    const parts = [HUB_SYSTEM_PROMPT_APPEND.replace('инструментом Read', 'по пути (просмотр изображения)')];
+  private developerInstructions(peersOn: boolean, mode: PermissionMode, spawnOn = false, catalog = ''): string {
+    const parts = [HUB_SYSTEM_PROMPT_APPEND.replace('with the Read tool', 'by its path (image view)')];
     if (peersOn) parts.push(PEERS_SYSTEM_PROMPT_APPEND);
     if (spawnOn) parts.push(SPAWN_SYSTEM_PROMPT_APPEND);
     if (mode === 'plan') parts.push(PLAN_INSTRUCTIONS);
+    if (catalog) parts.push(catalog);
     return parts.join('\n\n');
   }
 
@@ -290,14 +292,14 @@ export class CodexProvider implements SessionProvider {
     if (existing) await existing.done;
     const images = await this.d.images(p.attachments);
     const header = resume ? await readHeader(this.d.projectsDir, p.sessionId) : null;
-    if (resume && !header) throw new CmdError('transcript_missing', 'История сессии Codex есть только на машине, где она шла');
+    if (resume && !header) throw new CmdError('transcript_missing', 'The history of a Codex session exists only on the machine where it ran');
 
     const registrySnapshot = this.d.registry?.();
     const registryProtocol = protocolAtLeast(this.d.hubProtocol?.() ?? null, MCP_REGISTRY_PROTOCOL);
     const registryMode = registryProtocol && registrySnapshot?.registryEnabled === true;
     const s = new CodexSession(p.sessionId, p.cwd, p.permissionMode, p.model ?? null);
     const sub = p.subscription?.provider === 'codex' ? p.subscription : null;
-    if (sub && !this.d.homes) throw new CmdError('not_implemented', 'Подписки Codex не поддерживаются этим агентом');
+    if (sub && !this.d.homes) throw new CmdError('not_implemented', 'Codex subscriptions are not supported by this agent');
     const home = sub ? await this.d.homes!.prepare(sub.id, sub.token, registryMode) : undefined;
     s.subscriptionId = sub?.id ?? null;
     const t = this.d.transport ? this.d.transport() : spawnAppServer(this.d.bin, this.d.log, [], home);
@@ -355,7 +357,7 @@ export class CodexProvider implements SessionProvider {
         approvalPolicy: pol.approvalPolicy,
         sandbox: pol.sandbox,
         config: { mcp_servers: mcp.servers },
-        developerInstructions: this.developerInstructions(peersOn, s.mode, spawnOn),
+        developerInstructions: this.developerInstructions(peersOn, s.mode, spawnOn, renderProjectCatalog(p.projectCatalog)),
       };
       // client tools are declared at thread/start only (thread/resume has no such field): the thread keeps them
       const tools = s.peers.length
@@ -364,7 +366,7 @@ export class CodexProvider implements SessionProvider {
               {
                 type: 'namespace',
                 name: PEERS_SERVER_NAME,
-                description: spawnOn ? 'Сессии Agent Hub: список, подробности, сообщения другим сессиям, запуск новой сессии' : 'Сессии Agent Hub: список, подробности, сообщения другим сессиям',
+                description: spawnOn ? 'Agent Hub sessions: list, details, messages to other sessions, starting a new session' : 'Agent Hub sessions: list, details, messages to other sessions',
                 tools: s.peers.map(d => ({ type: 'function', name: d.name, description: d.description, inputSchema: z.toJSONSchema(z.object(d.shape)) })),
               },
             ],
@@ -386,7 +388,7 @@ export class CodexProvider implements SessionProvider {
     } catch (err) {
       const message = redactText(err instanceof Error ? err.message : String(err));
       s.rpc.kill();
-      throw new CmdError('start_failed', `Codex не запустился: ${message}`);
+      throw new CmdError('start_failed', `Codex did not start: ${message}`);
     }
     this.d.onSessionStarted?.(s.id, CODEX_MIRROR_DIR);
     if (p.prompt || images.length) await this.sendInput(s, p.prompt ?? '', p.promptUuid ?? randomUUID(), images);
@@ -535,7 +537,7 @@ export class CodexProvider implements SessionProvider {
     const failure = failed ? failureOf(error) : undefined;
     // a subscription's home is not the machine's own sign-in
     if (failure?.kind === 'auth_rejected' && !s.subscriptionId) this.service.markRejected();
-    const errorText = failed ? (typeof error?.message === 'string' ? error.message : 'Ход Codex завершился ошибкой') : undefined;
+    const errorText = failed ? (typeof error?.message === 'string' ? error.message : 'The Codex turn ended with an error') : undefined;
     if (failed && errorText) s.mirror.system('api_error', errorText, `error-${turn.id}`);
     // hub-subagents D2: the text of a successful turn, for the report to the parent session
     const resultText = !failed && !interrupted && s.lastAgentText && this.spawnOn() ? s.lastAgentText.slice(0, RESULT_TEXT_MAX) : undefined;
@@ -586,7 +588,7 @@ export class CodexProvider implements SessionProvider {
   /** limits.probe under a Codex subscription: the rate limits of its sign-in, no turn is spent. */
   private async probe(p: PayloadOf<HubMessage, 'limits.probe'>): Promise<LimitsProbeResult> {
     const homes = this.d.homes;
-    if (p.subscription.provider !== 'codex' || !homes) throw new CmdError('not_implemented', 'limits.probe: подписка Codex не поддерживается этим агентом');
+    if (p.subscription.provider !== 'codex' || !homes) throw new CmdError('not_implemented', 'limits.probe: a Codex subscription is not supported by this agent');
     const started = this.clock();
     const done = (o: Pick<LimitsProbeResult, 'outcome' | 'snapshot' | 'message'>): LimitsProbeResult => ({ resetsAt: null, limitType: null, durationMs: Math.max(0, this.clock() - started), ...o });
     try {
@@ -674,7 +676,7 @@ export class CodexProvider implements SessionProvider {
       case 'item/tool/call':
         return this.toolCall(s, p);
       case 'mcpServer/elicitation/request':
-        s.mirror.system('codex_item', `MCP-сервер ${String(p.serverName)} запросил ввод — отклонено (не поддерживается в хабе)`);
+        s.mirror.system('codex_item', `MCP server ${String(p.serverName)} asked for input: declined (not supported in the hub)`);
         return Promise.resolve({ action: 'decline', content: null, _meta: null });
       case 'applyPatchApproval':
       case 'execCommandApproval':
@@ -793,7 +795,7 @@ export class CodexProvider implements SessionProvider {
   private async fork(p: PayloadOf<HubMessage, 'session.fork'>): Promise<{ newSessionId: string }> {
     assertLocalPath(p.cwd);
     const header = await readHeader(this.d.projectsDir, p.sourceSessionId);
-    if (!header) throw new CmdError('fork_failed', 'История сессии Codex есть только на машине, где она шла');
+    if (!header) throw new CmdError('fork_failed', 'The history of a Codex session exists only on the machine where it ran');
     try {
       const threadId = await this.service.fork(header.threadId, p.cwd);
       const newSessionId = randomUUID();
@@ -837,7 +839,7 @@ export class CodexProvider implements SessionProvider {
     s.pending.clear();
     if (this.sessions.get(s.id) === s) this.sessions.delete(s.id);
     const stopped = !!s.stopping;
-    const errorText = stopped ? undefined : redactText(error ?? 'Процесс Codex завершился неожиданно');
+    const errorText = stopped ? undefined : redactText(error ?? 'The Codex process exited unexpectedly');
     this.d.log.info('codex session exited', { sessionId: s.id, reason: stopped ? 'stopped' : 'crashed', ...(errorText ? { error: errorText } : {}) });
     void this.syncCredential(s.subscriptionId);
     this.d.send('session.exited', { sessionId: s.id, code: stopped ? 0 : null, reason: stopped ? 'stopped' : 'crashed', ...(errorText ? { errorText } : {}) });

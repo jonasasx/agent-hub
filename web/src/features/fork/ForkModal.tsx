@@ -17,10 +17,11 @@ import { createPortal } from 'react-dom';
 import { ApiError, api } from '../../api/client';
 import { isAbsoluteLocalPath, type RunnerView, type SessionView } from '../../api/types';
 import { useStore } from '../../store';
+import { t as tNow, useT } from '../../i18n';
 import { useDialog } from '../ui/a11y';
-import { CWD_FORMAT_ERROR, defaultCwd } from '../newSession/NewSessionModal';
+import { cwdFormatError, defaultCwd } from '../newSession/NewSessionModal';
 import { openFork } from '../workspace/actions';
-import { startDraft, stopDraftPolling, useDrafts } from './drafts';
+import { draftError, startDraft, stopDraftPolling, useDrafts } from './drafts';
 import { SubscriptionField, useSubscriptionChoice } from '../subscriptions/SubscriptionField';
 import { ProviderField, providerUnavailable } from '../newSession/ProviderField';
 import type { Provider } from '../../api/types';
@@ -29,10 +30,10 @@ import { loadSubscriptions } from '../subscriptions/actions';
 /** Why «Полная копия» is unavailable (spec session-fork «Форма форка»), or null. */
 export function copyUnavailable(s: SessionView, runners: RunnerView[]): string | null {
   const r = runners.find(x => x.id === s.runnerId);
-  if (!r || s.readOnlyReason === 'unknown_runner') return 'Недоступно: нет каталога на машине';
-  if (!r.online) return 'Недоступно: машина офлайн';
-  if (s.isCron || s.readOnlyReason === 'cron') return 'Недоступно: cron-сессия';
-  if (s.readOnlyReason === 'cwd_missing') return 'Недоступно: нет каталога на машине';
+  if (!r || s.readOnlyReason === 'unknown_runner') return tNow('sessions.fork.unavailable.noDir');
+  if (!r.online) return tNow('sessions.fork.unavailable.offline');
+  if (s.isCron || s.readOnlyReason === 'cron') return tNow('sessions.fork.unavailable.cron');
+  if (s.readOnlyReason === 'cwd_missing') return tNow('sessions.fork.unavailable.noDir');
   return null;
 }
 
@@ -48,23 +49,24 @@ function forkError(err: unknown, runnerName: string): { field: 'cwd' | 'runner' 
   if (err instanceof ApiError) {
     if (err.code === 'subscription_unavailable') {
       void loadSubscriptions();
-      return { field: 'subscription', message: 'Подписка недоступна — выберите другую' };
+      return { field: 'subscription', message: tNow('sessions.fork.error.subscription') };
     }
-    if (err.code === 'cwd_not_found') return { field: 'cwd', message: err.serverMessage ?? `Каталог не найден на ${runnerName}` };
-    if (err.code === 'bad_path') return { field: 'cwd', message: err.serverMessage ?? 'Путь не подходит для этой машины' };
-    if (err.code === 'runner_offline') return { field: 'runner', message: `${runnerName} не в сети` };
-    if (err.code === 'agent_outdated') return { field: 'form', message: `Обновите агент на ${runnerName}: он не умеет делать форк` };
-    if (err.code === 'copy_unavailable') return { field: 'form', message: err.serverMessage ?? 'Полная копия этой сессии недоступна — используйте Handoff' };
+    if (err.code === 'cwd_not_found') return { field: 'cwd', message: err.serverMessage ?? tNow('sessions.fork.error.cwdNotFound', { runner: runnerName }) };
+    if (err.code === 'bad_path') return { field: 'cwd', message: err.serverMessage ?? tNow('sessions.fork.error.badPath') };
+    if (err.code === 'runner_offline') return { field: 'runner', message: tNow('sessions.fork.error.runnerOffline', { runner: runnerName }) };
+    if (err.code === 'agent_outdated') return { field: 'form', message: tNow('sessions.fork.error.agentOutdated', { runner: runnerName }) };
+    if (err.code === 'copy_unavailable') return { field: 'form', message: err.serverMessage ?? tNow('sessions.fork.error.copyUnavailable') };
     if (err.serverMessage) return { field: 'form', message: err.serverMessage };
   }
-  return { field: 'form', message: 'Хаб не ответил. Проверьте связь и попробуйте ещё раз.' };
+  return { field: 'form', message: tNow('sessions.fork.error.hubSilent') };
 }
 
 export function ForkModal({ sessionId, initialMode, onClose }: { sessionId: string; initialMode?: 'copy' | 'handoff'; onClose: () => void }) {
+  const t = useT();
   const s = useStore(st => st.sessions[sessionId]);
   const runners = useStore(st => st.runners);
   const phone = useStore(st => st.device === 'phone');
-  const blocked = s ? copyUnavailable(s, runners) : 'Недоступно';
+  const blocked = s ? copyUnavailable(s, runners) : t('sessions.fork.unavailable.generic');
   const [mode, setMode] = useState<'copy' | 'handoff'>(blocked || initialMode === 'handoff' ? 'handoff' : 'copy');
   const start = s ? handoffTarget(s, runners) : { runnerId: '', cwd: '' };
   const [runnerId, setRunnerId] = useState(start.runnerId);
@@ -93,7 +95,7 @@ export function ForkModal({ sessionId, initialMode, onClose }: { sessionId: stri
     setDraftId(null);
     setEdited(false);
     startDraft(sessionId, undefined, undefined, provider === 'claude' ? sub.picked : undefined).then(setDraftId, (err: unknown) =>
-      setDraftFail(err instanceof ApiError && err.serverMessage ? err.serverMessage : 'Хаб не начал готовить промпт'),
+      setDraftFail(err instanceof ApiError && err.serverMessage ? err.serverMessage : t('sessions.fork.draft.startFailed')),
     );
   };
   useEffect(() => stopDraftPolling, []);
@@ -109,16 +111,16 @@ export function ForkModal({ sessionId, initialMode, onClose }: { sessionId: stri
 
   if (!s) return null;
   const pending = mode === 'handoff' && !draftFail && (!draft || draft.status === 'pending');
-  const failed = mode === 'handoff' ? (draftFail ?? (draft?.status === 'error' ? (draft.error ?? 'Промпт не получился') : null)) : null;
+  const failed = mode === 'handoff' ? (draftFail ?? (draft?.status === 'error' ? (draftError(draft) ?? t('sessions.fork.draft.failed')) : null)) : null;
 
   const submit = async (e: { preventDefault(): void }) => {
     e.preventDefault();
     const errs: typeof errors = {};
     if (mode === 'handoff') {
-      if (!runner || !runner.online) errs.runner = 'Выберите машину в сети';
-      if (!cwd.trim()) errs.cwd = 'Укажите каталог';
-      else if (!isAbsoluteLocalPath(cwd.trim())) errs.cwd = CWD_FORMAT_ERROR;
-      if (!prompt.trim()) errs.prompt = pending ? 'Дождитесь промпта или напишите свой' : 'Напишите промпт для новой сессии';
+      if (!runner || !runner.online) errs.runner = t('sessions.fork.validation.runner');
+      if (!cwd.trim()) errs.cwd = t('sessions.fork.validation.cwd');
+      else if (!isAbsoluteLocalPath(cwd.trim())) errs.cwd = cwdFormatError();
+      if (!prompt.trim()) errs.prompt = pending ? t('sessions.fork.validation.promptWait') : t('sessions.fork.validation.prompt');
       if (sub.blocked) errs.subscription = sub.blocked;
     }
     setErrors(errs);
@@ -140,7 +142,11 @@ export function ForkModal({ sessionId, initialMode, onClose }: { sessionId: stri
       useStore.getState().upsertSessions([created]);
       useStore.setState({ modal: null });
       openFork(created.id, s.id, right && !phone);
-      useStore.getState().pushToast({ title: mode === 'copy' ? 'Копия создана' : 'Handoff запущен', text: `${created.title} — форк от «${s.title}»`, color: 'var(--accent)' });
+      useStore.getState().pushToast({
+        title: mode === 'copy' ? t('sessions.fork.toast.copy') : t('sessions.fork.toast.handoff'),
+        text: t('sessions.fork.toast.text', { title: created.title, source: s.title }),
+        color: 'var(--accent)',
+      });
     } catch (err) {
       const r = forkError(err, mode === 'copy' ? (runners.find(x => x.id === s.runnerId)?.name ?? s.runnerId) : (runner?.name ?? runnerId));
       if (r.field === 'subscription') sub.markUnavailable();
@@ -160,13 +166,13 @@ export function ForkModal({ sessionId, initialMode, onClose }: { sessionId: stri
           }}
         >
           <div className="modal-head">
-            <h2 id={titleId}>Форк сессии</h2>
-            <p>Исходная «{s.title}» не изменится.</p>
+            <h2 id={titleId}>{t('sessions.fork.title')}</h2>
+            <p>{t('sessions.fork.subtitle', { title: s.title })}</p>
           </div>
           <div className="modal-body">
             <div className="field">
               <span className="lbl" id={`${titleId}-m`}>
-                Режим
+                {t('sessions.fork.modeLabel')}
               </span>
               <div className="runner-opts fork-modes" role="radiogroup" aria-labelledby={`${titleId}-m`}>
                 <button
@@ -178,34 +184,34 @@ export function ForkModal({ sessionId, initialMode, onClose }: { sessionId: stri
                   aria-describedby={blocked ? `${titleId}-why` : undefined}
                   onClick={() => setMode('copy')}
                 >
-                  <b>Полная копия</b>
-                  <span>Та же машина и каталог, вся история</span>
+                  <b>{t('sessions.fork.mode.copy')}</b>
+                  <span>{t('sessions.fork.mode.copyHint')}</span>
                 </button>
                 <button type="button" role="radio" aria-checked={mode === 'handoff'} className={`seg-opt${mode === 'handoff' ? ' on' : ''}`} onClick={() => setMode('handoff')}>
-                  <b>Handoff</b>
-                  <span>Новая сессия с промптом-передачей, любая машина</span>
+                  <b>{t('sessions.fork.mode.handoff')}</b>
+                  <span>{t('sessions.fork.mode.handoffHint')}</span>
                 </button>
               </div>
               {blocked && (
                 <span className="hint fork-why" id={`${titleId}-why`}>
-                  Полная копия: {blocked.toLowerCase()}
+                  {t('sessions.fork.copyWhy', { reason: blocked.toLowerCase() })}
                 </span>
               )}
             </div>
             {mode === 'handoff' && (
               <>
                 <div className="field">
-                  <label htmlFor={`${titleId}-p`}>Промпт для новой сессии</label>
+                  <label htmlFor={`${titleId}-p`}>{t('sessions.fork.prompt.label')}</label>
                   {pending && (
                     <span className="hint draft-wait" role="status">
-                      <span className="spinner" aria-hidden="true" /> Хаб готовит промпт по истории сессии…
+                      <span className="spinner" aria-hidden="true" /> {t('sessions.fork.prompt.preparing')}
                     </span>
                   )}
                   {failed && (
                     <span className="field-error draft-err" role="alert">
                       {failed}{' '}
                       <button type="button" className="btn" onClick={requestDraft}>
-                        Повторить
+                        {t('sessions.fork.prompt.retry')}
                       </button>
                     </span>
                   )}
@@ -230,7 +236,7 @@ export function ForkModal({ sessionId, initialMode, onClose }: { sessionId: stri
                 </div>
                 <div className="field">
                   <span className="lbl" id={`${titleId}-r`}>
-                    Где запустить
+                    {t('sessions.fork.where')}
                   </span>
                   <div className="runner-opts" role="radiogroup" aria-labelledby={`${titleId}-r`} aria-invalid={!!errors.runner}>
                     {runners.map(r => (
@@ -248,7 +254,7 @@ export function ForkModal({ sessionId, initialMode, onClose }: { sessionId: stri
                         }}
                       >
                         <b>{r.name}</b>
-                        <span>{r.online ? (r.os ?? 'в сети') : 'не в сети'}</span>
+                        <span>{r.online ? (r.os ?? t('sessions.fork.runner.online')) : t('sessions.fork.runner.offline')}</span>
                       </button>
                     ))}
                   </div>
@@ -260,7 +266,7 @@ export function ForkModal({ sessionId, initialMode, onClose }: { sessionId: stri
                 </div>
                 <ProviderField id={`${titleId}-prov`} runner={runner} value={provider} onChange={setProvider} />
                 <div className="field">
-                  <label htmlFor={`${titleId}-cwd`}>Каталог</label>
+                  <label htmlFor={`${titleId}-cwd`}>{t('sessions.fork.cwd')}</label>
                   <input
                     id={`${titleId}-cwd`}
                     className="input mono"
@@ -292,7 +298,7 @@ export function ForkModal({ sessionId, initialMode, onClose }: { sessionId: stri
             )}
             {!phone && (
               <label className="check">
-                <input type="checkbox" checked={right} onChange={e => setRight(e.target.checked)} /> Открыть справа, рядом с исходной
+                <input type="checkbox" checked={right} onChange={e => setRight(e.target.checked)} /> {t('sessions.fork.openRight')}
               </label>
             )}
             {errors.form && (
@@ -302,12 +308,12 @@ export function ForkModal({ sessionId, initialMode, onClose }: { sessionId: stri
             )}
           </div>
           <div className="modal-foot">
-            <span className="hint foot-hint">Ctrl+Enter — {mode === 'copy' ? 'создать' : 'запустить'}</span>
+            <span className="hint foot-hint">{mode === 'copy' ? t('sessions.fork.hint.create') : t('sessions.fork.hint.launch')}</span>
             <button type="button" className="btn ghost" onClick={onClose}>
-              Отмена
+              {t('sessions.fork.cancel')}
             </button>
             <button type="submit" className="btn primary" disabled={busy || (mode === 'handoff' && !!sub.blocked)} title={mode === 'handoff' ? sub.blocked : undefined}>
-              {busy ? 'Создаём…' : mode === 'copy' ? 'Создать копию' : 'Запустить handoff'}
+              {busy ? t('sessions.fork.busy') : mode === 'copy' ? t('sessions.fork.submit.copy') : t('sessions.fork.submit.handoff')}
             </button>
           </div>
         </form>

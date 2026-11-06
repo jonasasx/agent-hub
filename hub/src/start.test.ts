@@ -9,7 +9,7 @@ import { loadConfig } from './config.js';
 import { MIGRATIONS_DIR, migrate } from './db/migrate.js';
 import { startHub } from './start.js';
 import { createTestDb } from './test/db.js';
-import { FIXTURE_MAPPING, FIXTURE_VAULT, PUBLIC_URL } from './test/harness.js';
+import { PUBLIC_URL } from './test/harness.js';
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -35,9 +35,6 @@ async function config(url: string) {
     OIDC_ALLOWED_EMAILS: 'jonasasx@gmail.com',
     WEB_DIST_DIR: '/nonexistent-web-dist',
     LOG_LEVEL: 'silent',
-    // The catalogue is read at start from `projects` — the query that failed before the migrations.
-    VAULT_DIR: FIXTURE_VAULT,
-    LEGACY_PATHS_FILE: FIXTURE_MAPPING,
   });
 }
 
@@ -51,15 +48,15 @@ describe('hub start (production order)', () => {
   it('an empty database: every migration applied, /healthz 200, the tables and the catalogue are there', async () => {
     const t = await createTestDb({ migrated: false });
     const c = await config(t.url);
-    const started = await startHub(c, { logger: false, ops: { diskCheckMs: 0 }, projects: { catalogCheckMs: 0 } });
+    const started = await startHub(c, { logger: false, ops: { diskCheckMs: 0 } });
     try {
       expect(started.applied).toEqual(await all());
       const res = await fetch(`http://127.0.0.1:${c.PORT}/healthz`);
       expect(res.status).toBe(200);
       const tables = (await t.pool.query<{ t: string }>(`SELECT table_name AS t FROM information_schema.tables WHERE table_schema = 'public'`)).rows.map(r => r.t);
       expect(tables).toEqual(expect.arrayContaining(['sessions', 'events', 'projects', 'path_touches', 'schema_migrations']));
-      // no user yet: the catalogue is synced at the first login; the built-ins are known without the DB rows
-      expect(started.hub.projects.catalog.items.length).toBeGreaterThan(100);
+      // the catalogue is loaded at start from `projects` — the query that failed before the migrations; no user yet
+      expect(started.hub.projects.catalog.list('00000000-0000-0000-0000-000000000000')).toEqual([]);
     } finally {
       await started.close();
       await t.drop();
@@ -77,12 +74,12 @@ describe('hub start (production order)', () => {
       expect(await migrate(t.pool, { dir })).toEqual(versions.slice(0, -1));
       await t.pool.query(`INSERT INTO users (email) VALUES ('jonasasx@gmail.com')`);
       const c = await config(t.url);
-      const started = await startHub(c, { logger: false, ops: { diskCheckMs: 0 }, projects: { catalogCheckMs: 0 } });
+      const started = await startHub(c, { logger: false, ops: { diskCheckMs: 0 } });
       try {
         expect(started.applied).toEqual([last]);
         expect((await fetch(`http://127.0.0.1:${c.PORT}/healthz`)).status).toBe(200);
-        // the catalogue of the existing user is synced at start, after the migration
-        expect(Number((await t.pool.query(`SELECT count(*) AS n FROM projects`)).rows[0].n)).toBeGreaterThan(100);
+        // catalog-db-session-context D1: the hub reads no user files, the catalogue of the existing user is not filled at start
+        expect(Number((await t.pool.query(`SELECT count(*) AS n FROM projects`)).rows[0].n)).toBe(0);
       } finally {
         await started.close();
       }
@@ -107,7 +104,7 @@ describe('hub start (production order)', () => {
       const before = await snapshot();
       for (let i = 0; i < 2; i++) {
         const c = await config(t.url);
-        const started = await startHub(c, { logger: false, ops: { diskCheckMs: 0 }, projects: { catalogCheckMs: 0 } });
+        const started = await startHub(c, { logger: false, ops: { diskCheckMs: 0 } });
         await started.close();
         const after = await snapshot();
         expect(after.users).toEqual([{ id: uid, email: 'jonasasx@gmail.com', role: 'admin', provider: 'google', status: 'active' }]);

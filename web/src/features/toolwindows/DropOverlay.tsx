@@ -5,8 +5,10 @@
 import { WIN_TITLE } from './dock';
 import { useDock } from './useDock';
 import { useDrag } from './drag';
+import { useT } from '../../i18n';
 
 export function DropOverlay() {
+  useT();
   const { id, x, y, target } = useDrag();
   const rightUsed = useDock(s => s.dock.right.length > 0);
   if (!id) return null;

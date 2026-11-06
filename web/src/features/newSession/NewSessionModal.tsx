@@ -29,10 +29,11 @@ import { createSession } from '../workspace/actions';
 import { SubscriptionField, useSubscriptionChoice } from '../subscriptions/SubscriptionField';
 import { ProviderField, providerModels, providerUnavailable } from './ProviderField';
 import { api } from '../../api/client';
+import { t, useT } from '../../i18n';
 import type { UserProjectView } from '../../api/types';
 import { FolderPicker } from './FolderPicker';
 
-export const CWD_FORMAT_ERROR = 'Нужен полный путь на диске машины: C:\\… или /…; сетевые пути не поддерживаются';
+export const cwdFormatError = (): string => t('newSession.cwdFormatError');
 
 export function defaultCwd(r: RunnerView | undefined): string {
   return r?.vaultRoot ?? r?.homeDir ?? '';
@@ -46,6 +47,7 @@ export interface NewSessionPreset {
 }
 
 export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void; preset?: NewSessionPreset }) {
+  const tr = useT();
   const all = useStore(s => s.runners);
   const runners = all.filter(usableRunner);
   const claudeModels = useStore(s => s.models);
@@ -129,19 +131,19 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
   const submit = async (e: { preventDefault(): void }) => {
     e.preventDefault();
     const errs: typeof errors = {};
-    if (!runner || !runner.online) errs.runner = 'Выберите машину в сети';
+    if (!runner || !runner.online) errs.runner = tr('newSession.err.runner');
     if (attachmentsBusy(FORM_KEY)) return;
     const images = readyRefs(FORM_KEY);
-    if (!prompt.trim() && !images.length) errs.prompt = 'Напишите первое сообщение или прикрепите изображение';
+    if (!prompt.trim() && !images.length) errs.prompt = tr('newSession.err.prompt');
     if (sub.blocked) errs.subscription = sub.blocked;
-    if (!model) errs.form = 'Машина не сообщила модели этого агента';
+    if (!model) errs.form = tr('newSession.err.noModels');
     let launchCwd = cwd.trim();
     let explicitProjectId: string | undefined = project !== 'auto' && project !== 'create' ? project : undefined;
     const chosen = projects.find(p => p.id === project);
     if (project === 'create') {
-      if (!projectName.trim()) errs.form = 'Укажите название проекта';
-      if (!projectPath.trim()) errs.cwd = 'Укажите папку проекта';
-      else if (!isAbsoluteLocalPath(projectPath.trim())) errs.cwd = CWD_FORMAT_ERROR;
+      if (!projectName.trim()) errs.form = tr('newSession.err.projectName');
+      if (!projectPath.trim()) errs.cwd = tr('newSession.err.projectPath');
+      else if (!isAbsoluteLocalPath(projectPath.trim())) errs.cwd = cwdFormatError();
       if (!Object.keys(errs).length && !errs.cwd && runner) {
         try {
           const created = await api.createCatalogProject({
@@ -156,27 +158,27 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
           launchCwd = projectPath.trim();
           explicitProjectId = created.id;
         } catch {
-          errs.form = 'Не удалось создать проект';
+          errs.form = tr('newSession.err.createFailed');
         }
       }
     } else if (project !== 'auto') {
       const binding = chosen?.bindings.find(b => b.runnerId === runner?.id);
       if (binding) launchCwd = binding.path;
       else if (bindingPath.trim() && runner && chosen) {
-        if (!isAbsoluteLocalPath(bindingPath.trim())) errs.cwd = CWD_FORMAT_ERROR;
+        if (!isAbsoluteLocalPath(bindingPath.trim())) errs.cwd = cwdFormatError();
         else {
           try {
             await api.bindCatalogProject(chosen.id, runner.id, bindingPath.trim());
             launchCwd = bindingPath.trim();
           } catch {
-            errs.cwd = 'Не удалось привязать папку проекта';
+            errs.cwd = tr('newSession.err.bindFailed');
           }
         }
-      } else errs.cwd = 'Нет каталога на этой машине — укажите папку для привязки';
+      } else errs.cwd = tr('newSession.err.noBinding');
     }
-    if (project === 'auto' && !cwd.trim()) errs.cwd = 'Укажите каталог';
+    if (project === 'auto' && !cwd.trim()) errs.cwd = tr('newSession.err.cwd');
     // Same check as the hub (shared/src/paths.ts): network paths would make the machine authenticate to another host.
-    if (!errs.cwd && !isAbsoluteLocalPath(launchCwd)) errs.cwd = CWD_FORMAT_ERROR;
+    if (!errs.cwd && !isAbsoluteLocalPath(launchCwd)) errs.cwd = cwdFormatError();
     setErrors(errs);
     if (Object.keys(errs).length || !runner) return focusFirstInvalid(errs);
     setBusy(true);
@@ -234,19 +236,19 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
           }}
         >
           <div className="modal-head">
-            <h2 id={titleId}>Новая сессия</h2>
-            <p>Выберите машину и проект — каталог запуска задаёт проект.</p>
+            <h2 id={titleId}>{tr('newSession.title')}</h2>
+            <p>{tr('newSession.lead')}</p>
           </div>
           <div className="modal-body">
             <div className="field">
               <span className="lbl" id={`${titleId}-r`}>
-                Где запустить
+                {tr('newSession.where')}
               </span>
               <div className="runner-opts" role="radiogroup" aria-labelledby={`${titleId}-r`} aria-invalid={!!errors.runner} aria-describedby={errors.runner ? `${titleId}-r-err` : undefined}>
                 {runners.map(r => (
                   <button key={r.id} type="button" role="radio" aria-checked={r.id === runnerId} className={`seg-opt${r.id === runnerId ? ' on' : ''}`} disabled={!r.online} onClick={() => pick(r)}>
                     <b>{r.name}</b>
-                    <span>{r.online ? (r.os ?? 'в сети') : 'не в сети'}</span>
+                    <span>{r.online ? (r.os ?? tr('machines.status.online')) : tr('machines.status.offline')}</span>
                   </button>
                 ))}
               </div>
@@ -266,7 +268,7 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
               }}
             />
             <div className="field">
-              <label htmlFor={`${titleId}-msg`}>Первое сообщение</label>
+              <label htmlFor={`${titleId}-msg`}>{tr('newSession.firstMessage')}</label>
               <textarea
                 id={`${titleId}-msg`}
                 className="input"
@@ -303,20 +305,20 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
             </div>
             <div className="field">
               <div className="lbl project-heading">
-                <span>Проект</span>
-                <span className="project-sort" role="group" aria-label="Сортировка проектов">
+                <span>{tr('newSession.project')}</span>
+                <span className="project-sort" role="group" aria-label={tr('newSession.sortLabel')}>
                   <button type="button" aria-pressed={projectSort === 'recent'} onClick={() => setProjectSort('recent')}>
-                    по последнему событию
+                    {tr('newSession.sortRecent')}
                   </button>
                   <button type="button" aria-pressed={projectSort === 'name'} onClick={() => setProjectSort('name')}>
-                    по имени
+                    {tr('newSession.sortName')}
                   </button>
                 </span>
               </div>
               <div className="project-list">
-                <button type="button" className={`seg-opt${project === 'auto' ? ' on' : ''}`} onClick={() => setProject('auto')} title="Хаб сам определяет проект по сообщению и рабочему каталогу">
-                  <b>✦ Определи сам</b>
-                  <span>Точное совпадение определит проект; предположение можно подтвердить в сессии.</span>
+                <button type="button" className={`seg-opt${project === 'auto' ? ' on' : ''}`} onClick={() => setProject('auto')} title={tr('newSession.autoTip')}>
+                  <b>{tr('newSession.autoName')}</b>
+                  <span>{tr('newSession.autoHint')}</span>
                 </button>
                 {projects
                   .filter(p => !p.archived)
@@ -328,7 +330,7 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
                         key={p.id}
                         className={`seg-opt project-option${project === p.id ? ' on' : ''}`}
                         onClick={() => setProject(p.id)}
-                        title={binding?.path ?? `Каталога на ${runner?.name ?? 'машине'} нет`}
+                        title={binding?.path ?? tr('newSession.noDirTip', { machine: runner?.name ?? tr('newSession.machineFallback') })}
                       >
                         <div className="project-option-heading">
                           <span className="pdot project-initial" aria-hidden="true" style={{ background: colorVar(p.colorKey), display: 'inline-grid' }}>
@@ -336,13 +338,13 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
                           </span>
                           <b>{p.name}</b>
                         </div>
-                        {!binding && <span>нет каталога на {runner?.name ?? 'машине'} — привязать</span>}
+                        {!binding && <span>{tr('newSession.noDirBind', { machine: runner?.name ?? tr('newSession.machineFallback') })}</span>}
                       </button>
                     );
                   })}
                 <button type="button" className={`seg-opt${project === 'create' ? ' on' : ''}`} onClick={() => setProject('create')}>
-                  <b>＋ Создать новый проект</b>
-                  <span>название и папка на выбранной машине</span>
+                  <b>{tr('newSession.createName')}</b>
+                  <span>{tr('newSession.createHint')}</span>
                 </button>
               </div>
             </div>
@@ -350,39 +352,39 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
               <>
                 <div className="row2">
                   <div className="field">
-                    <label htmlFor={`${titleId}-pname`}>Название</label>
+                    <label htmlFor={`${titleId}-pname`}>{tr('newSession.name')}</label>
                     <input id={`${titleId}-pname`} className="input" value={projectName} onChange={e => setProjectName(e.target.value)} />
                   </div>
                   <div className="field">
-                    <label htmlFor={`${titleId}-ppath`}>Папка на {runner?.name}</label>
+                    <label htmlFor={`${titleId}-ppath`}>{tr('newSession.folderOn', { machine: runner?.name ?? '' })}</label>
                     <div className="folder-path-row">
                       <input id={`${titleId}-ppath`} className="input mono" value={projectPath} onChange={e => setProjectPath(e.target.value)} />
                       <button type="button" className="btn" onClick={() => setPickerTarget('project')}>
-                        Выбрать…
+                        {tr('newSession.choose')}
                       </button>
                     </div>
                   </div>
                 </div>
                 <div className="field">
-                  <label htmlFor={`${titleId}-pdesc`}>Описание · необязательно</label>
+                  <label htmlFor={`${titleId}-pdesc`}>{tr('newSession.description')}</label>
                   <input id={`${titleId}-pdesc`} className="input" value={projectDescription} onChange={e => setProjectDescription(e.target.value)} />
                 </div>
                 <div className="field">
-                  <label htmlFor={`${titleId}-premote`}>Remote Git · необязательно</label>
-                  <input id={`${titleId}-premote`} className="input mono" value={projectRemote} onChange={e => setProjectRemote(e.target.value)} placeholder="https://… или git@…" />
+                  <label htmlFor={`${titleId}-premote`}>{tr('newSession.remote')}</label>
+                  <input id={`${titleId}-premote`} className="input mono" value={projectRemote} onChange={e => setProjectRemote(e.target.value)} placeholder={tr('newSession.remotePlaceholder')} />
                 </div>
-                <span className="hint">Папка подключается к каталогу хаба. YAML sync будет доступен в следующем срезе.</span>
+                <span className="hint">{tr('newSession.createNote')}</span>
               </>
             )}
             {project !== 'auto' && project !== 'create' && !projects.find(p => p.id === project)?.bindings.some(b => b.runnerId === runnerId) && (
               <div className="banner">
                 <div className="field">
-                  <b>Нет каталога проекта на {runner?.name}.</b>
-                  <label htmlFor={`${titleId}-bind`}>Путь папки для привязки</label>
+                  <b>{tr('newSession.noBinding', { machine: runner?.name ?? '' })}</b>
+                  <label htmlFor={`${titleId}-bind`}>{tr('newSession.bindPath')}</label>
                   <div className="folder-path-row">
                     <input id={`${titleId}-bind`} className="input mono" value={bindingPath} onChange={e => setBindingPath(e.target.value)} />
                     <button type="button" className="btn" onClick={() => setPickerTarget('binding')}>
-                      Выбрать…
+                      {tr('newSession.choose')}
                     </button>
                   </div>
                 </div>
@@ -395,7 +397,7 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
             )}
             <div className="row2">
               <div className="field">
-                <label htmlFor={`${titleId}-mode`}>Режим прав</label>
+                <label htmlFor={`${titleId}-mode`}>{tr('newSession.mode')}</label>
                 <select
                   id={`${titleId}-mode`}
                   className="input"
@@ -408,18 +410,18 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
                 >
                   {UI_PERMISSION_MODES.map(m => (
                     <option key={m} value={m} disabled={noBypass && m === 'bypassPermissions'}>
-                      {noBypass && m === 'bypassPermissions' ? `${m} — недоступен под root` : m}
+                      {noBypass && m === 'bypassPermissions' ? tr('newSession.modeNoRoot', { mode: m }) : m}
                     </option>
                   ))}
                 </select>
                 {noBypass && (
                   <span className="hint" id={`${titleId}-mode-hint`}>
-                    Агент на {runner?.name} работает под root — bypassPermissions недоступен
+                    {tr('newSession.rootHint', { machine: runner?.name ?? '' })}
                   </span>
                 )}
               </div>
               <div className="field">
-                <label htmlFor={`${titleId}-model`}>Модель</label>
+                <label htmlFor={`${titleId}-model`}>{tr('newSession.model')}</label>
                 <select id={`${titleId}-model`} className="input" value={model} onChange={e => setModel(e.target.value)}>
                   {models.map(m => (
                     <option key={m.value} value={m.value}>
@@ -446,19 +448,19 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
                 {errors.form}
                 {canRetry && (
                   <button type="button" className="btn attach-retry" disabled={busy} onClick={e => void submit(e)}>
-                    Повторить
+                    {tr('newSession.retry')}
                   </button>
                 )}
               </div>
             )}
           </div>
           <div className="modal-foot">
-            <span className="hint foot-hint">Ctrl+Enter — запустить</span>
+            <span className="hint foot-hint">{tr('newSession.ctrlEnter')}</span>
             <button type="button" className="btn ghost" onClick={onClose}>
-              Отмена
+              {tr('newSession.cancel')}
             </button>
-            <button type="submit" className="btn primary" disabled={busy || uploading || !!sub.blocked} title={uploading ? 'Изображения ещё загружаются' : sub.blocked}>
-              {busy ? 'Запуск…' : 'Запустить'}
+            <button type="submit" className="btn primary" disabled={busy || uploading || !!sub.blocked} title={uploading ? tr('newSession.uploading') : sub.blocked}>
+              {busy ? tr('newSession.starting') : tr('newSession.start')}
             </button>
           </div>
         </form>

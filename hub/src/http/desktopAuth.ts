@@ -1,7 +1,8 @@
 // Login of the desktop app through the system browser (change desktop-app, capability desktop-auth, design.md D9, D10).
 // /auth/login, /auth/callback and /auth/logout (auth.ts) are untouched; every new route is under /auth/desktop/.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { desktopExchangeRequestSchema, type DesktopExchangeResponse } from '@agent-hub/shared';
+import { desktopExchangeRequestSchema, type DesktopExchangeResponse, type Locale } from '@agent-hub/shared';
+import { tr } from '../i18n.js';
 import type { Config } from '../config.js';
 import type { Db } from '../db/db.js';
 import type { LoginProvider } from '@agent-hub/shared';
@@ -50,9 +51,9 @@ export function registerDesktopAuth(app: FastifyInstance, deps: { config: Config
       return payload;
     },
   };
-  const returnPage = (reply: FastifyReply, userId: string, email: string, cc: string, state: string) => {
+  const returnPage = (reply: FastifyReply, locale: Locale, userId: string, email: string, cc: string, state: string) => {
     const code = codes.issue({ userId, email, challenge: cc, state });
-    return html(reply, 200, desktopReturnPage(desktopReturnLink(code, state)));
+    return html(reply, 200, desktopReturnPage(locale, desktopReturnLink(code, state)));
   };
 
   // Requirement: Старт входа приложения.
@@ -61,15 +62,15 @@ export function registerDesktopAuth(app: FastifyInstance, deps: { config: Config
     const cc = typeof q.code_challenge === 'string' ? q.code_challenge : '';
     const as = typeof q.state === 'string' ? q.state : '';
     if (!CHALLENGE_RE.test(cc) || q.code_challenge_method !== 'S256' || !STATE_RE.test(as)) {
-      return html(reply, 400, desktopBadLinkPage());
+      return html(reply, 400, desktopBadLinkPage(req.locale));
     }
 
     // Scenario «Браузер уже вошёл в хаб»: the code right away, no Google.
     // findSessionUser skips disabled users: an active session of an admitted user is enough.
     const user = await findSessionUser(db, req.cookies[SESSION_COOKIE]);
-    if (user) return returnPage(reply, user.id, user.email, cc, as);
+    if (user) return returnPage(reply, req.locale, user.id, user.email, cc, as);
 
-    if (!limits.loginStart.hit(req.ip)) return html(reply, 429, loginErrorPage('Слишком много попыток входа. Подождите минуту.'));
+    if (!limits.loginStart.hit(req.ip)) return html(reply, 429, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.tooManyAttempts')));
     // Change multi-user: `provider`; without it — the choice, when Keycloak is configured.
     const providers = providersFor(req, config, oidc);
     let provider: LoginProvider | null = q.provider === 'google' || q.provider === 'keycloak' ? q.provider : null;
@@ -77,7 +78,7 @@ export function registerDesktopAuth(app: FastifyInstance, deps: { config: Config
     if (!provider) {
       if (providers.length > 1) {
         const link = (p: LoginProvider) => `/auth/desktop/start?${new URLSearchParams({ code_challenge: cc, code_challenge_method: 'S256', state: as, provider: p }).toString()}`;
-        return html(reply, 200, desktopChooseProviderPage(providers, link));
+        return html(reply, 200, desktopChooseProviderPage(req.locale, providers, link));
       }
       provider = 'google';
     }
@@ -87,7 +88,7 @@ export function registerDesktopAuth(app: FastifyInstance, deps: { config: Config
       started = await client.start({ redirectUri: redirectUri(req) });
     } catch (err) {
       req.log.error({ err, provider }, 'oidc discovery failed');
-      return html(reply, 502, loginErrorPage(`Сервис входа ${providerLabel(provider)} недоступен.`));
+      return html(reply, 502, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.providerDown', { provider: providerLabel(provider) })));
     }
     const cookie: DesktopCookie = { ...started.checks, cc, as, p: provider };
     reply.setCookie(DESKTOP_COOKIE, JSON.stringify(cookie), {
@@ -121,19 +122,19 @@ export function registerDesktopAuth(app: FastifyInstance, deps: { config: Config
     // Scenario «Подмена state».
     if (!checks || !q.state || q.state !== checks.state) {
       req.log.warn('desktop oidc callback rejected: state mismatch or missing login cookie');
-      return html(reply, 400, loginErrorPage('Ссылка входа устарела или подменена. Начните вход заново из приложения.'));
+      return html(reply, 400, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.linkExpiredApp')));
     }
     const provider: LoginProvider = checks.p === 'keycloak' ? 'keycloak' : 'google';
     const client = provider === 'keycloak' ? oidc.keycloak : oidc.google;
-    if (!client) return html(reply, 400, loginErrorPage('Этот способ входа выключен.'));
-    if (q.error) return html(reply, 400, loginErrorPage(`${providerLabel(provider)} вернул ошибку: ${q.error}`));
+    if (!client) return html(reply, 400, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.methodOff')));
+    if (q.error) return html(reply, 400, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.providerError', { provider: providerLabel(provider), error: String(q.error) })));
 
     let identity;
     try {
       identity = await client.finish(new URL(req.url, requestPublicUrl(req, config)), checks);
     } catch (err) {
       req.log.warn({ err: (err as Error).message, provider }, 'desktop oidc code exchange failed');
-      return html(reply, 400, loginErrorPage(`${providerLabel(provider)} не подтвердил вход. Начните вход заново из приложения.`));
+      return html(reply, 400, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.notConfirmedApp', { provider: providerLabel(provider) })));
     }
 
     // The admission of the browser login (users/repo.ts admit) without an invite: the app enters as an existing user
@@ -143,11 +144,11 @@ export function registerDesktopAuth(app: FastifyInstance, deps: { config: Config
     if (!a.ok) {
       req.log.warn({ email: identity.email, emailVerified: identity.emailVerified, provider, reason: a.reason }, 'desktop login denied');
       void logSecurity(db, { ...security, userId: null, kind: 'login_denied', email: identity.email }).catch(() => undefined);
-      return app.deniedLoginPage(reply, a, identity.email, null);
+      return app.deniedLoginPage(reply, req.locale, a, identity.email, null);
     }
     req.log.info({ userId: a.user.id, provider }, 'desktop login code issued');
     void logSecurity(db, { ...security, userId: a.user.id, kind: 'login' }).catch(() => undefined);
-    return returnPage(reply, a.user.id, a.user.email, checks.cc, checks.as);
+    return returnPage(reply, req.locale, a.user.id, a.user.email, checks.cc, checks.as);
   });
 
   // Requirement: Обмен кода на сессию. Passes the common Origin guard (auth.ts) with no new exception (D10).

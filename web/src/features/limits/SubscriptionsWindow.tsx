@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import type { LimitWindowView } from '../../api/types';
 import { useStore } from '../../store';
+import { t as tNow, useT } from '../../i18n';
 import { IconChev } from '../toolwindows/icons';
 import { clock } from '../subscriptions/model';
 import { LimitRing, type RingTone } from './LimitRing';
@@ -58,18 +59,23 @@ function ringOf(wins: LimitWindowView[], date: Date, now: number): { pct: number
     return 0;
   };
   const top = [...live].sort(order)[0];
-  if (!top) return { pct: 0, tone: 'ok', tip: `${windowText(wins[0]!.type).short} — окно сброшено` };
+  if (!top) return { pct: 0, tone: 'ok', tip: tNow('limits.window.resetTip', { window: windowText(wins[0]!.type).short }) };
   const pct = effectivePct(top)!;
-  return { pct, tone: toneOf(top), tip: `${windowText(top.type).short} — ${fmtPct(pct)}%, сброс ${top.resetsAt ? clock(top.resetsAt, date) : 'неизвестен'}` };
+  return {
+    pct,
+    tone: toneOf(top),
+    tip: tNow('limits.window.tip', { window: windowText(top.type).short, pct: fmtPct(pct), reset: top.resetsAt ? clock(top.resetsAt, date) : tNow('limits.window.resetUnknown') }),
+  };
 }
 
 export function SubscriptionsWindow() {
+  const t = useT();
   const now = useHubNow();
   const rows = useLimitRows(now);
   const limits = useStore(s => s.limits);
   const subs = useStore(s => s.subs);
   const [open, setOpen] = useState<string[]>(loadExpanded);
-  if (!rows || !rows.length) return <p className="hint">Нет подписок с лимитами</p>;
+  if (!rows || !rows.length) return <p className="hint">{t('limits.window.none')}</p>;
   const current = subs?.defaultId ?? subs?.lastChoiceId ?? null;
   const toggle = (id: string) => {
     const next = open.includes(id) ? open.filter(x => x !== id) : [...open, id];
@@ -96,7 +102,7 @@ export function SubscriptionsWindow() {
               </span>
               {ring}
               <span className="tw-sn">{sub.name}</span>
-              {current === sub.id && <span className="tw-chip">● сейчас</span>}
+              {current === sub.id && <span className="tw-chip">{t('limits.window.current')}</span>}
             </button>
             {expanded &&
               (wins.length ? (
@@ -118,7 +124,7 @@ export function SubscriptionsWindow() {
                   );
                 })
               ) : (
-                <div className="tw-lim tw-nodata">нет данных</div>
+                <div className="tw-lim tw-nodata">{t('limits.window.noData')}</div>
               ))}
           </div>
         );

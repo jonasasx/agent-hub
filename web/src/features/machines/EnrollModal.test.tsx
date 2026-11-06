@@ -7,7 +7,7 @@ import { useStore } from '../../store';
 import { handleServerMessage } from '../workspace/actions';
 import { mockFetch, resetStore, runner } from '../../test/factories';
 import { EnrollModal, EnrollProgress, NO_CONTACT_HINT_MS } from './EnrollModal';
-import { detectOs, osFamily, plural } from './machines';
+import { detectOs, osFamily } from './machines';
 
 const pending = (over: Partial<RunnerView> = {}) =>
   runner({ id: 'r-abc', name: 'Моя машина', os: null, online: false, lastSeenAt: null, agentVersion: null, vaultRoot: null, homeDir: null, state: 'pending', claudeLogin: null, ...over });
@@ -45,11 +45,10 @@ describe('detectOs', () => {
     // a phone connects a server, not itself
     expect(detectOs({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari' })).toBe('linux');
   });
-  it('osFamily and plural', () => {
+  it('osFamily', () => {
     expect(osFamily('Windows 11 Pro')).toBe('windows');
     expect(osFamily('macOS 15.1')).toBe('macos');
     expect(osFamily('Ubuntu 24.04')).toBe('linux');
-    expect([1, 2, 5, 11, 21, 22].map(n => plural(n, ['машина', 'машины', 'машин']))).toEqual(['машина', 'машины', 'машин', 'машин', 'машина', 'машины']);
   });
 });
 

@@ -9,6 +9,7 @@
  */
 import type { SessionView } from '@agent-hub/shared';
 import { needsMe, type RunnerLookup } from './waiting.js';
+import { dt } from './i18n.js';
 
 export interface NotificationSpec {
   sessionId: string;
@@ -31,9 +32,9 @@ export interface NotifyInput {
 
 export function notificationText(s: SessionView, runners: RunnerLookup): Pick<NotificationSpec, 'reason' | 'title' | 'body'> {
   const reason = s.status === 'permission' ? 'permission' : 'turn_ended';
-  const title = `${reason === 'permission' ? 'Ждёт разрешения' : 'Ждёт ответа'}: ${s.title || 'Без названия'}`;
+  const title = dt(reason === 'permission' ? 'desktop.notify.permissionTitle' : 'desktop.notify.replyTitle', { title: s.title || dt('desktop.notify.untitled') });
   const runner = runners.get(s.runnerId)?.name ?? s.runnerId;
-  const body = `${s.project?.title || 'Без проекта'} · ${runner}`;
+  const body = `${s.project?.title || dt('desktop.notify.noProject')} · ${runner}`;
   return { reason, title, body };
 }
 

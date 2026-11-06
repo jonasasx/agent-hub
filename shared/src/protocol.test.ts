@@ -214,8 +214,8 @@ describe('protocol version', () => {
     expect(isCompatibleProtocol('1.13')).toBe(true);
     expect(parseHubMessage(JSON.stringify(envelope('fs.read', { path: '/a', root: '' }, { id: 'bad' }))).ok).toBe(false);
   });
-  it('is 1.14 with close codes 4401/4409/4426; subscriptions need 1.4, agent.update 1.5, limits 1.6, MCP 1.7, MCP sign-out 1.8, Codex subscriptions 1.11', () => {
-    expect(PROTOCOL_VERSION).toBe('1.14');
+  it('is 1.15 with close codes 4401/4409/4426; subscriptions need 1.4, agent.update 1.5, limits 1.6, MCP 1.7, MCP sign-out 1.8, Codex subscriptions 1.11', () => {
+    expect(PROTOCOL_VERSION).toBe('1.15');
     expect(isCompatibleProtocol('1.11')).toBe(true); // project launch adds only optional HTTP fields; agent commands remain 1.12-compatible
     expect(MCP_PROTOCOL).toBe('1.7');
     expect(MCP_AUTH_CONTROLS_PROTOCOL).toBe('1.8');
@@ -402,6 +402,14 @@ describe('1.4: subscriptions', () => {
     expect(hub('session.start', { ...start, projectId: SID }).ok).toBe(true);
     expect(hub('session.resume', { ...resume, projectId: SID }).ok).toBe(true);
     expect(hub('session.start', { ...start, projectId: 'not-a-guid' }).ok).toBe(false);
+  });
+
+  it('1.15: an optional project catalogue on session start and resume, at most 200 entries', () => {
+    const entry = { id: SID, name: 'Agent Hub', description: null, remote: 'gitlab.com/jonasasx/agent-hub', path: 'C:\\code\\agent-hub', current: true };
+    expect(hub('session.start', { ...start, projectCatalog: [entry] }).ok).toBe(true);
+    expect(hub('session.resume', { ...resume, projectCatalog: [] }).ok).toBe(true);
+    expect(hub('session.start', { ...start, projectCatalog: [{ ...entry, current: undefined }] }).ok).toBe(false);
+    expect(hub('session.start', { ...start, projectCatalog: Array.from({ length: 201 }, () => entry) }).ok).toBe(false);
   });
 
   it.each([

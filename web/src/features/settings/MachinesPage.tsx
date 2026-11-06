@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useId, useState } from 'react';
 import { ApiError, api } from '../../api/client';
 import type { RunnerDetail, RunnerView } from '../../api/types';
+import { t, useT } from '../../i18n';
 import { useStore } from '../../store';
 import { formatLastSeen } from '../machines/runnerInfo';
 import { CommandBox, MacDiskWarning } from '../machines/EnrollModal';
@@ -19,14 +20,15 @@ import { ProviderStatusRow } from '../machines/ProviderLogin';
 type Load = { kind: 'loading' } | { kind: 'error' } | { kind: 'ok'; runners: RunnerView[]; agentVersion: string | null };
 
 function statusLine(r: RunnerView): { text: string; cls: string } {
-  if (r.state === 'disabled') return { text: 'отключена', cls: 'off' };
-  if (r.state === 'pending') return { text: 'ожидает подключения', cls: 'warn' };
-  if (r.online) return { text: 'в сети', cls: 'ok' };
+  if (r.state === 'disabled') return { text: t('settings.machines.statusDisabled'), cls: 'off' };
+  if (r.state === 'pending') return { text: t('settings.machines.statusPending'), cls: 'warn' };
+  if (r.online) return { text: t('machines.status.online'), cls: 'ok' };
   const seen = formatLastSeen(r.lastSeenAt);
-  return { text: seen ? `не в сети с ${seen}` : 'не в сети', cls: 'bad' };
+  return { text: seen ? t('machines.tip.offlineSince', { since: seen }) : t('machines.status.offline'), cls: 'bad' };
 }
 
 function Rename({ r, onDone }: { r: RunnerView; onDone: (r: RunnerView | null) => void }) {
+  const tr = useT();
   const id = useId();
   const [name, setName] = useState(r.name);
   const [err, setErr] = useState<string | null>(null);
@@ -35,13 +37,13 @@ function Rename({ r, onDone }: { r: RunnerView; onDone: (r: RunnerView | null) =
   const save = async (e: { preventDefault(): void }) => {
     e.preventDefault();
     const n = name.trim();
-    if (!n) return setErr('Укажите имя');
+    if (!n) return setErr(tr('settings.machines.nameRequired'));
     if (n === r.name) return onDone(null);
     setBusy(true);
     try {
       onDone(await api.renameRunner(r.id, n));
     } catch (e2) {
-      setErr(e2 instanceof ApiError && e2.code === 'name_taken' ? 'Машина с таким именем уже есть' : 'Не сохранено. Попробуйте ещё раз.');
+      setErr(e2 instanceof ApiError && e2.code === 'name_taken' ? tr('settings.machines.nameTaken') : tr('settings.machines.saveFailed'));
     } finally {
       setBusy(false);
     }
@@ -49,7 +51,7 @@ function Rename({ r, onDone }: { r: RunnerView; onDone: (r: RunnerView | null) =
   return (
     <form className="rename" onSubmit={e => void save(e)}>
       <label className="sr-only" htmlFor={id}>
-        Новое имя для {r.name}
+        {tr('settings.machines.renameLabel', { name: r.name })}
       </label>
       <input
         id={id}
@@ -63,10 +65,10 @@ function Rename({ r, onDone }: { r: RunnerView; onDone: (r: RunnerView | null) =
         aria-describedby={err ? `${id}-err` : undefined}
       />
       <button type="submit" className="btn primary" disabled={busy}>
-        Сохранить
+        {tr('settings.machines.save')}
       </button>
       <button type="button" className="btn ghost" onClick={() => onDone(null)}>
-        Отмена
+        {tr('settings.machines.cancel')}
       </button>
       {err && (
         <span className="field-error" id={`${id}-err`} role="alert">
@@ -78,6 +80,7 @@ function Rename({ r, onDone }: { r: RunnerView; onDone: (r: RunnerView | null) =
 }
 
 function MachineCard({ r, agentVersion, onChange }: { r: RunnerView; agentVersion: string | null; onChange: (r: RunnerView) => void }) {
+  const tr = useT();
   const [renaming, setRenaming] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -95,7 +98,7 @@ function MachineCard({ r, agentVersion, onChange }: { r: RunnerView; agentVersio
       setConfirm(false);
       onChange(d);
     } catch {
-      setErr('Машина не отключена. Попробуйте ещё раз.');
+      setErr(tr('settings.machines.disableFailed'));
     } finally {
       setBusy(false);
     }
@@ -120,46 +123,46 @@ function MachineCard({ r, agentVersion, onChange }: { r: RunnerView; agentVersio
       </div>
       <dl className="mc-facts">
         <div>
-          <dt>Система</dt>
+          <dt>{tr('settings.machines.factSystem')}</dt>
           <dd>{r.os ?? '—'}</dd>
         </div>
         <div>
-          <dt>Агент</dt>
+          <dt>{tr('settings.machines.factAgent')}</dt>
           {/* UI review H2/M4: the version is its own flex item (the tags get a gap), numbers in the mono face of «.ver-line b» */}
           <dd className="ag">
             <span className="mc-ver">
               {r.agentVersion ? <span className="num">{r.agentVersion}</span> : '—'}
               {r.agentVersion && r.protocolVersion ? (
                 <>
-                  {' · протокол '}
+                  {` · ${tr('settings.machines.protocol')} `}
                   <span className="num">{r.protocolVersion}</span>
                 </>
               ) : null}
             </span>
             {r.outdated && (
-              <span className="tag warn" title={agentVersion ? `Текущая версия ${agentVersion}; обновится сама` : undefined}>
-                устарела
+              <span className="tag warn" title={agentVersion ? tr('settings.machines.currentVersion', { version: agentVersion }) : undefined}>
+                {tr('settings.machines.outdated')}
               </span>
             )}
-            {r.update?.status === 'failed' && <span className="tag bad">обновление не удалось</span>}
-            {r.update && r.update.status !== 'failed' && <span className="tag">обновляется до {r.update.version}</span>}
+            {r.update?.status === 'failed' && <span className="tag bad">{tr('settings.machines.updateFailed')}</span>}
+            {r.update && r.update.status !== 'failed' && <span className="tag">{tr('settings.machines.updatingTo', { version: r.update.version })}</span>}
           </dd>
         </div>
         <div>
           <dt>Claude</dt>
-          <dd>{r.claudeLogin === 'ok' ? 'вход есть' : needsClaudeLogin(r) ? <span className="tag bad">нет входа</span> : '—'}</dd>
+          <dd>{r.claudeLogin === 'ok' ? tr('settings.machines.claudeOk') : needsClaudeLogin(r) ? <span className="tag bad">{tr('settings.machines.claudeNo')}</span> : '—'}</dd>
         </div>
         {!off && r.providers?.some(p => p.id === 'codex') && <ProviderStatusRow r={r} provider="codex" />}
         <div>
-          <dt>Активность</dt>
-          <dd>{formatLastSeen(r.lastSeenAt) ?? 'ещё не подключалась'}</dd>
+          <dt>{tr('settings.machines.factActivity')}</dt>
+          <dd>{formatLastSeen(r.lastSeenAt) ?? tr('machines.tip.neverConnected')}</dd>
         </div>
       </dl>
       {!off && needsClaudeLogin(r) && (
         <div className="banner warn inline-warn" role="status">
           <div className="b-text">
-            <b>Нет входа в Claude.</b> Сессии на этой машине не запустятся. Выполните на машине:
-            <CommandBox command={claudeLoginCommand(r.os)} label={`Команда входа в Claude на ${r.name}`} />
+            <b>{tr('machines.enroll.noLoginTitle')}</b> {tr('settings.machines.noLoginBody')}
+            <CommandBox command={claudeLoginCommand(r.os)} label={tr('settings.machines.loginCmdLabel', { name: r.name })} />
           </div>
         </div>
       )}
@@ -167,31 +170,30 @@ function MachineCard({ r, agentVersion, onChange }: { r: RunnerView; agentVersio
       {!off && r.runsAsRoot === true && (
         <div className="banner warn inline-warn" role="status">
           <div className="b-text">
-            <b>Работает под root — режим bypassPermissions недоступен.</b> Claude Code не запускает его под root: сессии на этой машине — только в режимах с запросом разрешений. Чтобы вернуть режим,
-            переустановите агента под обычным пользователем.
+            <b>{tr('settings.machines.rootTitle')}</b> {tr('settings.machines.rootBody')}
           </div>
         </div>
       )}
-      {off && !uninstall && <p className="hint">Отключена. Сессии этой машины открываются только для чтения.</p>}
+      {off && !uninstall && <p className="hint">{tr('settings.machines.offNote')}</p>}
       {uninstall && (
         <div className="banner inline-warn" role="status">
           <div className="b-text">
-            <b>Машина отключена.</b> Сессии остаются только для чтения. Чтобы удалить агента, выполните на машине:
-            <CommandBox command={osFamily(r.os) === 'windows' ? uninstall.windows : uninstall.unix} label={`Команда удаления агента с ${r.name}`} />
-            <span className="hint">~/.claude и история сессий не удаляются.</span>
+            <b>{tr('settings.machines.uninstallTitle')}</b> {tr('settings.machines.uninstallBody')}
+            <CommandBox command={osFamily(r.os) === 'windows' ? uninstall.windows : uninstall.unix} label={tr('settings.machines.uninstallLabel', { name: r.name })} />
+            <span className="hint">{tr('settings.machines.uninstallNote')}</span>
           </div>
         </div>
       )}
       {confirm && (
-        <div className="banner warn inline-warn" role="alertdialog" aria-label={`Отключить ${r.name}?`}>
+        <div className="banner warn inline-warn" role="alertdialog" aria-label={tr('settings.machines.confirmLabel', { name: r.name })}>
           <div className="b-text">
-            <b>Отключить {r.name}?</b> Агент отключится сразу, запускать сессии на машине будет нельзя. Подключить её снова — через «Добавить машину».
+            <b>{tr('settings.machines.confirmLabel', { name: r.name })}</b> {tr('settings.machines.confirmBody')}
           </div>
           <button type="button" className="btn ghost" onClick={() => setConfirm(false)}>
-            Отмена
+            {tr('settings.machines.cancel')}
           </button>
           <button type="button" className="btn danger" disabled={busy} onClick={() => void disable()}>
-            {busy ? 'Отключаем…' : 'Отключить'}
+            {busy ? tr('settings.machines.disabling') : tr('settings.machines.disable')}
           </button>
         </div>
       )}
@@ -204,18 +206,18 @@ function MachineCard({ r, agentVersion, onChange }: { r: RunnerView; agentVersio
         <div className="mc-actions">
           {r.state === 'pending' ? (
             <button type="button" className="btn primary" onClick={() => useStore.setState({ modal: { type: 'enroll', runnerId: r.id } })}>
-              Показать команду
+              {tr('settings.machines.showCommand')}
             </button>
           ) : (
             <button type="button" className="btn" onClick={() => useStore.setState({ modal: { type: 'enroll', runnerId: r.id } })}>
-              Переподключить
+              {tr('settings.machines.reconnect')}
             </button>
           )}
           <button type="button" className="btn" onClick={() => setRenaming(true)}>
-            Переименовать
+            {tr('settings.machines.rename')}
           </button>
           <button type="button" className="btn ghost danger-text" onClick={() => setConfirm(true)}>
-            Отключить
+            {tr('settings.machines.disable')}
           </button>
         </div>
       )}
@@ -225,6 +227,7 @@ function MachineCard({ r, agentVersion, onChange }: { r: RunnerView; agentVersio
 }
 
 export function MachinesPage() {
+  const tr = useT();
   const [load, setLoad] = useState<Load>({ kind: 'loading' });
   // live statuses (runner.status / runner.enroll) of the panel's machines win over the loaded list
   const liveRunners = useStore(s => s.runners);
@@ -259,32 +262,32 @@ export function MachinesPage() {
   return (
     <section aria-labelledby="set-machines">
       <div className="set-head">
-        <h2 id="set-machines">Машины</h2>
+        <h2 id="set-machines">{tr('settings.machines.title')}</h2>
         <button type="button" className="btn primary" onClick={() => useStore.setState({ modal: { type: 'enroll' } })}>
-          Добавить машину
+          {tr('settings.machines.add')}
         </button>
       </div>
-      <p className="hint">Машины, на которых работают ваши агенты. Агент обновляется сам между ходами.</p>
+      <p className="hint">{tr('settings.machines.hint')}</p>
       {/* change client-versions D8: the agent build the hub hands out; none — no line */}
       {load.kind === 'ok' && load.agentVersion && (
         <p className="ver-line">
-          Актуальная версия агента <b>{load.agentVersion}</b>
+          {tr('settings.machines.latestAgent')} <b>{load.agentVersion}</b>
         </p>
       )}
       {load.kind === 'loading' && (
         <p className="hint" role="status">
-          <span className="spinner" aria-hidden="true" /> Загрузка…
+          <span className="spinner" aria-hidden="true" /> {tr('settings.common.loading')}
         </p>
       )}
       {load.kind === 'error' && (
         <div className="err-box" role="alert">
-          Список машин не загружен.{' '}
+          {tr('settings.machines.listError')}{' '}
           <button type="button" className="btn" onClick={fetchList}>
-            Повторить
+            {tr('settings.common.retry')}
           </button>
         </div>
       )}
-      {load.kind === 'ok' && !list.length && <p className="empty-note">Машин пока нет. Нажмите «Добавить машину».</p>}
+      {load.kind === 'ok' && !list.length && <p className="empty-note">{tr('settings.machines.empty')}</p>}
       {/* one list: a machine disabled here keeps its card (and the uninstall command) while it moves down */}
       {!!list.length && (
         <ul className="mcards">
@@ -292,7 +295,7 @@ export function MachinesPage() {
             ...(i === active.length && off.length
               ? [
                   <li key="off-h" className="set-sub" role="presentation">
-                    Отключённые
+                    {tr('settings.machines.disabledHead')}
                   </li>,
                 ]
               : []),

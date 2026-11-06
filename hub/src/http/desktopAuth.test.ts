@@ -168,7 +168,7 @@ describe('/auth/desktop/* (integration)', () => {
 
   describe('1.5 return page', () => {
     it('escapes the link in HTML attributes', () => {
-      const html = desktopReturnPage('agenthub://auth?code=a"b<c&state=x');
+      const html = desktopReturnPage('ru', 'agenthub://auth?code=a"b<c&state=x');
       expect(html).toContain('content="0;url=agenthub://auth?code=a&quot;b&lt;c&amp;state=x"');
       expect(html).toContain('href="agenthub://auth?code=a&quot;b&lt;c&amp;state=x"');
       expect(html).not.toContain('a"b<c');

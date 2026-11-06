@@ -24,6 +24,7 @@ import { loadSubscriptions } from '../subscriptions/actions';
 import { loadLimits } from '../limits/actions';
 import { handleMcpMessage } from '../mcp/actions';
 import type { DecideExtra } from '../../api/client';
+import { hubText, t, useLocale } from '../../i18n';
 
 const get = () => useStore.getState();
 const set = (p: Partial<ReturnType<typeof useStore.getState>>) => useStore.setState(p);
@@ -104,7 +105,7 @@ async function loadMoreInner(projectId: string | null): Promise<void> {
       if (page.sessions.length < PROJECT_PAGE || offset + PROJECT_PAGE >= page.total) break;
     }
   } catch (err) {
-    toastError('Список не загружен', err, 'Хаб не ответил. Проверьте связь и попробуйте ещё раз.');
+    toastError(t('workspace.actions.listNotLoaded'), err, t('workspace.actions.hubNoAnswerRetry'));
     if (!got.length) return;
   }
   get().upsertSessions(got);
@@ -335,17 +336,17 @@ function clearUnread(sid: string) {
 function evictToast(sid: string) {
   if (L.isFileTab(sid)) {
     const f = L.parseFileTabId(sid);
-    get().pushToast({ title: 'Вкладка убрана из полосы', text: `Файл ${f ? baseName(f.path) : ''} можно открыть заново в «Файлах»`, color: 'var(--accent)' });
+    get().pushToast({ title: t('workspace.actions.tabRemoved'), text: t('workspace.actions.evictFile', { name: f ? baseName(f.path) : '' }), color: 'var(--accent)' });
     return;
   }
   // a subagent tab: its title from the registry, no session card fetch, and it is not in the left panel
   if (get().tabKinds[sid] === 'subagent') {
     const v = get().subagents[sid];
-    const title = v ? subTitle(v) : 'Субагент';
-    get().pushToast({ title: 'Вкладка убрана из полосы', text: `${title}, чат доступен из списка субагентов сессии`, color: 'var(--accent)' });
+    const title = v ? subTitle(v) : t('workspace.actions.subagent');
+    get().pushToast({ title: t('workspace.actions.tabRemoved'), text: t('workspace.actions.evictSubagent', { title }), color: 'var(--accent)' });
     return;
   }
-  const show = (title: string) => get().pushToast({ title: 'Вкладка убрана из полосы', text: `${title}, она осталась в списке слева`, color: 'var(--accent)' });
+  const show = (title: string) => get().pushToast({ title: t('workspace.actions.tabRemoved'), text: t('workspace.actions.evictSession', { title }), color: 'var(--accent)' });
   const known = get().sessions[sid]?.title;
   if (known) return show(known);
   api.session(sid).then(
@@ -353,7 +354,7 @@ function evictToast(sid: string) {
       get().upsertSessions([s]);
       show(s.title);
     },
-    () => show(get().sessions[sid]?.title ?? 'Сессия'),
+    () => show(get().sessions[sid]?.title ?? t('workspace.actions.session')),
   );
 }
 
@@ -369,7 +370,7 @@ function forgetLostFileTabs(before: L.Workspace, after: L.Workspace) {
 }
 
 function tabsFullToast() {
-  get().pushToast({ title: 'Все 8 вкладок открыты в панелях — закройте одну', text: '', color: 'var(--warn)' });
+  get().pushToast({ title: t('workspace.actions.tabsFull'), text: '', color: 'var(--warn)' });
 }
 
 /**
@@ -681,8 +682,8 @@ export function dropSplit(sid: string, pid: string, zone: Exclude<L.Zone, 'cente
   if (queueWhileLoading(sid)) return;
   const wasTab = L.allTabs(get().ws).includes(sid);
   const r = L.split(get().ws, sid, pid, zone);
-  if (r.error === 'nothing_to_split') return get().pushToast({ title: 'Нечего делить', text: 'В панели одна вкладка — перетащи другую' });
-  if (r.error === 'pane_limit') return get().pushToast({ title: 'Не больше четырёх панелей', text: 'Перетащи вкладку в центр существующей панели' });
+  if (r.error === 'nothing_to_split') return get().pushToast({ title: t('workspace.actions.nothingToSplit'), text: t('workspace.actions.nothingToSplitHint') });
+  if (r.error === 'pane_limit') return get().pushToast({ title: t('workspace.layout.paneLimit'), text: t('workspace.actions.paneLimitHint') });
   commitWithTab(r.ws, sid, wasTab);
 }
 
@@ -699,7 +700,7 @@ export function toggleSingle() {
   const r = L.toggleSingle(get().ws);
   if (!r.action) return;
   set({ ws: r.ws });
-  if (r.action === 'merged') get().pushToast({ title: 'Одно окно', text: 'Разделение запомнено — «Вернуть разделение» или Ctrl+\\' });
+  if (r.action === 'merged') get().pushToast({ title: t('workspace.actions.singleWindow'), text: t('workspace.actions.singleWindowHint') });
 }
 
 /** Ctrl+1…8: tab with this number in the focused pane. Returns false when there is no such tab. */
@@ -761,8 +762,8 @@ export async function eventsWithRetry(sid: string, before: string | null, delays
 }
 
 function historyError(err: unknown): string {
-  if (err instanceof ApiError) return err.serverMessage ? `Не удалось загрузить историю: ${err.serverMessage}` : `Не удалось загрузить историю (ошибка хаба ${err.status})`;
-  return 'Не удалось загрузить историю: нет связи с хабом';
+  if (err instanceof ApiError) return err.serverMessage ? t('workspace.actions.historyFailed', { message: err.serverMessage }) : t('workspace.actions.historyFailedStatus', { status: err.status });
+  return t('workspace.actions.historyOffline');
 }
 
 /** «Повторить» under the error of the history. */
@@ -850,9 +851,14 @@ export async function loadProjectDir(): Promise<void> {
   try {
     set({ projectDir: projectItems(await api.projects()) });
   } catch (err) {
-    toastError('Список проектов не загружен', err, 'Хаб не ответил. Проверьте связь и попробуйте ещё раз.');
+    toastError(t('workspace.actions.projectsNotLoaded'), err, t('workspace.actions.hubNoAnswerRetry'));
   }
 }
+
+// project titles are translated when the directory loads: a language switch reloads it on the next «Перенести в…»
+useLocale.subscribe((s, prev) => {
+  if (s.locale !== prev.locale) set({ projectDir: null });
+});
 
 /** «Перенести в…»: move = pin (`project_source = manual`); the hub sends the toast «Проект закреплён». */
 export async function moveToProject(sid: string, projectId: string): Promise<void> {
@@ -860,36 +866,42 @@ export async function moveToProject(sid: string, projectId: string): Promise<voi
     applySession(await api.setProject(sid, projectId));
   } catch (err) {
     if (err instanceof ApiError && err.code === 'unknown_project') set({ projectDir: null }); // the directory changed under us
-    toastError('Сессия не перенесена', err, 'Хаб не ответил. Попробуйте ещё раз.');
+    toastError(t('workspace.actions.sessionNotMoved'), err, t('workspace.actions.hubNoAnswerAgain'));
   }
 }
 
 export async function setPinned(sid: string, pinned: boolean): Promise<void> {
   try {
-    const before = get().sessions[sid]?.project.title;
+    const beforeProject = get().sessions[sid]?.project;
+    const before = beforeProject ? hubText(beforeProject.title, beforeProject.i18n) : undefined;
     const next = await (pinned ? api.pin(sid) : api.unpin(sid));
     applySession(next);
     // the hub sends a toast for a pin only; unpinning says where the classifier put the session (QA M4a)
-    if (!pinned && next) get().pushToast({ title: 'Проект откреплён', text: `${before ?? 'Без проекта'} → ${next.project.title}`, color: 'var(--accent)' });
+    if (!pinned && next)
+      get().pushToast({
+        title: t('workspace.actions.projectUnpinned'),
+        text: `${before ?? t('workspace.actions.noProject')} → ${hubText(next.project.title, next.project.i18n)}`,
+        color: 'var(--accent)',
+      });
   } catch (err) {
-    toastError(pinned ? 'Проект не закреплён' : 'Проект не откреплён', err, 'Хаб не ответил. Попробуйте ещё раз.');
+    toastError(pinned ? t('workspace.actions.projectNotPinned') : t('workspace.actions.projectNotUnpinned'), err, t('workspace.actions.hubNoAnswerAgain'));
   }
 }
 
 function runnerName(sid: string): string {
   const s = get().sessions[sid];
-  return (s && get().runners.find(r => r.id === s.runnerId)?.name) ?? 'машине';
+  return (s && get().runners.find(r => r.id === s.runnerId)?.name) ?? t('workspace.actions.runnerFallback');
 }
 
 function onResumeError(sid: string, err: unknown, pending: PendingResume) {
   if (err instanceof ApiError && err.status === 401) return;
   // images (D19): the text and the thumbnails stay in the composer, the reason goes under it
-  if (err instanceof ApiError && err.code === 'agent_outdated') return setNote(sid, `Обновите агент на ${runnerName(sid)}: он не принимает изображения`);
+  if (err instanceof ApiError && err.code === 'agent_outdated') return setNote(sid, t('workspace.actions.agentOutdated', { runner: runnerName(sid) }));
   if (err instanceof ApiError && err.code === 'attachment_delivery_failed')
     // the text and the thumbnails stay; «Повторить» sends the same message with the same clientUuid
     return setNote(
       sid,
-      `Изображения не дошли до ${runnerName(sid)} — сообщение не отправлено`,
+      t('workspace.actions.imagesNotDeliveredMsg', { runner: runnerName(sid) }),
       pending.kind === 'send'
         ? () => {
             setNote(sid, undefined);
@@ -897,15 +909,15 @@ function onResumeError(sid: string, err: unknown, pending: PendingResume) {
           }
         : undefined,
     );
-  if (err instanceof ApiError && err.code === 'attachment_not_found') return setNote(sid, 'Хаб не нашёл загруженное изображение — уберите его и прикрепите снова');
-  if (err instanceof ApiError && err.status === 413) return setNote(sid, 'Сообщение слишком большое');
+  if (err instanceof ApiError && err.code === 'attachment_not_found') return setNote(sid, t('workspace.actions.attachmentNotFound'));
+  if (err instanceof ApiError && err.status === 413) return setNote(sid, t('workspace.actions.messageTooLarge'));
   if (err instanceof ApiError && err.code === 'concurrent_external') {
     set({ pendingResume: { ...get().pendingResume, [sid]: pending } });
     return;
   }
-  if (err instanceof ApiError && err.code === 'runner_offline') return toastError('Машина не в сети', err, 'Сессию можно будет продолжить, когда машина вернётся');
-  if (err instanceof ApiError && err.code === 'read_only') return toastError('Только чтение', err, 'Эту сессию нельзя продолжить');
-  toastError('Не отправлено', err, 'Хаб не ответил. Проверьте связь и попробуйте ещё раз.');
+  if (err instanceof ApiError && err.code === 'runner_offline') return toastError(t('workspace.actions.runnerOffline'), err, t('workspace.actions.runnerOfflineHint'));
+  if (err instanceof ApiError && err.code === 'read_only') return toastError(t('workspace.actions.readOnly'), err, t('workspace.actions.readOnlyHint'));
+  toastError(t('workspace.actions.notSent'), err, t('workspace.actions.hubNoAnswerRetry'));
 }
 
 /** clientUuid of a message the hub has not accepted yet: a repeated «Отправить» reuses it (no double delivery, D19). */
@@ -987,7 +999,7 @@ export async function interrupt(sid: string): Promise<void> {
     const r = await api.interrupt(sid);
     applySession(r?.session);
   } catch (err) {
-    if (!(err instanceof ApiError && err.code === 'not_running')) toastError('Не прервано', err, 'Хаб не ответил');
+    if (!(err instanceof ApiError && err.code === 'not_running')) toastError(t('workspace.actions.notInterrupted'), err, t('workspace.actions.hubNoAnswer'));
   }
 }
 
@@ -998,12 +1010,15 @@ export async function patchSession(sid: string, body: PatchSessionRequest): Prom
     // The hub broadcasts the mode toast for a live session itself (toast mode_changed).
     if (body.model) {
       const name = get().models.find(m => m.value === body.model)?.displayName ?? body.model;
-      get().pushToast({ title: 'Модель изменена', text: `${name} — со следующего хода` });
+      get().pushToast({ title: t('workspace.actions.modelChanged'), text: t('workspace.actions.modelChangedHint', { name }) });
     }
     if (body.idleTimeoutMin !== undefined)
-      get().pushToast({ title: 'Таймаут простоя', text: body.idleTimeoutMin === 0 ? 'Сессия не будет усыпляться' : `Уснёт после ${idleLabel(body.idleTimeoutMin ?? 30)} простоя` });
+      get().pushToast({
+        title: t('workspace.actions.idleTimeout'),
+        text: body.idleTimeoutMin === 0 ? t('workspace.actions.idleNever') : t('workspace.actions.idleSleepAfter', { idle: idleLabel(body.idleTimeoutMin ?? 30) }),
+      });
   } catch (err) {
-    toastError('Не изменено', err, 'Хаб не ответил');
+    toastError(t('workspace.actions.notChanged'), err, t('workspace.actions.hubNoAnswer'));
   }
 }
 
@@ -1013,7 +1028,7 @@ export async function renameSession(sid: string, title: string): Promise<boolean
     applySession(await api.patchSession(sid, { title }));
     return true;
   } catch (err) {
-    toastError('Название не изменено', err, 'Хаб не ответил. Попробуйте ещё раз.');
+    toastError(t('workspace.actions.titleNotChanged'), err, t('workspace.actions.hubNoAnswerAgain'));
     return false;
   }
 }
@@ -1025,14 +1040,14 @@ export async function regenerateSessionTitle(sid: string): Promise<string | null
     applySession(s);
     return s.title;
   } catch (err) {
-    toastError('Название не сгенерировано', err, 'Хаб не ответил. Попробуйте ещё раз.');
+    toastError(t('workspace.actions.titleNotGenerated'), err, t('workspace.actions.hubNoAnswerAgain'));
     return null;
   }
 }
 
 export function idleLabel(min: number): string {
-  if (min === 0) return 'не усыплять';
-  return min < 60 ? `${min} мин` : `${min / 60} ч`;
+  if (min === 0) return t('workspace.actions.idleLabelNever');
+  return min < 60 ? t('workspace.actions.idleLabelMin', { n: min }) : t('workspace.actions.idleLabelHour', { n: min / 60 });
 }
 
 export async function decide(sid: string, requestId: string, decision: PermissionDecision, extra: DecideExtra = {}): Promise<void> {
@@ -1042,7 +1057,7 @@ export async function decide(sid: string, requestId: string, decision: Permissio
     if (log) setLog(sid, { events: mergeEvents(log.events, [{ kind: 'permission', id: `p:${r.request.requestId}`, ts: r.request.createdAt, request: r.request }]) });
   } catch (err) {
     if (err instanceof ApiError && err.code === 'already_resolved') return;
-    toastError('Решение не отправлено', err, 'Хаб не ответил');
+    toastError(t('workspace.actions.decisionNotSent'), err, t('workspace.actions.hubNoAnswer'));
   }
 }
 
@@ -1076,20 +1091,21 @@ export async function createSession(body: CreateSessionRequest & { attachments?:
     return { ok: true, session: s };
   } catch (err) {
     // 422 bad_path: the path does not fit the runner's OS; the hub's Russian text goes under the field (D10)
-    if (err instanceof ApiError && err.code === 'bad_path') return { ok: false, field: 'cwd', message: err.serverMessage ?? 'Путь не подходит для этой машины' };
-    if (err instanceof ApiError && err.code === 'cwd_not_found') return { ok: false, field: 'cwd', message: err.serverMessage ?? `Каталог не найден на ${runnerName}` };
-    if (err instanceof ApiError && err.code === 'runner_offline') return { ok: false, field: 'runner', message: `${runnerName} не в сети` };
-    if (err instanceof ApiError && err.code === 'agent_outdated') return { ok: false, field: 'form', message: `Обновите агент на ${runnerName}: он не принимает изображения` };
+    if (err instanceof ApiError && err.code === 'bad_path') return { ok: false, field: 'cwd', message: err.serverMessage ?? t('workspace.actions.badPath') };
+    if (err instanceof ApiError && err.code === 'cwd_not_found') return { ok: false, field: 'cwd', message: err.serverMessage ?? t('workspace.actions.cwdNotFound', { runner: runnerName }) };
+    if (err instanceof ApiError && err.code === 'runner_offline') return { ok: false, field: 'runner', message: t('workspace.actions.runnerIsOffline', { runner: runnerName }) };
+    if (err instanceof ApiError && err.code === 'agent_outdated') return { ok: false, field: 'form', message: t('workspace.actions.agentOutdated', { runner: runnerName }) };
     // claude-subscriptions: retired in another window meanwhile — the list is reloaded, the text goes under the field
     if (err instanceof ApiError && err.code === 'subscription_unavailable') {
       void loadSubscriptions();
-      return { ok: false, field: 'subscription', message: 'Подписка недоступна — выберите другую' };
+      return { ok: false, field: 'subscription', message: t('workspace.actions.subscriptionUnavailable') };
     }
-    if (err instanceof ApiError && err.code === 'attachment_delivery_failed') return { ok: false, field: 'form', message: `Изображения не дошли до ${runnerName} — сессия не запущена`, retry: true };
+    if (err instanceof ApiError && err.code === 'attachment_delivery_failed')
+      return { ok: false, field: 'form', message: t('workspace.actions.imagesNotDeliveredSession', { runner: runnerName }), retry: true };
     // agent-providers: the provider is not on the machine or not signed in (the hub's text names the machine)
     if (err instanceof ApiError && (err.code === 'provider_unavailable' || err.code === 'provider_login_required'))
-      return { ok: false, field: 'form', message: err.serverMessage ?? `Агент недоступен на ${runnerName}` };
-    return { ok: false, field: 'form', message: errorText(err, 'Хаб не ответил. Проверьте связь и попробуйте ещё раз.') };
+      return { ok: false, field: 'form', message: err.serverMessage ?? t('workspace.actions.agentUnavailable', { runner: runnerName }) };
+    return { ok: false, field: 'form', message: errorText(err, t('workspace.actions.hubNoAnswerRetry')) };
   }
 }
 
@@ -1212,8 +1228,16 @@ export function handleServerMessage(m: UiServerMessage) {
     }
     case 'toast': {
       const kind: string = m.kind;
-      const title = m.title ?? (kind === 'mode_changed' ? 'Режим прав изменён' : kind === 'project_auto' ? 'Проект определён' : kind === 'project_pinned' ? 'Проект закреплён' : 'Уведомление');
-      get().pushToast({ title, text: m.text ?? '' });
+      const title =
+        m.title ??
+        (kind === 'mode_changed'
+          ? t('workspace.actions.toastModeChanged')
+          : kind === 'project_auto'
+            ? t('workspace.actions.toastProjectAuto')
+            : kind === 'project_pinned'
+              ? t('workspace.actions.toastProjectPinned')
+              : t('workspace.actions.toastNotification'));
+      get().pushToast({ title, text: hubText(m.text ?? '', m.i18n) });
       return;
     }
     case 'provider.login':
@@ -1223,13 +1247,13 @@ export function handleServerMessage(m: UiServerMessage) {
         provider: m.provider as ExtraProvider,
         loginId: m.loginId,
         ok: m.ok,
-        ...(m.error ? { error: m.error } : {}),
+        ...(m.error ? { error: hubText(m.error, m.errorI18n) } : {}),
         ...(m.subscriptionId ? { subscriptionId: m.subscriptionId } : {}),
       });
       return;
     case 'handoff.draft':
       // M4b: the handoff prompt is ready or failed (D14)
-      draftArrived({ id: m.draft.id, status: m.draft.status, text: m.draft.text, error: m.draft.error });
+      draftArrived({ id: m.draft.id, status: m.draft.status, text: m.draft.text, error: m.draft.error, ...(m.draft.errorI18n ? { errorI18n: m.draft.errorI18n } : {}) });
       return;
     case 'subscription_limits.changed':
       // subscription-limits (L6): no data in the message — reload GET /api/subscriptions/limits

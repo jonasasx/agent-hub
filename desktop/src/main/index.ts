@@ -5,8 +5,9 @@
  */
 import { app, globalShortcut } from 'electron';
 import { join } from 'node:path';
-import type { SidebarResponse } from '@agent-hub/shared';
+import type { Locale, SidebarResponse } from '@agent-hub/shared';
 import { conflictMessage } from '../core/hotkey.js';
+import { currentLocale, resolveLocale, setLocale } from '../core/i18n.js';
 import { HubState } from '../core/hubState.js';
 import type { HubClient, HubConnState } from '../core/hubClient.js';
 import { PROTOCOL, launchAction, type DeepLink } from '../core/deepLink.js';
@@ -57,8 +58,19 @@ function main(): void {
       hotkeyRegistered,
       autostart: config.effective.autostart,
       updateReady: updater?.updateReady ?? false,
+      locale: currentLocale(),
     });
     win.setOverlay(view.overlay, view.overlayText);
+  };
+
+  // Language: the profile choice of the hub (`/api/me`), before it is known and without a choice — the system language.
+  let hubLocale: Locale | null = null;
+  const applyLocale = async () => {
+    const wanted = resolveLocale(hubLocale, [...app.getPreferredSystemLanguages(), app.getLocale()]);
+    if (await setLocale(wanted)) {
+      log(`locale ${wanted}`);
+      render();
+    }
   };
 
   const openSession = (id: string) => {
@@ -143,6 +155,7 @@ function main(): void {
       app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [app.getAppPath()]);
     }
 
+    void applyLocale();
     notifier = new Notifier(id => openSession(id));
     const sess = hubSession();
     win = new AppWindow({
@@ -211,6 +224,10 @@ function main(): void {
       },
       onHealth: ok => {
         if (!ok) win.hubUnreachable();
+      },
+      onLocale: locale => {
+        hubLocale = locale;
+        void applyLocale();
       },
       onSeed: (sb: SidebarResponse) => {
         state.seed(sb);

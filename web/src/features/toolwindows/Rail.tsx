@@ -11,8 +11,10 @@ import { WIN_TITLE, isOpen, type Side, type WinId } from './dock';
 import { beginDrag } from './drag';
 import { railIcon } from './icons';
 import { useDock } from './useDock';
+import { useT } from '../../i18n';
 
 function RailIcon({ id, side, badge }: { id: WinId; side: Side; badge?: Badge }) {
+  useT();
   const dock = useDock(s => s.dock);
   const toggle = useDock(s => s.toggle);
   const on = isOpen(dock, id);
@@ -40,6 +42,7 @@ function RailIcon({ id, side, badge }: { id: WinId; side: Side; badge?: Badge })
 }
 
 function ThemeButton() {
+  const t = useT();
   const [theme, setTheme] = useState(currentTheme);
   const toggle = () => {
     const next = theme === 'dark' ? 'light' : 'dark';
@@ -47,13 +50,20 @@ function ThemeButton() {
     setTheme(next);
   };
   return (
-    <button type="button" className="tw-ri" data-tip="Сменить тему" onClick={toggle} aria-label={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}>
+    <button
+      type="button"
+      className="tw-ri"
+      data-tip={t('workspace.toolwindows.switchTheme')}
+      onClick={toggle}
+      aria-label={theme === 'dark' ? t('workspace.toolwindows.lightTheme') : t('workspace.toolwindows.darkTheme')}
+    >
       ◐
     </button>
   );
 }
 
 export function Rail({ side, onLogout }: { side: Side; onLogout?: () => void }) {
+  const t = useT();
   const slots = useDock(s => s.dock[side]);
   const badges = useBadges();
   const groups = slots.flatMap((sl, si) => [
@@ -65,7 +75,7 @@ export function Rail({ side, onLogout }: { side: Side; onLogout?: () => void }) 
     </div>,
   ]);
   return (
-    <nav className={`tw-rail${side === 'right' ? ' right' : ''}`} data-side={side} aria-label={side === 'left' ? 'Окна слева' : 'Окна справа'}>
+    <nav className={`tw-rail${side === 'right' ? ' right' : ''}`} data-side={side} aria-label={side === 'left' ? t('workspace.toolwindows.windowsLeft') : t('workspace.toolwindows.windowsRight')}>
       {side === 'left' && (
         <div className="tw-brand" aria-hidden="true">
           A

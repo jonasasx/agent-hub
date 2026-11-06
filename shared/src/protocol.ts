@@ -45,12 +45,16 @@ import { fsListPayload, fsReadPayload } from './files.js';
  * 1.13 (change `mcp-registry`): the MCP registry, gateway, secret delivery, OAuth, import preview, draft API and capabilities;
  * negotiated fs.list-dirs (projects-catalog D).
  * 1.14 (change `tool-windows-file-explorer`, design D1): negotiated fs.browse, commands fs.list and fs.read (read-only file explorer).
+ * 1.15 (change `catalog-db-session-context`, design D2): the user's project catalogue `projectCatalog` in session.start/resume.
  * Minor versions talk to each other (D3); images need 1.2 on the agent, subscriptions 1.4, self-update 1.5, limits 1.6,
- * MCP management 1.7, MCP sign-out 1.8, session peers 1.9, providers other than Claude 1.10, negotiated fs.list-dirs 1.13, fs.browse 1.14.
+ * MCP management 1.7, MCP sign-out 1.8, session peers 1.9, providers other than Claude 1.10, negotiated fs.list-dirs 1.13, fs.browse 1.14,
+ * the project catalogue in the session context 1.15.
  */
-export const PROTOCOL_VERSION = '1.14';
+export const PROTOCOL_VERSION = '1.15';
 /** The first protocol version whose agents answer fs.list / fs.read and declare the capability `fs.browse` (tool-windows-file-explorer D1). */
 export const FILES_PROTOCOL = '1.14';
+/** The first protocol version whose agents take `projectCatalog` in session.start/resume (catalog-db-session-context D2). */
+export const PROJECT_CATALOG_PROTOCOL = '1.15';
 /** First protocol version with the centralized MCP registry and gateway contracts. */
 export const MCP_REGISTRY_PROTOCOL = '1.13';
 export const AGENT_CAPABILITIES = [...MCP_REGISTRY_CAPABILITIES, 'fs.list-dirs', 'fs.browse'] as const;
@@ -643,11 +647,27 @@ const subscription = subscriptionCredSchema.optional();
  */
 export const attachmentsFetchPayload = z.object({ attachments: z.array(attachmentSchema).min(1).max(10) });
 
+/** At most this many projects of the catalogue go to a session (catalog-db-session-context D2). */
+export const PROJECT_CATALOG_MAX = 200;
+/** A project of the user's catalogue for the session's instructions; `path` — its binding folder on the session's machine. */
+export const projectCatalogEntry = z.object({
+  id: z.guid(),
+  name: z.string(),
+  description: z.string().nullable(),
+  remote: z.string().nullable(),
+  path: z.string().nullable(),
+  current: z.boolean(),
+});
+export type ProjectCatalogEntry = z.infer<typeof projectCatalogEntry>;
+export const projectCatalog = z.array(projectCatalogEntry).max(PROJECT_CATALOG_MAX);
+
 export const sessionStartPayload = z.object({
   sessionId,
   cwd: nonEmpty,
   /** 1.13: the catalog project resolved by the hub; absent means no project override applies. */
   projectId: z.guid().optional(),
+  /** 1.15: the user's project catalogue; the agent always adds it to the session's instructions (empty — nothing). */
+  projectCatalog: projectCatalog.optional(),
   permissionMode: permissionModeSchema,
   model: nonEmpty,
   prompt: z.string(),
@@ -663,6 +683,8 @@ export const sessionResumePayload = z.object({
   cwd: nonEmpty,
   /** 1.13: the catalog project resolved by the hub; absent means no project override applies. */
   projectId: z.guid().optional(),
+  /** 1.15: the user's project catalogue; the agent always adds it to the session's instructions (empty — nothing). */
+  projectCatalog: projectCatalog.optional(),
   permissionMode: permissionModeSchema,
   /** Absent: the user's default model on that machine (sessions started outside the hub). Optional since M2 (agents of M1 do not handle resume). */
   model: nonEmpty.optional(),

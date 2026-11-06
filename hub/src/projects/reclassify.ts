@@ -16,13 +16,10 @@ export interface ReclassifyReport {
   byProject: Array<{ title: string; path: string; sessions: number }>;
 }
 
-export async function reclassifyProjects(
-  db: Db,
-  o: { vaultDir: string | null; legacyFile: string | null; vaultRemotes: string[]; dryRun: boolean; fresh?: boolean; batch?: number; concurrency?: number; log?: (s: string) => void },
-): Promise<ReclassifyReport> {
+export async function reclassifyProjects(db: Db, o: { dryRun: boolean; fresh?: boolean; batch?: number; concurrency?: number; log?: (s: string) => void }): Promise<ReclassifyReport> {
   const quiet = { info: () => undefined, warn: (x: object, m: string) => o.log?.(`warn: ${m} ${JSON.stringify(x)}`), error: (x: object, m: string) => o.log?.(`error: ${m} ${JSON.stringify(x)}`) };
-  const catalog = new ProjectCatalog({ db, log: quiet as never, vaultDir: o.vaultDir, legacyFile: o.legacyFile, vaultRemotes: o.vaultRemotes, readOnly: o.dryRun });
-  await catalog.start(0);
+  const catalog = new ProjectCatalog({ db, log: quiet as never });
+  await catalog.load();
   const projects = new ProjectService({ db, catalog, log: quiet as never });
   const batch = o.batch ?? 200;
   const report: ReclassifyReport = { sessions: 0, manual: 0, withProject: 0, withoutProject: 0, errors: 0, byProject: [] };
@@ -65,7 +62,6 @@ export async function reclassifyProjects(
   report.byProject = [...counts.entries()]
     .map(([id, n]) => ({ title: catalog.row(id)?.title ?? id, path: catalog.row(id)?.path ?? '', sessions: n }))
     .sort((a, b) => b.sessions - a.sessions || a.title.localeCompare(b.title));
-  catalog.stop();
   // The running hub sends projects.changed to the windows of these users (LISTEN, as for a token reissue).
   if (!o.dryRun) {
     const users = (await db.selectFrom('users').select('id').execute()).map(u => u.id);

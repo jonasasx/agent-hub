@@ -9,8 +9,10 @@ import { IconMenu, railIcon } from './icons';
 import { openToolWindow } from './open';
 import { menuKeys, usePopupMenu } from './useFlipMenu';
 import { usePhone } from './usePhone';
+import { useT } from '../../i18n';
 
 export function PhoneDrawer() {
+  const t = useT();
   const phone = usePhone();
   const [open, setOpen] = useState(false);
   const badges = useBadges();
@@ -18,11 +20,11 @@ export function PhoneDrawer() {
   if (!phone) return null;
   return (
     <span ref={box} className="tw-pop">
-      <button ref={trigger} type="button" className="icon-btn tw-menu-btn" aria-label="Окна" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+      <button ref={trigger} type="button" className="icon-btn tw-menu-btn" aria-label={t('workspace.toolwindows.windows')} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
         {IconMenu}
       </button>
       {open && (
-        <div ref={menu} className="tw-menu tw-drawer" role="menu" aria-label="Окна" onKeyDown={menuKeys}>
+        <div ref={menu} className="tw-menu tw-drawer" role="menu" aria-label={t('workspace.toolwindows.windows')} onKeyDown={menuKeys}>
           {WIN_IDS.filter(id => id !== 'sessions').map(id => (
             <button
               key={id}

@@ -53,8 +53,8 @@ export const PEER_SENDER_LIMIT = 60;
 export const PEER_WINDOW_MS = 10 * 60_000;
 
 /** hub-subagents D5: the end of a report cut to the peer limit; the text when the turn left none. */
-export const REPORT_CUT_NOTE = '\n… (обрезано, полный ответ — в сессии)';
-export const REPORT_UNAVAILABLE = 'Текст итога недоступен — откройте сессию';
+export const REPORT_CUT_NOTE = '\n… (truncated, the full answer is in the session)';
+export const REPORT_UNAVAILABLE = 'The result text is unavailable: open the session';
 
 type SpawnRequest = Extract<PeersRequest, { op: 'spawn' }>;
 type TurnResult = PayloadOf<AgentMessage, 'session.result'>;
@@ -117,7 +117,7 @@ export class PeersService {
       if (err instanceof PeerError) reply = { ok: false, code: err.code, message: err.message, ...(err.retryAfterSec !== undefined ? { retryAfterSec: err.retryAfterSec } : {}) };
       else {
         this.o.log.error({ err, runnerId, op: req.op }, 'peers handler crashed');
-        reply = { ok: false, code: 'send_failed', message: 'внутренняя ошибка хаба' };
+        reply = { ok: false, code: 'send_failed', message: 'internal hub error' };
       }
     }
     conn.send('peers.reply', reply, { re: reqId });
@@ -126,9 +126,9 @@ export class PeersService {
   private async handle(runnerId: string, req: PeersRequest): Promise<unknown> {
     // The agent speaks 1.9 if it sends this; the stored version guards a stale or forged connection.
     const runner = await getRunner(this.o.db, runnerId);
-    if (!runner || !protocolAtLeast(runner.protocol_version, PEERS_PROTOCOL)) throw new PeerError('unsupported', 'агент машины не поддерживает обмен между сессиями');
+    if (!runner || !protocolAtLeast(runner.protocol_version, PEERS_PROTOCOL)) throw new PeerError('unsupported', 'the machine agent does not support messaging between sessions');
     const caller = await findSessionByClaudeId(this.o.db, runnerId, req.sessionId);
-    if (!caller) throw new PeerError('not_found', 'вызывающая сессия неизвестна хабу');
+    if (!caller) throw new PeerError('not_found', 'the calling session is unknown to the hub');
     if (req.op === 'list') return { sessions: await peerCatalog(this.o.db, caller.user_id, caller.id, { machine: req.machine, project: req.project, status: req.status, limit: req.limit ?? 50 }) };
     if (req.op === 'get') return this.get(caller, req.target);
     if (req.op === 'spawn') {
@@ -146,23 +146,23 @@ export class PeersService {
 
   private async get(caller: SessionBase, target: string): Promise<PeerSession> {
     const [s] = await peerCatalog(this.o.db, caller.user_id, caller.id, { limit: 1 }, target);
-    if (!s) throw new PeerError('not_found', 'сессия не найдена');
+    if (!s) throw new PeerError('not_found', 'session not found');
     const row = await getSession(this.o.db, target, caller.user_id);
     return { ...s, workingChildren: Number(row?.children_working ?? 0) };
   }
 
   private async send(caller: SessionBase, machine: string, to: string, text: string, inReplyTo: string | undefined): Promise<{ result: PeerSendResult; messageId: string }> {
     const body = text.trim();
-    if (!body) throw new PeerError('invalid_request', 'пустой текст');
-    if (text.length > PEER_TEXT_MAX) throw new PeerError('invalid_request', `текст длиннее ${PEER_TEXT_MAX} символов`);
-    if (to === caller.id) throw new PeerError('invalid_target', 'нельзя написать самой себе');
+    if (!body) throw new PeerError('invalid_request', 'empty text');
+    if (text.length > PEER_TEXT_MAX) throw new PeerError('invalid_request', `text is longer than ${PEER_TEXT_MAX} characters`);
+    if (to === caller.id) throw new PeerError('invalid_target', 'a session cannot message itself');
     return this.deliver(caller, machine, to, body, inReplyTo, 'message');
   }
 
   /** The common path of a message and a report: the limits, the envelope, SessionService.sendMessage, the journal. */
   private async deliver(caller: SessionBase, machine: string, to: string, body: string, inReplyTo: string | undefined, kind: PeerJournalKind): Promise<{ result: PeerSendResult; messageId: string }> {
     const [target] = await peerCatalog(this.o.db, caller.user_id, caller.id, { limit: 1 }, to);
-    if (!target) throw new PeerError('not_found', 'сессия не найдена');
+    if (!target) throw new PeerError('not_found', 'session not found');
 
     const id = randomUUID();
     const at = this.now();
@@ -172,7 +172,7 @@ export class PeersService {
     const wait = await this.limited(caller.id, kind === 'report' ? null : to, at);
     if (wait !== null) {
       await journal('rate_limited', 'rate_limited');
-      throw new PeerError('rate_limited', `слишком много сообщений между сессиями, повторите через ${wait} с`, wait);
+      throw new PeerError('rate_limited', `too many messages between sessions, retry in ${wait} s`, wait);
     }
     const outcome: PeerSendResult = target.processAlive && isLiveStatus(target.status) ? (target.status === 'working' ? 'queued' : 'delivered') : 'resumed';
     // D8: the message of the session that spawned the addressee is marked, the child takes it as its task-giver's
@@ -199,10 +199,10 @@ export class PeersService {
    * given; the task is its first turn as a peer message of kind spawn, and that turn reports back (D5).
    */
   private async spawn(caller: SessionBase, runner: RunnerRow, req: SpawnRequest): Promise<PeerSpawnResult> {
-    if (!protocolAtLeast(runner.protocol_version, SPAWN_PROTOCOL)) throw new PeerError('unsupported', 'агент машины не поддерживает запуск субагентов через хаб, обновите агента');
+    if (!protocolAtLeast(runner.protocol_version, SPAWN_PROTOCOL)) throw new PeerError('unsupported', 'the machine agent does not support starting subagents through the hub, update the agent');
     const task = req.task.trim();
-    if (!task) throw new PeerError('invalid_request', 'пустое задание');
-    if (req.task.length > PEER_TEXT_MAX) throw new PeerError('invalid_request', `задание длиннее ${PEER_TEXT_MAX} символов`);
+    if (!task) throw new PeerError('invalid_request', 'empty task');
+    if (req.task.length > PEER_TEXT_MAX) throw new PeerError('invalid_request', `task is longer than ${PEER_TEXT_MAX} characters`);
 
     const live = await this.o.db
       .selectFrom('sessions')
@@ -211,14 +211,14 @@ export class PeersService {
       .where('process_alive', '=', true)
       .where('status', 'in', ['working', 'waiting', 'permission'])
       .executeTakeFirstOrThrow();
-    if (Number(live.n) >= SPAWN_LIVE_MAX) throw new PeerError('rate_limited', `уже ${SPAWN_LIVE_MAX} работающих субагентов, дождитесь их итога`);
+    if (Number(live.n) >= SPAWN_LIVE_MAX) throw new PeerError('rate_limited', `${SPAWN_LIVE_MAX} subagents are already running, wait for their results`);
     const at = this.now();
     const wait = await this.limited(caller.id, null, at);
-    if (wait !== null) throw new PeerError('rate_limited', `слишком много сообщений и запусков, повторите через ${wait} с`, wait);
+    if (wait !== null) throw new PeerError('rate_limited', `too many messages and launches, retry in ${wait} s`, wait);
 
     const target = await this.machine(caller.user_id, runner, req.machine);
     const cwd = req.cwd?.trim() || (target.id === caller.runner_id ? caller.cwd : null);
-    if (!cwd) throw new PeerError('invalid_request', `на другой машине (${target.name}) нужен каталог: передайте cwd`);
+    if (!cwd) throw new PeerError('invalid_request', `a directory is required on another machine (${target.name}): pass cwd`);
     const provider = req.provider ?? caller.provider;
     const id = randomUUID();
     const envelope = wrapPeerMessage({ from: caller.id, title: caller.title || baseName(caller.cwd), machine: runner.name, id, kind: 'spawn', parent: true }, task);
@@ -251,7 +251,7 @@ export class PeersService {
     if (!want || want === own.name.toLowerCase()) return own;
     const rows = await this.o.db.selectFrom('runners').selectAll().where('user_id', '=', userId).where('kind', '=', 'machine').where('state', '=', 'active').orderBy('created_at').execute();
     const hit = rows.find(r => r.name.toLowerCase() === want);
-    if (!hit) throw new PeerError('not_found', `машина «${name}» не найдена, есть: ${rows.map(r => r.name).join(', ')}`);
+    if (!hit) throw new PeerError('not_found', `machine "${name}" not found, available: ${rows.map(r => r.name).join(', ')}`);
     return hit;
   }
 
@@ -293,7 +293,7 @@ export class PeersService {
   }
 
   private async reportText(sessionId: string, since: Date, p: TurnResult): Promise<string> {
-    if (p.isError) return `Ход завершился ошибкой: ${p.failure?.message || p.errorText || p.subtype}`;
+    if (p.isError) return `The turn ended with an error: ${p.failure?.message || p.errorText || p.subtype}`;
     if (p.resultText?.trim()) return p.resultText.trim();
     // an agent below 1.12 sends no text: the last answer of the turn from the replica, if it is there yet
     const last = await this.o.db
@@ -312,7 +312,7 @@ export class PeersService {
 
   private mapHttp(err: HttpError): PeerError {
     if (err.code === 'runner_offline') return new PeerError('runner_offline', err.message);
-    if (err.status === 404) return new PeerError('not_found', 'сессия не найдена');
+    if (err.status === 404) return new PeerError('not_found', 'session not found');
     return new PeerError('send_failed', err.message);
   }
 

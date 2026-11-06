@@ -2,9 +2,10 @@
 // Requirements: Включение диктовки; Эндпоинт распознавания; Приватность диктовки.
 // Auth and the Origin check come from the common onRequest hook (http/auth.ts); errors go through the common handler.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { VOICE_AUDIO_TYPES, VOICE_UPLOAD_LIMIT, type TranscribeResponse, type VoiceErrorCode } from '@agent-hub/shared';
+import { VOICE_AUDIO_TYPES, VOICE_UPLOAD_LIMIT, type I18nText, type TranscribeResponse, type VoiceErrorCode } from '@agent-hub/shared';
 import type { Config } from '../config.js';
 import { HttpError } from '../sessions/service.js';
+import { tr } from '../i18n.js';
 import { ScribeClient, ScribeError, baseMime } from '../voice/elevenlabs.js';
 
 const AUDIO_TYPES: ReadonlySet<string> = new Set(VOICE_AUDIO_TYPES);
@@ -12,7 +13,7 @@ const AUDIO_TYPES: ReadonlySet<string> = new Set(VOICE_AUDIO_TYPES);
 /** An error of the endpoint: the code is one of the contract's (design D2). */
 class VoiceError extends HttpError {
   declare readonly code: VoiceErrorCode;
-  constructor(status: number, code: VoiceErrorCode, message: string, details?: Record<string, string>) {
+  constructor(status: number, code: VoiceErrorCode, message: I18nText, details?: Record<string, string>) {
     super(status, code, message, details);
   }
 }
@@ -58,9 +59,9 @@ export function registerVoice(app: FastifyInstance, deps: VoiceDeps): void {
     // hook, so 401/403 still come first.
     scope.addHook('preParsing', async (req, reply, payload) => {
       const refused = !client
-        ? new VoiceError(503, 'voice_disabled', 'Диктовка не настроена на хабе')
+        ? new VoiceError(503, 'voice_disabled', { key: 'hub.voice.disabled' })
         : !AUDIO_TYPES.has(baseMime(req.headers['content-type']))
-          ? new VoiceError(415, 'unsupported_audio', 'Пришлите запись audio/webm, audio/mp4 или audio/ogg')
+          ? new VoiceError(415, 'unsupported_audio', { key: 'hub.voice.unsupportedAudio' })
           : null;
       if (refused) {
         logResult(req, 0, Date.now(), refused.code);
@@ -83,20 +84,20 @@ export function registerVoice(app: FastifyInstance, deps: VoiceDeps): void {
       let result: VoiceResult = 'ok';
       try {
         // checked by the preParsing hook: here only for the type of `client`
-        if (!client) throw new VoiceError(503, 'voice_disabled', 'Диктовка не настроена на хабе');
-        if (!body || body.length === 0) throw new VoiceError(400, 'empty_audio', 'Пустая запись');
+        if (!client) throw new VoiceError(503, 'voice_disabled', { key: 'hub.voice.disabled' });
+        if (!body || body.length === 0) throw new VoiceError(400, 'empty_audio', { key: 'hub.voice.emptyAudio' });
         if (busy >= config.VOICE_CONCURRENCY) {
           result = 'voice_busy';
           return reply
             .code(429)
             .header('Retry-After', '5')
-            .send({ error: 'voice_busy' satisfies VoiceErrorCode, message: 'Идёт другое распознавание, повторите через несколько секунд' });
+            .send({ error: 'voice_busy' satisfies VoiceErrorCode, message: tr(req.locale).text('hub.voice.busy') });
         }
         const gone = clientGone.get(req.raw) ?? new AbortController().signal;
         // The client went away before the handler: ElevenLabs is not asked (the quota is not spent).
         if (gone.aborted) {
           result = 'client_closed';
-          throw new VoiceError(502, 'voice_upstream_error', 'Запрос отменён');
+          throw new VoiceError(502, 'voice_upstream_error', { key: 'hub.voice.cancelled' });
         }
 
         busy++;
@@ -109,17 +110,17 @@ export function registerVoice(app: FastifyInstance, deps: VoiceDeps): void {
           switch (err.kind) {
             case 'quota': {
               const resetAt = await client.subscriptionResetAt();
-              throw new VoiceError(402, 'voice_quota_exceeded', 'Закончилась квота ElevenLabs', resetAt ? { resetAt } : undefined);
+              throw new VoiceError(402, 'voice_quota_exceeded', { key: 'hub.voice.quota' }, resetAt ? { resetAt } : undefined);
             }
             case 'key':
-              throw new VoiceError(502, 'voice_key_rejected', 'ElevenLabs отклонил ключ хаба');
+              throw new VoiceError(502, 'voice_key_rejected', { key: 'hub.voice.keyRejected' });
             case 'timeout':
-              throw new VoiceError(504, 'voice_timeout', 'ElevenLabs не ответил вовремя');
+              throw new VoiceError(504, 'voice_timeout', { key: 'hub.voice.timeout' });
             case 'aborted':
               result = 'client_closed';
-              throw new VoiceError(502, 'voice_upstream_error', 'Запрос отменён');
+              throw new VoiceError(502, 'voice_upstream_error', { key: 'hub.voice.cancelled' });
             default:
-              throw new VoiceError(502, 'voice_upstream_error', 'Не удалось распознать');
+              throw new VoiceError(502, 'voice_upstream_error', { key: 'hub.voice.failed' });
           }
         } finally {
           busy--;

@@ -3,17 +3,19 @@
  * Covers status, problem marks, reconnect and enablement, remote auth, sleeping sessions, agent compatibility,
  * OAuth, and logout from remote MCP servers.
  */
-import { MCP_PROTOCOL, MCP_TEXTS, protocolAtLeast, type RunnerView, type McpAuthFlowView, type McpServerStatus, type McpServerView, type McpSessionView } from '../../api/types';
+import { MCP_PROTOCOL, protocolAtLeast, type RunnerView, type McpAuthFlowView, type McpServerStatus, type McpServerView, type McpSessionView } from '../../api/types';
+import { t } from '../../i18n';
+import { lazyLabels } from './mcpLabels';
 
-export const MCP_STATUS_LABEL: Record<McpServerStatus, string> = {
-  connected: 'подключён',
-  failed: 'ошибка',
-  'needs-auth': 'нужен вход',
-  pending: 'подключается',
-  disabled: 'выключен',
+export const MCP_STATUS_LABEL: Record<McpServerStatus, string> = lazyLabels<McpServerStatus>({
+  connected: 'mcp.rowStatus.connected',
+  failed: 'mcp.rowStatus.failed',
+  'needs-auth': 'mcp.rowStatus.needsAuth',
+  pending: 'mcp.rowStatus.pending',
+  disabled: 'mcp.rowStatus.disabled',
   // UI review L1: the CLI does not report a status for such a server
-  unknown: 'статус не сообщается',
-};
+  unknown: 'mcp.rowStatus.unknown',
+});
 
 /** The colour of a status: `failed` → --bad, `needs-auth` → --warn (Requirement «Отметка проблем MCP»). */
 export type McpTone = 'ok' | 'bad' | 'warn' | 'info' | 'off' | 'muted';
@@ -66,17 +68,17 @@ export function shownStatus(s: McpServerView): McpServerStatus {
 export function pendingText(s: McpServerView): string | null {
   switch (s.pendingAction) {
     case 'reconnect':
-      return 'Переподключение…';
+      return t('mcp.pending.reconnect');
     case 'enable':
-      return 'Включение…';
+      return t('mcp.pending.enable');
     case 'disable':
-      return 'Выключение…';
+      return t('mcp.pending.disable');
     case 'auth':
-      return 'Готовим вход…';
+      return t('mcp.pending.auth');
     case 'wake':
-      return 'Сессия просыпается…';
+      return t('mcp.pending.wake');
     case 'logout':
-      return 'Выход…';
+      return t('mcp.pending.logout');
     default:
       return null;
   }
@@ -92,16 +94,16 @@ export const TRANSPORT_LABEL: Record<string, string> = {
   other: '',
 };
 
-const SCOPE_LABEL: Record<string, string> = {
-  user: 'пользовательский',
-  project: 'проект (.mcp.json)',
-  local: 'локальный',
-  plugin: 'плагин',
-  managed: 'управляемый',
-  dynamic: 'добавлен процессом',
-  enterprise: 'управляемый',
-  claudeai: 'claude.ai',
-};
+const SCOPE_LABEL: Record<string, string> = lazyLabels<string>({
+  user: 'mcp.scope.user',
+  project: 'mcp.scope.project',
+  local: 'mcp.scope.local',
+  plugin: 'mcp.scope.plugin',
+  managed: 'mcp.scope.managed',
+  dynamic: 'mcp.scope.dynamic',
+  enterprise: 'mcp.scope.enterprise',
+  claudeai: 'mcp.scope.claudeai',
+});
 
 /** The source of the server's definition; unknown values of the CLI as is. */
 export const scopeLabel = (scope: string | undefined) => (scope ? (SCOPE_LABEL[scope] ?? scope) : null);
@@ -114,16 +116,8 @@ export function kindLine(s: McpServerView): string {
 /** «notion 1.2.0 · 14 инструментов» for a connected server; null otherwise. */
 export function infoLine(s: McpServerView): string | null {
   if (s.status !== 'connected') return null;
-  const tools = `${s.toolCount} ${plural(s.toolCount, 'инструмент', 'инструмента', 'инструментов')}`;
+  const tools = t('mcp.info.tools', { count: s.toolCount });
   return s.serverInfo ? `${s.serverInfo.name} ${s.serverInfo.version} · ${tools}` : tools;
-}
-
-export function plural(n: number, one: string, few: string, many: string): string {
-  const m10 = n % 10;
-  const m100 = n % 100;
-  if (m10 === 1 && m100 !== 11) return one;
-  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
-  return many;
 }
 
 /**
@@ -136,8 +130,8 @@ export function plural(n: number, one: string, few: string, many: string): strin
  * does not send it, so no path is named rather than the session directory, which may be a subfolder (QA fix 3).
  */
 export function disabledCaption(s: McpServerView, projectRoot: string | undefined, machine: string): string {
-  if (s.persistence === 'process') return 'выключен только в этом процессе';
-  return projectRoot ? `выключен для проекта ${projectRoot} на ${machine}` : 'выключен для проекта этой сессии';
+  if (s.persistence === 'process') return t('mcp.disabled.process');
+  return projectRoot ? t('mcp.disabled.project', { root: projectRoot, machine }) : t('mcp.disabled.sessionProject');
 }
 
 export interface RowActions {
@@ -206,14 +200,13 @@ export function rowLayout(s: McpServerView, a: RowActions): { visible: RowButton
 }
 
 /** The confirmation of «Выйти» (Requirement «Выход из удалённого MCP»; UI review H2: the machine named twice). */
-export const logoutConfirmText = (server: string, machine: string) =>
-  `Выйти из ${server} на ${machine}? Вход сбросится во всех сессиях ${machine} и в новых сессиях; токен будет отозван у провайдера.`;
+export const logoutConfirmText = (server: string, machine: string) => t('mcp.logout.confirm', { server, machine, all: t('mcp.logout.all') });
 
 /**
  * A6: the hint of an attempt that dropped a sign-in — the CLI resets the saved one at the start of any attempt; the
  * server was not in `needs-auth` («Войти заново», or «Войти» of a failed one).
  */
-export const resigninHint = (s: Pick<McpServerView, 'status'>) => (s.status !== 'needs-auth' ? MCP_TEXTS.resigninHint : null);
+export const resigninHint = (s: Pick<McpServerView, 'status'>) => (s.status !== 'needs-auth' ? t('mcp.text.resigninHint') : null);
 
 /** Is the panel only a list (no buttons at all): an outdated agent or a process outside the hub. */
 export const actionsOff = (view: McpSessionView) => !view.available;
@@ -222,11 +215,11 @@ export const actionsOff = (view: McpSessionView) => !view.available;
 export function reasonText(view: McpSessionView): string | null {
   switch (view.reason) {
     case 'agent_outdated':
-      return MCP_TEXTS.agentOutdated;
+      return t('mcp.text.agentOutdated');
     case 'not_hub_managed':
-      return MCP_TEXTS.notHubManaged;
+      return t('mcp.text.notHubManaged');
     case 'no_snapshot':
-      return view.live ? 'Статус MCP ещё не получен — нажмите «Обновить».' : 'Статус MCP ещё не получен. Он появится, когда сессия проснётся.';
+      return view.live ? t('mcp.reason.noSnapshotLive') : t('mcp.reason.noSnapshotSleeping');
     default:
       return null;
   }
@@ -234,14 +227,14 @@ export function reasonText(view: McpSessionView): string | null {
 
 /** The line under the panel's title: «Статус на 14:05» (UI review M7/L5; a sleeping session has its own note). */
 export function snapshotLine(view: McpSessionView, clock: (iso: string | null) => string): string {
-  if (view.waking) return 'Сессия просыпается…';
-  return view.observedAt ? `Статус на ${clock(view.observedAt)}` : 'Статуса ещё нет';
+  if (view.waking) return t('mcp.snapshot.waking');
+  return view.observedAt ? t('mcp.snapshot.at', { time: clock(view.observedAt) }) : t('mcp.snapshot.none');
 }
 
 /** The note of a sleeping session (UI review M7); null — the process is live or the session wakes up. */
 export function sleepingNote(view: McpSessionView): string | null {
   if (view.live || view.waking) return null;
-  return view.available ? 'Сессия спит. Любое действие разбудит её.' : 'Сессия спит.';
+  return view.available ? t('mcp.sleeping.withAction') : t('mcp.sleeping.plain');
 }
 
 /**
@@ -261,14 +254,15 @@ export interface AgentMcpVerdict {
 export function agentMcpVerdict(r: Pick<RunnerView, 'name' | 'agentVersion' | 'protocolVersion' | 'outdated' | 'update'> | undefined, hubSaysOutdated: boolean): AgentMcpVerdict {
   const byProtocol = !!r?.protocolVersion && !protocolAtLeast(r.protocolVersion, MCP_PROTOCOL);
   const outdated = hubSaysOutdated || byProtocol;
-  const name = r?.name ?? 'машине';
-  const ver = r?.agentVersion ? `${r.agentVersion}${r.protocolVersion ? ` (протокол ${r.protocolVersion})` : ''}` : 'неизвестной версии';
-  const line = `Агент на ${name} сейчас ${ver}, для управления MCP нужен протокол ${MCP_PROTOCOL} или новее.`;
+  const name = r?.name ?? t('mcp.verdict.unknownMachine');
+  const protocol = r?.protocolVersion ? t('mcp.verdict.protocol', { protocol: r.protocolVersion }) : '';
+  const version = r?.agentVersion ? `${r.agentVersion}${protocol}` : t('mcp.verdict.unknownVersion');
+  const line = t('mcp.verdict.line', { name, version, required: MCP_PROTOCOL });
   let next: string;
-  if (r?.update && r.update.status !== 'failed') next = `Агент обновляется до ${r.update.version}.`;
-  else if (r?.update?.status === 'failed') next = 'Обновление агента не удалось — подробности на экране «Машины».';
-  else if (r?.outdated) next = 'Агент обновится сам после текущего хода.';
-  else next = `На хабе нет сборки агента с протоколом ${MCP_PROTOCOL}: сам агент не обновится, нужна новая сборка агента на хабе.`;
+  if (r?.update && r.update.status !== 'failed') next = t('mcp.verdict.updating', { version: r.update.version });
+  else if (r?.update?.status === 'failed') next = t('mcp.verdict.updateFailed');
+  else if (r?.outdated) next = t('mcp.verdict.selfUpdate');
+  else next = t('mcp.verdict.noBuild', { required: MCP_PROTOCOL });
   return { outdated, line, next };
 }
 
@@ -284,11 +278,11 @@ export function flowLeft(flow: Pick<McpAuthFlowView, 'expiresAt'>, now: number):
 export function authResultText(result: string | undefined): string {
   switch (result) {
     case 'expired':
-      return 'Время попытки входа вышло — нажмите «Войти» ещё раз';
+      return t('mcp.auth.expired');
     case 'process_exited':
-      return MCP_TEXTS.processExited;
+      return t('mcp.text.processExited');
     default:
-      return 'Вход не выполнен';
+      return t('mcp.auth.failed');
   }
 }
 
@@ -297,13 +291,13 @@ export function authResultText(result: string | undefined): string {
  * the hub checks the host, the port and the state (400 bad_callback_url with the text of the spec).
  */
 export function pasteProblem(text: string): string | null {
-  const t = text.trim();
-  if (!t) return 'Вставьте адрес из строки браузера';
+  const trimmed = text.trim();
+  if (!trimmed) return t('mcp.paste.empty');
   try {
-    const u = new URL(t);
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return 'Это не адрес страницы — скопируйте всю строку из адресной строки браузера';
+    const u = new URL(trimmed);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return t('mcp.paste.notUrl');
   } catch {
-    return 'Это не адрес страницы — скопируйте всю строку из адресной строки браузера';
+    return t('mcp.paste.notUrl');
   }
   return null;
 }

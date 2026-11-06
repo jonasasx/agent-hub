@@ -6,11 +6,13 @@
  * input offers gallery and camera (no `capture`, which would hide the gallery).
  */
 import { useRef } from 'react';
+import { useT, tText } from '../../i18n';
 import { useStore } from '../../store';
 import { addFiles, removeAttachment, useAttachments } from './attachments';
 import { IMAGE_MIMES } from './format';
 
 export function AttachmentStrip({ akey }: { akey: string }) {
+  const t = useT();
   const list = useAttachments(s => s.byKey[akey]);
   const note = useAttachments(s => s.note[akey]);
   const retry = useAttachments(s => s.retry[akey]);
@@ -19,18 +21,25 @@ export function AttachmentStrip({ akey }: { akey: string }) {
   return (
     <div className="attach-strip">
       {!!list?.length && (
-        <ul className="attach-list" aria-label="Прикреплённые изображения">
+        <ul className="attach-list" aria-label={t('chat.images.attached')}>
           {list.map((a, i) => (
             <li
               key={a.id}
               className={`attach-item ${a.status}`}
-              title={a.error ?? a.name}
-              aria-label={a.status === 'error' ? `${a.name}: не прикреплено` : undefined}
+              title={a.error ? tText(a.error) : a.name}
+              aria-label={a.status === 'error' ? t('chat.images.notAttachedNamed', { name: a.name }) : undefined}
               aria-describedby={a.status === 'error' ? `attach-why-${a.id}` : undefined}
             >
-              {a.status !== 'error' && <img src={a.url} alt={`Изображение ${i + 1}: ${a.name}`} />}
+              {a.status !== 'error' && <img src={a.url} alt={t('chat.images.altNamed', { n: i + 1, name: a.name })} />}
               {(a.status === 'processing' || a.status === 'uploading') && (
-                <span className="attach-progress" role="progressbar" aria-label={`Загрузка ${a.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(a.progress * 100)}>
+                <span
+                  className="attach-progress"
+                  role="progressbar"
+                  aria-label={t('chat.images.uploading', { name: a.name })}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(a.progress * 100)}
+                >
                   <span style={{ width: `${Math.round(a.progress * 100)}%` }} />
                 </span>
               )}
@@ -41,7 +50,7 @@ export function AttachmentStrip({ akey }: { akey: string }) {
                   <span className="attach-error-name">{a.name}</span>
                 </span>
               )}
-              <button type="button" className="attach-remove" aria-label={`Убрать ${a.name}`} onClick={() => removeAttachment(akey, a.id)}>
+              <button type="button" className="attach-remove" aria-label={t('chat.images.remove', { name: a.name })} onClick={() => removeAttachment(akey, a.id)}>
                 ×
               </button>
             </li>
@@ -49,10 +58,10 @@ export function AttachmentStrip({ akey }: { akey: string }) {
         </ul>
       )}
       {!!errors.length && (
-        <ul className="attach-errors" aria-label="Не прикреплены">
+        <ul className="attach-errors" aria-label={t('chat.images.notAttached')}>
           {errors.map(a => (
             <li key={a.id} id={`attach-why-${a.id}`}>
-              <span className="attach-error-name">{a.name}</span> — <span className="attach-error-why">{a.error}</span>
+              <span className="attach-error-name">{a.name}</span> — <span className="attach-error-why">{a.error ? tText(a.error) : null}</span>
             </li>
           ))}
         </ul>
@@ -62,7 +71,7 @@ export function AttachmentStrip({ akey }: { akey: string }) {
           {note}
           {retry && (
             <button type="button" className="btn attach-retry" onClick={retry}>
-              Повторить
+              {t('chat.images.retry')}
             </button>
           )}
         </p>
@@ -72,16 +81,17 @@ export function AttachmentStrip({ akey }: { akey: string }) {
 }
 
 export function AttachButton({ akey, disabled }: { akey: string; disabled?: boolean }) {
+  const t = useT();
   const input = useRef<HTMLInputElement>(null);
   // on the phone `image/*` makes Android and iOS offer the gallery and the camera; the format is checked by content
   const phone = useStore(s => s.device === 'phone');
   return (
     <>
-      <button type="button" className="btn ghost attach-btn" disabled={disabled} onClick={() => input.current?.click()} aria-label="Прикрепить изображение" title="Прикрепить изображение">
+      <button type="button" className="btn ghost attach-btn" disabled={disabled} onClick={() => input.current?.click()} aria-label={t('chat.images.attach')} title={t('chat.images.attach')}>
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M13.5 7.5 8 13a3.5 3.5 0 0 1-5-5l5.5-5.5a2.3 2.3 0 0 1 3.3 3.3L6.3 11.3a1.2 1.2 0 0 1-1.7-1.7L9.5 4.7" />
         </svg>
-        <span className="attach-label">Прикрепить</span>
+        <span className="attach-label">{t('chat.images.attachShort')}</span>
       </button>
       <input
         ref={input}

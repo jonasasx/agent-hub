@@ -11,10 +11,12 @@ import { applyTheme, currentTheme } from '../theme/theme';
 import { PhoneDrawer } from '../toolwindows/PhoneDrawer';
 import { ProfileMenu } from './ProfileMenu';
 import { SessionsList, SkeletonRows } from './SessionsList';
+import { useT } from '../../i18n';
 
 export { SkeletonRows };
 
 export function Sidebar({ onLogout }: { onLogout: () => void }) {
+  const t = useT();
   const [theme, setTheme] = useState(currentTheme);
   const toggleTheme = () => {
     const next = theme === 'dark' ? 'light' : 'dark';
@@ -22,7 +24,7 @@ export function Sidebar({ onLogout }: { onLogout: () => void }) {
     setTheme(next);
   };
   return (
-    <aside className="side" aria-label="Сессии и проекты">
+    <aside className="side" aria-label={t('workspace.sidebar.sessionsAndProjects')}>
       <div className="side-top">
         <PhoneDrawer />
         <div className="brand">
@@ -31,16 +33,24 @@ export function Sidebar({ onLogout }: { onLogout: () => void }) {
           </div>
           Agent Hub
         </div>
-        <button type="button" className="icon-btn" onClick={toggleTheme} aria-label={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'} title="Сменить тему">
+        <button type="button" className="icon-btn" onClick={toggleTheme} aria-label={theme === 'dark' ? t('workspace.theme.light') : t('workspace.theme.dark')} title={t('workspace.theme.switch')}>
           ◐
         </button>
         <ProfileMenu onLogout={onLogout} />
       </div>
       <div className="side-actions">
         <button type="button" className="search" onClick={() => useStore.setState({ modal: { type: 'search' } })}>
-          <span aria-hidden="true">⌕</span>Найти сессию<kbd>Ctrl K</kbd>
+          <span aria-hidden="true">⌕</span>
+          {t('workspace.sidebar.findSession')}
+          <kbd>Ctrl K</kbd>
         </button>
-        <button type="button" className="btn primary" title="Новая сессия" aria-label="Новая сессия" onClick={() => useStore.setState({ modal: { type: 'new' } })}>
+        <button
+          type="button"
+          className="btn primary"
+          title={t('workspace.sidebar.newSession')}
+          aria-label={t('workspace.sidebar.newSession')}
+          onClick={() => useStore.setState({ modal: { type: 'new' } })}
+        >
           ＋
         </button>
       </div>

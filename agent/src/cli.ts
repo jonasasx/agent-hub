@@ -102,10 +102,10 @@ export async function cmdClaudeStatus(c: CliEnv): Promise<number> {
 export async function cmdLogin(c: CliEnv, o: { restart: boolean }): Promise<number> {
   const cmd = claudeCommand(c.env);
   if (!cmd) {
-    c.io.err('claude не найден. Установите его: curl -fsSL https://claude.ai/install.sh | bash\n');
+    c.io.err('claude not found. Install it: curl -fsSL https://claude.ai/install.sh | bash\n');
     return 1;
   }
-  c.io.out('Вход в подписку Claude: откроется ссылка — войдите в браузере.\n');
+  c.io.out('Claude subscription sign-in: a link will open, sign in in the browser.\n');
   let output = '';
   const code = await new Promise<number | null>(resolve => {
     const p = spawn(cmd.file, [...cmd.args, 'setup-token'], { stdio: ['inherit', 'pipe', 'inherit'], env: c.env });
@@ -114,37 +114,37 @@ export async function cmdLogin(c: CliEnv, o: { restart: boolean }): Promise<numb
       c.io.out(d.toString('utf8'));
     });
     p.on('error', err => {
-      c.io.err(`claude setup-token не запустился: ${err.message}\n`);
+      c.io.err(`claude setup-token failed to start: ${err.message}\n`);
       resolve(null);
     });
     p.on('close', status => resolve(status));
   });
   let token = findSetupToken(output);
   if (!token) {
-    if (code !== 0 && code !== null) c.io.err(`claude setup-token завершился с кодом ${code}.\n`);
-    token = (await c.io.readSecret('Вставьте токен, который показал claude (ввод скрыт): ')).trim();
+    if (code !== 0 && code !== null) c.io.err(`claude setup-token exited with code ${code}.\n`);
+    token = (await c.io.readSecret('Paste the token that claude showed (input is hidden): ')).trim();
   }
   if (!TOKEN_OK.test(token)) {
-    c.io.err('Токен не получен. Повторите: ~/.agent-hub/bin/agent-hub login\n');
+    c.io.err('No token received. Try again: ~/.agent-hub/bin/agent-hub login\n');
     return 1;
   }
   mkdirSync(c.stateDir, { recursive: true });
   updateEnvFile(envPath(c), { CLAUDE_CODE_OAUTH_TOKEN: token });
-  c.io.out('Вход в Claude сохранён.\n');
+  c.io.out('Claude sign-in saved.\n');
   return o.restart ? cmdRestart(c) : 0;
 }
 
 export const ENROLL_MESSAGES: Record<string, string> = {
-  code_expired: 'Код истёк — нажмите «Новый код» в браузере и запустите команду снова',
-  code_used: 'Код уже использован — нажмите «Новый код» в браузере и запустите команду снова',
-  code_invalid: 'Код не подошёл — скопируйте команду из браузера ещё раз',
-  invalid_request: 'Код не подошёл — скопируйте команду из браузера ещё раз',
-  too_many_requests: 'Слишком много попыток — подождите минуту и запустите команду снова',
+  code_expired: 'The code has expired: click "New code" in the browser and run the command again',
+  code_used: 'The code has already been used: click "New code" in the browser and run the command again',
+  code_invalid: 'The code was not accepted: copy the command from the browser again',
+  invalid_request: 'The code was not accepted: copy the command from the browser again',
+  too_many_requests: 'Too many attempts: wait a minute and run the command again',
 };
 
 export function noConnectionMessage(hub: string): string {
   const u = new URL(hub);
-  return `Нет связи с ${u.hostname}:${u.port || (u.protocol === 'http:' ? '80' : '443')} — проверьте выход машины в интернет`;
+  return `Cannot reach ${u.hostname}:${u.port || (u.protocol === 'http:' ? '80' : '443')}: check that the machine has internet access`;
 }
 
 /** Exit codes: 0 — enrolled; 2 — the code was refused; 3 — no connection; 1 — anything else. */
@@ -186,20 +186,20 @@ export async function cmdEnroll(c: CliEnv, f: Record<string, string | true>): Pr
   }
   if (!res.ok) {
     const err = typeof json.error === 'string' ? json.error : '';
-    const msg = ENROLL_MESSAGES[err] ?? (res.status === 429 ? ENROLL_MESSAGES.too_many_requests : `Хаб ответил ${res.status}${err ? ` (${err})` : ''}`);
+    const msg = ENROLL_MESSAGES[err] ?? (res.status === 429 ? ENROLL_MESSAGES.too_many_requests : `The hub answered ${res.status}${err ? ` (${err})` : ''}`);
     c.io.err(`${msg}\n`);
     return res.status === 410 || res.status === 400 || res.status === 429 ? 2 : 1;
   }
   const token = json.token;
   const hubUrl = json.hubUrl;
   if (typeof token !== 'string' || token.length < 20 || typeof hubUrl !== 'string' || !isAllowedHubUrl(hubUrl)) {
-    c.io.err('Хаб вернул неожиданный ответ на подключение.\n');
+    c.io.err('The hub returned an unexpected response to the enrollment.\n');
     return 1;
   }
   mkdirSync(c.stateDir, { recursive: true });
   // AGENT_STATE_DIR: replication state next to agent.env (a trial install with another state dir keeps its own).
   updateEnvFile(envPath(c), { HUB_URL: hubUrl, AGENT_TOKEN: token, AGENT_STATE_DIR: c.stateDir });
-  c.io.out(`Машина подключена к хабу (раннер ${String(json.runnerId)}).\n`);
+  c.io.out(`The machine is connected to the hub (runner ${String(json.runnerId)}).\n`);
   return 0;
 }
 
@@ -236,19 +236,19 @@ export async function cmdRestart(c: CliEnv): Promise<number> {
         AGENT_HUB_APP: join(c.stateDir, 'app'),
         AGENT_HUB_SELF: String(process.pid),
       });
-      if (!stopped) c.io.err('Не удалось завершить прежний супервизор агента — он может продолжать работать.\n');
+      if (!stopped) c.io.err('Could not stop the previous agent supervisor: it may keep running.\n');
       ok = run('schtasks', ['/Run', '/TN', name]);
       break;
     }
     default:
-      c.io.err('Автозапуск не настроен: запустите агента заново (см. вывод установщика).\n');
+      c.io.err('Autostart is not set up: start the agent again (see the installer output).\n');
       return 1;
   }
   if (!ok) {
-    c.io.err('Не удалось перезапустить агента — перезагрузите машину или запустите установщик снова.\n');
+    c.io.err('Could not restart the agent: reboot the machine or run the installer again.\n');
     return 1;
   }
-  c.io.out('Агент перезапущен.\n');
+  c.io.out('The agent has been restarted.\n');
   return 0;
 }
 

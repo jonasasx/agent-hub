@@ -10,7 +10,7 @@
  *
  * Electron-free: socket, fetch, cookie and timers are injected.
  */
-import type { SidebarResponse, UiClientKind } from '@agent-hub/shared';
+import { isLocale, type Locale, type MeResponse, type SidebarResponse, type UiClientKind } from '@agent-hub/shared';
 import { backoffDelay } from './backoff.js';
 
 export type HubConnState = 'connecting' | 'online' | 'offline' | 'signed_out';
@@ -40,6 +40,8 @@ export interface HubClientDeps {
   onState(state: HubConnState): void;
   /** Model replaced from the sidebar (start, reconnect, `projects.changed`): no notifications. */
   onSeed(sidebar: SidebarResponse): void;
+  /** `locale` of `/api/me` (the language chosen in the profile; null — not chosen): after every seed and on the poll while online. */
+  onLocale?(locale: Locale | null): void;
   /** A server message after the seed. Returns true when the sidebar must be re-read (`projects.changed`). */
   onMessage(msg: unknown): boolean;
   /** Result of a `/healthz` poll while offline (false — the hub is unreachable, not just a dropped socket). */
@@ -52,6 +54,8 @@ const DESKTOP_CLIENT_KIND: UiClientKind = 'desktop';
 export const PING_MS = 25_000;
 export const SIDEBAR_TIMEOUT_MS = 10_000;
 export const OFFLINE_HEALTH_MS = 5_000;
+/** How often the profile language is re-read while online: a change in the web reaches the tray within this time. */
+export const LOCALE_POLL_MS = 30_000;
 const HEALTH_TIMEOUT_MS = 4_000;
 
 export function wsUrl(hubUrl: string): string {
@@ -71,6 +75,7 @@ export class HubClient {
   private retryTimer: unknown = null;
   private pingTimer: unknown = null;
   private healthTimer: unknown = null;
+  private localeTimer: unknown = null;
   private lastPongAt = 0;
   private seeded = false;
   private buffer: unknown[] = [];
@@ -94,6 +99,36 @@ export class HubClient {
     this.stopped = true;
     this.teardown();
     this.stopHealth();
+  }
+
+  private stopLocalePoll(): void {
+    if (this.localeTimer !== null) this.d.clearTimer(this.localeTimer);
+    this.localeTimer = null;
+  }
+
+  /** `GET /api/me` → `onLocale`. Errors are ignored: the language stays as it was. */
+  private async loadLocale(gen: number): Promise<void> {
+    if (!this.d.onLocale) return;
+    try {
+      const r = await this.d.fetch(`${this.d.hubUrl}/api/me`, { headers: this.headers(), signal: AbortSignal.timeout(SIDEBAR_TIMEOUT_MS) });
+      if (r.status !== 200) return;
+      const me = (await r.json()) as Partial<MeResponse> | null;
+      if (gen !== this.generation) return;
+      this.d.onLocale(isLocale(me?.locale) ? me.locale : null);
+    } catch {
+      /* keep the current language */
+    }
+  }
+
+  private scheduleLocalePoll(gen: number): void {
+    if (!this.d.onLocale || this.localeTimer !== null) return;
+    this.localeTimer = this.d.setTimer(() => {
+      this.localeTimer = null;
+      if (gen !== this.generation || this.state !== 'online') return;
+      void this.loadLocale(gen).finally(() => {
+        if (gen === this.generation && this.state === 'online') this.scheduleLocalePoll(gen);
+      });
+    }, LOCALE_POLL_MS);
   }
 
   private stopHealth(): void {
@@ -135,6 +170,7 @@ export class HubClient {
     if (this.state === s) return;
     this.state = s;
     if (s !== 'offline') this.stopHealth();
+    if (s !== 'online') this.stopLocalePoll();
     this.d.onState(s);
   }
 
@@ -144,6 +180,7 @@ export class HubClient {
     if (this.pingTimer !== null) this.d.clearTimer(this.pingTimer);
     this.retryTimer = null;
     this.pingTimer = null;
+    this.stopLocalePoll();
     const s = this.socket;
     this.socket = null;
     this.seeded = false;
@@ -323,6 +360,8 @@ export class HubClient {
     this.seeded = true;
     this.attempt = 0;
     this.setState('online');
+    void this.loadLocale(gen);
+    this.scheduleLocalePoll(gen);
     const buffered = this.buffer;
     this.buffer = [];
     let reseed = this.sidebarAgain;

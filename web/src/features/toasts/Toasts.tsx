@@ -1,11 +1,13 @@
 import { useEffect, type CSSProperties } from 'react';
 import { useStore, type Toast } from '../../store';
 import { UpdateBanner } from '../update/UpdateBanner';
+import { useT } from '../../i18n';
 
 /** UI review H2: toasts sit at the top right and go away after 4.5 s. */
 const TTL_MS = 4500;
 
 function ToastItem({ toast }: { toast: Toast }) {
+  const tr = useT();
   const dismiss = useStore(s => s.dismissToast);
   useEffect(() => {
     const t = setTimeout(() => dismiss(toast.id), TTL_MS);
@@ -29,7 +31,7 @@ function ToastItem({ toast }: { toast: Toast }) {
           {toast.action.label}
         </button>
       )}
-      <button type="button" className="icon-btn" aria-label="Закрыть" onClick={() => dismiss(toast.id)}>
+      <button type="button" className="icon-btn" aria-label={tr('workspace.toasts.close')} onClick={() => dismiss(toast.id)}>
         ×
       </button>
     </div>

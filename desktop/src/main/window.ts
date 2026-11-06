@@ -257,7 +257,7 @@ export class AppWindow {
   hubUnreachable(): void {
     this.hubDown = true;
     if (actionOnHubUnreachable(this.outageView()) === 'show_offline') {
-      log('hub unreachable: showing «Нет связи» over the cached page');
+      log('hub unreachable: showing the offline notice over the cached page');
       this.goOffline(this.win.webContents.getURL());
     }
   }

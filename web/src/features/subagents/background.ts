@@ -1,17 +1,38 @@
 // Monitors and background commands of a session in the UI (change `background-tasks`, design D6).
 // Requirement (background-tasks): Фоновые задачи в списке рядом с субагентами.
 import type { BackgroundTaskStatus, BackgroundTaskView } from '../../api/types';
+import { t } from '../../i18n';
 
-export const BG_STATUS_LABEL: Record<BackgroundTaskStatus, string> = {
-  running: 'работает',
-  completed: 'завершена',
-  failed: 'ошибка',
-  stopped: 'остановлена',
-  expired: 'истекла',
-  interrupted: 'прервана',
-};
+/** Getters: the label is translated when it is read (at render). */
+export const BG_STATUS_LABEL = {
+  get running() {
+    return t('sessions.subagents.bgStatus.running');
+  },
+  get completed() {
+    return t('sessions.subagents.bgStatus.completed');
+  },
+  get failed() {
+    return t('sessions.subagents.bgStatus.failed');
+  },
+  get stopped() {
+    return t('sessions.subagents.bgStatus.stopped');
+  },
+  get expired() {
+    return t('sessions.subagents.bgStatus.expired');
+  },
+  get interrupted() {
+    return t('sessions.subagents.bgStatus.interrupted');
+  },
+} as Record<BackgroundTaskStatus, string>;
 
-export const BG_KIND_LABEL: Record<BackgroundTaskView['kind'], string> = { monitor: 'монитор', bash: 'команда' };
+export const BG_KIND_LABEL = {
+  get monitor() {
+    return t('sessions.subagents.bgKind.monitor');
+  },
+  get bash() {
+    return t('sessions.subagents.bgKind.bash');
+  },
+} as Record<BackgroundTaskView['kind'], string>;
 
 /** The hub's status, with the timeout applied again: a monitor may expire while the list is on screen. */
 export function bgStatus(v: BackgroundTaskView, now = Date.now()): BackgroundTaskStatus {
@@ -37,7 +58,7 @@ export function bgDurationMs(v: BackgroundTaskView, st: BackgroundTaskStatus, no
 export function expiresLabel(v: BackgroundTaskView, st: BackgroundTaskStatus, now = Date.now()): string {
   if (st !== 'running' || !v.expiresAt) return '';
   const m = Math.max(1, Math.ceil((Date.parse(v.expiresAt) - now) / 60_000));
-  return m < 60 ? `истекает через ${m} мин` : `истекает через ${Math.floor(m / 60)} ч ${m % 60} мин`;
+  return m < 60 ? t('sessions.subagents.expires.min', { n: m }) : t('sessions.subagents.expires.hourMin', { h: Math.floor(m / 60), m: m % 60 });
 }
 
 /** A call in the feed that starts a background task: Monitor, or Bash/PowerShell with run_in_background. */

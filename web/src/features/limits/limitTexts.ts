@@ -1,92 +1,78 @@
 /**
  * Texts of the limits UI (change subscription-limits, design.md L7 «Расшифровки»): constants of the interface, never
- * from the hub. A window is looked up by its key; an unknown key shows its raw name and «окно без описания».
+ * from the hub. A window is looked up by its key; an unknown key shows its raw name and no description.
+ * Every text is resolved when it is asked for, so a change of the interface language applies at once.
  */
 import type { LimitsReason } from '../../api/types';
+import { t } from '../../i18n';
 
 export interface WindowText {
-  /** For the row and the chip: «5 ч», «7 дн». */
+  /** For the row and the chip: «5 h», «7 d». */
   short: string;
-  /** For the card: «5 часов». */
+  /** For the card: «5 hours». */
   name: string;
   /** null — an unknown window. */
   desc: string | null;
 }
 
-export const WINDOW_TEXTS: Record<string, WindowText> = {
-  five_hour: {
-    short: '5 ч',
-    name: '5 часов',
-    desc: 'Скользящее окно: начинается с первого запроса после паузы и длится 5 часов. Показывает, сколько израсходовано за это время; после сброса счёт идёт заново.',
-  },
-  seven_day: {
-    short: '7 дн',
-    name: '7 дней',
-    desc: 'Недельный лимит на все модели. Время сброса сообщает сервис; недельное окно сбрасывается реже 5-часового, поэтому исчерпание ждать дольше.',
-  },
-  seven_day_opus: { short: '7 дн Opus', name: '7 дней · Opus', desc: 'Отдельный недельный лимит на запросы к моделям Opus. Другие модели его не тратят.' },
-  seven_day_sonnet: { short: '7 дн Sonnet', name: '7 дней · Sonnet', desc: 'Отдельный недельный лимит на запросы к моделям Sonnet. Другие модели его не тратят.' },
-  seven_day_oauth_apps: {
-    short: '7 дн прил.',
-    name: '7 дней · приложения',
-    desc: 'Недельный лимит запросов от приложений, подключённых к аккаунту по OAuth. Что именно сюда попадает, определяет Anthropic.',
-  },
-};
+const KNOWN_WINDOWS = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'seven_day_oauth_apps'] as const;
+type KnownWindow = (typeof KNOWN_WINDOWS)[number];
 
-export const UNKNOWN_WINDOW_DESC = 'Окно без описания: сервис вернул новый тип лимита.';
+export const isKnownWindow = (type: string): type is KnownWindow => (KNOWN_WINDOWS as readonly string[]).includes(type);
+
+export const unknownWindowDesc = (): string => t('limits.window.unknownDesc');
 
 export function windowText(type: string): WindowText {
-  return Object.prototype.hasOwnProperty.call(WINDOW_TEXTS, type) ? WINDOW_TEXTS[type]! : { short: type, name: type, desc: null };
+  if (!isKnownWindow(type)) return { short: type, name: type, desc: null };
+  return { short: t(`limits.window.${type}.short`), name: t(`limits.window.${type}.name`), desc: t(`limits.window.${type}.desc`) };
 }
 
-export const OVERAGE_DESC =
-  'Использование сверх лимита подписки за кредиты или деньги, если оно включено в аккаунте. Хаб показывает только состояние: включён, используется, исчерпан; суммы не считает.';
+export const overageDesc = (): string => t('limits.text.overage');
 
-export const EXHAUSTION_RULES =
-  'Когда любое окно доходит до 100%, подписка отклоняет ходы до сброса этого окна. Если у подписки включено автопереключение, хаб продолжит сессию под следующей подпиской реестра; иначе в чате появится кнопка «Продолжить под другой подпиской».';
+export const exhaustionRules = (): string => t('limits.text.exhaustion');
 
-export const REFRESH_HINT = 'Обновить делает короткий служебный запрос к модели Haiku под этой подпиской: тратит малую долю 5-часового окна.';
+export const refreshHint = (): string => t('limits.text.refresh');
 
-export const QUIET_TEXT = 'Ход прошёл, лимит не исчерпан; новых процентов сервис не прислал, известные значения окон — ниже порога.';
+export const quietText = (): string => t('limits.text.quiet');
 
 /** A quiet check while a window holds its level (fix 2026-10-29). */
-export const HELD_TEXT = 'Сервис присылает проценты не на каждый ход, поэтому у окон — последние известные значения.';
+export const heldText = (): string => t('limits.text.held');
 
-/** «нет данных: …» by reason; `agent_outdated` names the machines when they are known. */
+/** «no data: …» by reason; `agent_outdated` names the machines when they are known. */
 export function reasonText(reason: LimitsReason | null, outdatedMachines: string[] = []): string {
   switch (reason) {
     case 'token_rejected':
-      return 'токен отклонён';
+      return t('limits.reason.token_rejected');
     case 'no_runner':
-      return 'нет машины в сети';
+      return t('limits.reason.no_runner');
     case 'agent_outdated':
-      return outdatedMachines.length ? `обновите агента на ${outdatedMachines.join(', ')}` : 'обновите агента';
+      return outdatedMachines.length ? t('limits.reason.agent_outdated_on', { machines: outdatedMachines.join(', ') }) : t('limits.reason.agent_outdated');
     case 'probe_failed':
-      return 'пробный ход не удался';
+      return t('limits.reason.probe_failed');
     case 'expired':
-      return 'данные старше суток';
+      return t('limits.reason.expired');
     case 'not_polled':
     case null:
     default:
-      return 'ещё не проверялась';
+      return t('limits.reason.not_polled');
   }
 }
 
-/** One sentence after «Нет данных: …» in the card. */
+/** One sentence after «No data: …» in the card. */
 export function reasonAdvice(reason: LimitsReason | null): string {
   switch (reason) {
     case 'token_rejected':
-      return 'Замените токен в реестре подписок.';
+      return t('limits.advice.token_rejected');
     case 'no_runner':
-      return 'Пробный ход выполняет машина с агентом, а подходящей в сети нет.';
+      return t('limits.advice.no_runner');
     case 'agent_outdated':
-      return 'Агент машины не поддерживает лимиты (нужен протокол 1.6).';
+      return t('limits.advice.agent_outdated');
     case 'probe_failed':
-      return 'Хаб повторит позже; можно нажать «Обновить».';
+      return t('limits.advice.probe_failed');
     case 'expired':
-      return 'Последним данным больше суток, им нельзя доверять.';
+      return t('limits.advice.expired');
     default:
-      return 'Данные появятся после первого хода сессии или пробного хода.';
+      return t('limits.advice.default');
   }
 }
 
@@ -94,18 +80,18 @@ export function reasonAdvice(reason: LimitsReason | null): string {
 export function refreshErrorText(code: string | null, status: number): string {
   switch (code) {
     case 'subscription_retired':
-      return 'Подписка выведена из реестра.';
+      return t('limits.refreshError.subscription_retired');
     case 'token_rejected':
-      return 'Токен отклонён — замените его в реестре.';
+      return t('limits.refreshError.token_rejected');
     case 'runner_offline':
-      return 'Нет машины в сети для пробного хода.';
+      return t('limits.refreshError.runner_offline');
     case 'agent_outdated':
-      return 'Агент машины устарел — обновите агента.';
+      return t('limits.refreshError.agent_outdated');
     case 'probes_disabled':
-      return 'Пробные ходы выключены в настройках хаба.';
+      return t('limits.refreshError.probes_disabled');
     case 'subscriptions_disabled':
-      return 'Хранение токенов не настроено на хабе.';
+      return t('limits.refreshError.subscriptions_disabled');
     default:
-      return status === 404 ? 'Подписка не найдена — список обновлён.' : 'Хаб не ответил. Проверьте VPN и попробуйте ещё раз.';
+      return status === 404 ? t('limits.refreshError.notFound') : t('limits.refreshError.noAnswer');
   }
 }

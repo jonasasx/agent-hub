@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FS_MEDIA_MAX, FS_TEXT_MAX } from '@agent-hub/shared';
+import { t } from '../../i18n';
 import { FsError, fsList, fsOpenFile, isUnsupported } from './filesApi';
 import { nameKind } from './fileIcons';
 import { useFiles } from './filesStore';
@@ -103,7 +104,7 @@ export function useFileContent(runnerId: string, path: string, sessionId: string
   const imageFailed = useCallback(() => {
     if (probe.current) {
       // the probe already ran and the `<img>` still cannot show the picture: stop, no more requests until «Повторить»
-      setState({ status: 'error', code: 'bad_response', text: 'Не удалось показать изображение' });
+      setState({ status: 'error', code: 'bad_response', text: t('files.viewer.imageFailed') });
       return;
     }
     probe.current = true;

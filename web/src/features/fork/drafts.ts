@@ -5,6 +5,7 @@
  */
 import { create } from 'zustand';
 import { api, type HandoffDraft } from '../../api/client';
+import { hubText, t } from '../../i18n';
 
 export const DRAFT_TIMEOUT_MS = 125_000;
 const POLL_MS = 3_000;
@@ -14,7 +15,12 @@ interface DraftState {
 }
 export const useDrafts = create<DraftState>()(() => ({ byId: {} }));
 
-const put = (d: HandoffDraft) => useDrafts.setState(st => ({ byId: { ...st.byId, [d.id]: { ...st.byId[d.id], ...d } } }));
+const put = (d: HandoffDraft) => {
+  useDrafts.setState(st => ({ byId: { ...st.byId, [d.id]: { ...st.byId[d.id], ...d } } }));
+};
+
+/** The error of a failed draft in the interface language when the hub sent its key (the form renders it, so a language switch follows). */
+export const draftError = (d: HandoffDraft): string | undefined => (d.error ? hubText(d.error, d.errorI18n) : undefined);
 
 let gen = 0;
 /** The form closed: its drafts are no longer polled. */
@@ -42,7 +48,7 @@ export async function startDraft(sessionId: string, timeoutMs = DRAFT_TIMEOUT_MS
     const cur = useDrafts.getState().byId[d.id];
     if (!cur || cur.status !== 'pending') return;
     if (Date.now() - started >= timeoutMs) {
-      put({ id: d.id, status: 'error', error: 'Хаб не прислал промпт за 2 минуты' });
+      put({ id: d.id, status: 'error', error: t('sessions.fork.draft.timeout') });
       return;
     }
     try {

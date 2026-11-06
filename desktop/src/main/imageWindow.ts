@@ -5,13 +5,13 @@
  */
 import { BrowserWindow, nativeImage, screen, shell } from 'electron';
 import { join } from 'node:path';
+import { dt } from '../core/i18n.js';
 import { decideNavigation } from '../core/navigation.js';
 import { log } from './files.js';
 import { PARTITION } from './window.js';
 
 const WIDTH = 1000;
 const HEIGHT = 750;
-const TITLE = 'Изображение — Agent Hub';
 
 /** One window per address: «Открыть оригинал» of the same picture again brings the open window forward. */
 const open = new Map<string, BrowserWindow>();
@@ -28,7 +28,7 @@ export function openImageWindow(url: string, hubOrigin: string, assetsDir: strin
   const win = new BrowserWindow({
     width: Math.min(WIDTH, area.width),
     height: Math.min(HEIGHT, area.height),
-    title: TITLE,
+    title: dt('desktop.imageWindow.title'),
     icon: nativeImage.createFromPath(join(assetsDir, 'app.ico')),
     autoHideMenuBar: true,
     backgroundColor: '#0e0e0e',

@@ -9,32 +9,34 @@
 import { useCallback, useEffect, useId, useState } from 'react';
 import { ApiError, api } from '../../api/client';
 import type { AdminUserView, CreateInviteResponse, InviteView, LoginProvider } from '../../api/types';
+import { t, useT } from '../../i18n';
 import { useStore } from '../../store';
 import { CommandBox } from '../machines/EnrollModal';
-import { dateTime, plural } from '../machines/machines';
+import { dateTime } from '../machines/machines';
 import { useUnsavedInput } from '../update/unsaved';
 
 export const PROVIDER_LABEL: Record<LoginProvider, string> = { google: 'Google', keycloak: 'Keycloak' };
 
-const INVITE_STATUS: Record<InviteView['status'], string> = { active: 'действует', used: 'использовано', expired: 'истекло', revoked: 'отозвано' };
+const inviteStatus = (status: InviteView['status']): string => t(`settings.users.status.${status}`);
 
 /** «2 машины, 1 в сети», «нет машин». */
 export function machinesText(m: AdminUserView['machines']): string {
-  if (!m.total) return 'нет машин';
-  return `${m.total} ${plural(m.total, ['машина', 'машины', 'машин'])}, ${m.online} в сети`;
+  if (!m.total) return t('settings.users.machinesNone');
+  return t('settings.users.machines', { count: m.total, online: m.online });
 }
 
 /** «7 дней», «3 часа» до expiresAt. */
 export function termLeft(iso: string, now = Date.now()): string {
   const ms = Date.parse(iso) - now;
-  if (ms <= 0) return 'истекло';
+  if (ms <= 0) return t('settings.users.termExpired');
   const days = Math.floor(ms / 86_400_000);
-  if (days >= 1) return `${Math.round(ms / 86_400_000)} ${plural(Math.round(ms / 86_400_000), ['день', 'дня', 'дней'])}`;
+  if (days >= 1) return t('settings.users.termDays', { count: Math.round(ms / 86_400_000) });
   const h = Math.max(1, Math.round(ms / 3_600_000));
-  return `${h} ${plural(h, ['час', 'часа', 'часов'])}`;
+  return t('settings.users.termHours', { count: h });
 }
 
 function InviteForm({ onCreated }: { onCreated: (r: CreateInviteResponse) => void }) {
+  const tr = useT();
   const id = useId();
   const [email, setEmail] = useState('');
   const [provider, setProvider] = useState<LoginProvider>('google');
@@ -44,7 +46,7 @@ function InviteForm({ onCreated }: { onCreated: (r: CreateInviteResponse) => voi
   const submit = async (e: { preventDefault(): void }) => {
     e.preventDefault();
     const v = email.trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return setErr('Введите адрес почты');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return setErr(tr('settings.users.emailRequired'));
     setBusy(true);
     setErr(null);
     try {
@@ -53,10 +55,10 @@ function InviteForm({ onCreated }: { onCreated: (r: CreateInviteResponse) => voi
     } catch (e2) {
       setErr(
         e2 instanceof ApiError && e2.code === 'user_exists'
-          ? 'Пользователь уже есть'
+          ? tr('settings.users.userExists')
           : e2 instanceof ApiError && e2.status === 400
-            ? 'Адрес не похож на почту'
-            : 'Приглашение не создано. Попробуйте ещё раз.',
+            ? tr('settings.users.emailInvalid')
+            : tr('settings.users.inviteFailed'),
       );
     } finally {
       setBusy(false);
@@ -65,7 +67,7 @@ function InviteForm({ onCreated }: { onCreated: (r: CreateInviteResponse) => voi
   return (
     <form className="invite-form" onSubmit={e => void submit(e)} noValidate>
       <div className="field">
-        <label htmlFor={`${id}-email`}>Почта</label>
+        <label htmlFor={`${id}-email`}>{tr('settings.users.email')}</label>
         <input
           id={`${id}-email`}
           className="input"
@@ -80,7 +82,7 @@ function InviteForm({ onCreated }: { onCreated: (r: CreateInviteResponse) => voi
       </div>
       <div className="field">
         <span className="lbl" id={`${id}-p`}>
-          Вход через
+          {tr('settings.users.via')}
         </span>
         <div className="segmini" role="radiogroup" aria-labelledby={`${id}-p`}>
           {(['google', 'keycloak'] as const).map(p => (
@@ -91,7 +93,7 @@ function InviteForm({ onCreated }: { onCreated: (r: CreateInviteResponse) => voi
         </div>
       </div>
       <button type="submit" className="btn primary" disabled={busy}>
-        {busy ? 'Создаём…' : 'Пригласить'}
+        {busy ? tr('settings.users.creating') : tr('settings.users.invite')}
       </button>
       {err && (
         <span className="field-error" id={`${id}-err`} role="alert">
@@ -103,6 +105,7 @@ function InviteForm({ onCreated }: { onCreated: (r: CreateInviteResponse) => voi
 }
 
 function UserRow({ u, self, onChange }: { u: AdminUserView; self: boolean; onChange: (u: AdminUserView) => void }) {
+  const tr = useT();
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -113,7 +116,7 @@ function UserRow({ u, self, onChange }: { u: AdminUserView; self: boolean; onCha
       onChange(await api.setUserEnabled(u.id, enabled));
       setConfirm(false);
     } catch (e) {
-      setErr(e instanceof ApiError && e.code === 'cannot_disable_self' ? 'Себя отключить нельзя' : 'Не получилось. Попробуйте ещё раз.');
+      setErr(e instanceof ApiError && e.code === 'cannot_disable_self' ? tr('settings.users.cannotDisableSelf') : tr('settings.users.failed'));
     } finally {
       setBusy(false);
     }
@@ -126,46 +129,46 @@ function UserRow({ u, self, onChange }: { u: AdminUserView; self: boolean; onCha
         {u.name && <span className="u-mail">{u.email}</span>}
         <span className="u-tags">
           <span className="tag">{PROVIDER_LABEL[u.provider]}</span>
-          {u.role === 'admin' && <span className="tag">админ</span>}
-          {off && <span className="tag bad">отключён</span>}
-          {self && <span className="tag">это вы</span>}
+          {u.role === 'admin' && <span className="tag">{tr('settings.users.tagAdmin')}</span>}
+          {off && <span className="tag bad">{tr('settings.users.tagDisabled')}</span>}
+          {self && <span className="tag">{tr('settings.users.tagSelf')}</span>}
         </span>
       </div>
       <dl className="u-facts">
         <div>
-          <dt>Машины</dt>
+          <dt>{tr('settings.users.factMachines')}</dt>
           <dd>{machinesText(u.machines)}</dd>
         </div>
         <div>
-          <dt>Приглашён</dt>
+          <dt>{tr('settings.users.factInvited')}</dt>
           <dd>{u.invitedAt ? dateTime(u.invitedAt) : '—'}</dd>
         </div>
         <div>
-          <dt>Последний вход</dt>
-          <dd>{u.lastLoginAt ? dateTime(u.lastLoginAt) : 'ещё не входил'}</dd>
+          <dt>{tr('settings.users.factLastLogin')}</dt>
+          <dd>{u.lastLoginAt ? dateTime(u.lastLoginAt) : tr('settings.users.neverSignedIn')}</dd>
         </div>
       </dl>
       {!self && (
         <div className="u-actions">
           {off ? (
             <button type="button" className="btn" disabled={busy} onClick={() => void toggle(true)}>
-              Включить
+              {tr('settings.users.enable')}
             </button>
           ) : confirm ? (
-            <div className="banner warn inline-warn" role="alertdialog" aria-label={`Отключить ${u.email}?`}>
+            <div className="banner warn inline-warn" role="alertdialog" aria-label={tr('settings.users.confirmLabel', { email: u.email })}>
               <div className="b-text">
-                <b>Отключить {u.name ?? u.email}?</b> Его окна закроются, машины отключатся. Данные сохранятся, включить можно снова.
+                <b>{tr('settings.users.confirmTitle', { name: u.name ?? u.email })}</b> {tr('settings.users.confirmBody')}
               </div>
               <button type="button" className="btn ghost" onClick={() => setConfirm(false)}>
-                Отмена
+                {tr('settings.users.cancel')}
               </button>
               <button type="button" className="btn danger" disabled={busy} onClick={() => void toggle(false)}>
-                Отключить
+                {tr('settings.users.disable')}
               </button>
             </div>
           ) : (
             <button type="button" className="btn ghost danger-text" onClick={() => setConfirm(true)}>
-              Отключить
+              {tr('settings.users.disable')}
             </button>
           )}
         </div>
@@ -182,6 +185,7 @@ function UserRow({ u, self, onChange }: { u: AdminUserView; self: boolean; onCha
 type Load = { kind: 'loading' } | { kind: 'error' } | { kind: 'ok'; users: AdminUserView[]; invites: InviteView[] };
 
 export function UsersPage() {
+  const tr = useT();
   const meId = useStore(s => (s.auth.kind === 'signed_in' ? s.auth.me.user.id : ''));
   const [load, setLoad] = useState<Load>({ kind: 'loading' });
   const [created, setCreated] = useState<CreateInviteResponse | null>(null);
@@ -208,45 +212,45 @@ export function UsersPage() {
       if (created?.invite.id === inv.id) setCreated(null);
       setLoad(l => (l.kind === 'ok' ? { ...l, invites: l.invites.map(x => (x.id === inv.id ? { ...x, status: 'revoked', revokedAt: new Date().toISOString() } : x)) } : l));
     } catch (e) {
-      setInviteErr(e instanceof ApiError && e.code === 'invite_used' ? 'Приглашение уже использовано' : 'Не отозвано. Попробуйте ещё раз.');
+      setInviteErr(e instanceof ApiError && e.code === 'invite_used' ? tr('settings.users.inviteUsed') : tr('settings.users.revokeFailed'));
     }
   };
 
   return (
     <section aria-labelledby="set-users">
       <div className="set-head">
-        <h2 id="set-users">Пользователи</h2>
+        <h2 id="set-users">{tr('settings.users.title')}</h2>
       </div>
-      <p className="hint">Вход только по приглашению. Сессии, машины и проекты пользователей вам не видны — только их число.</p>
+      <p className="hint">{tr('settings.users.hint')}</p>
 
-      <h3 className="set-sub">Пригласить</h3>
+      <h3 className="set-sub">{tr('settings.users.invite')}</h3>
       <InviteForm onCreated={onCreated} />
       {created && (
         <div className="invite-link" role="status">
           <p>
-            Ссылка для <b>{created.invite.email}</b> · вход через {PROVIDER_LABEL[created.invite.provider]} · действует {termLeft(created.invite.expiresAt)}, одноразовая. Перешлите её сами — больше
-            она не покажется.
+            {tr('settings.users.linkBefore')} <b>{created.invite.email}</b>{' '}
+            {tr('settings.users.linkAfter', { provider: PROVIDER_LABEL[created.invite.provider], term: termLeft(created.invite.expiresAt) })}
           </p>
-          <CommandBox command={created.url} label={`Ссылка-приглашение для ${created.invite.email}`} />
+          <CommandBox command={created.url} label={tr('settings.users.linkLabel', { email: created.invite.email })} />
         </div>
       )}
 
       {load.kind === 'loading' && (
         <p className="hint" role="status">
-          <span className="spinner" aria-hidden="true" /> Загрузка…
+          <span className="spinner" aria-hidden="true" /> {tr('settings.common.loading')}
         </p>
       )}
       {load.kind === 'error' && (
         <div className="err-box" role="alert">
-          Список не загружен.{' '}
+          {tr('settings.users.listError')}{' '}
           <button type="button" className="btn" onClick={fetchAll}>
-            Повторить
+            {tr('settings.common.retry')}
           </button>
         </div>
       )}
       {load.kind === 'ok' && (
         <>
-          <h3 className="set-sub">Приглашения</h3>
+          <h3 className="set-sub">{tr('settings.users.invitesTitle')}</h3>
           {inviteErr && (
             <div className="err-box" role="alert">
               {inviteErr}
@@ -259,20 +263,24 @@ export function UsersPage() {
                   <span className="i-mail">{i.email}</span>
                   <span className="tag">{PROVIDER_LABEL[i.provider]}</span>
                   <span className="i-st">
-                    {i.status === 'active' ? `действует ещё ${termLeft(i.expiresAt)}` : i.status === 'used' ? `использовано ${dateTime(i.usedAt)}` : INVITE_STATUS[i.status]}
+                    {i.status === 'active'
+                      ? tr('settings.users.inviteActive', { term: termLeft(i.expiresAt) })
+                      : i.status === 'used'
+                        ? tr('settings.users.inviteUsedAt', { at: dateTime(i.usedAt) })
+                        : inviteStatus(i.status)}
                   </span>
                   {i.status === 'active' && (
-                    <button type="button" className="btn ghost danger-text" onClick={() => void revoke(i)} aria-label={`Отозвать приглашение ${i.email}`}>
-                      Отозвать
+                    <button type="button" className="btn ghost danger-text" onClick={() => void revoke(i)} aria-label={tr('settings.users.revokeLabel', { email: i.email })}>
+                      {tr('settings.users.revoke')}
                     </button>
                   )}
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="empty-note">Приглашений пока нет.</p>
+            <p className="empty-note">{tr('settings.users.invitesEmpty')}</p>
           )}
-          <h3 className="set-sub">Пользователи · {load.users.length}</h3>
+          <h3 className="set-sub">{tr('settings.users.listTitle', { count: load.users.length })}</h3>
           <ul className="ulist">
             {load.users.map(u => (
               <UserRow key={u.id} u={u} self={u.id === meId} onChange={nu => setLoad(l => (l.kind === 'ok' ? { ...l, users: l.users.map(x => (x.id === nu.id ? nu : x)) } : l))} />

@@ -3,6 +3,7 @@ import type { McpWizardState } from './McpWizard';
 import { McpSegment } from './McpSegment';
 import { MCP_MODE_LABELS, mcpStatusLabel, mcpStatusTone } from './mcpLabels';
 import { mcpErrorMessage, type McpTransport } from './mcpErrors';
+import { useT } from '../../i18n';
 
 export interface McpMachineOption {
   id: string;
@@ -82,14 +83,15 @@ export function McpServerForm(props: McpServerFormProps) {
 }
 
 function TransportStep({ state, onPatch, onNext }: Pick<McpServerFormProps, 'state' | 'onPatch' | 'onNext'>) {
+  const t = useT();
   return (
     <>
       <McpSegment
-        label="Транспорт"
+        label={t('mcp.form.transport')}
         value={state.transport === 'sse' ? 'http' : state.transport}
         options={[
-          { value: 'stdio', label: 'Команда (stdio)', description: 'npx, uvx, локальный процесс' },
-          { value: 'http', label: 'Удалённый HTTP', description: 'URL сервера' },
+          { value: 'stdio', label: t('mcp.list.server.stdio'), description: t('mcp.form.stdioDesc') },
+          { value: 'http', label: t('mcp.list.server.http'), description: t('mcp.form.httpDesc') },
         ]}
         onChange={transport =>
           onPatch({
@@ -99,29 +101,30 @@ function TransportStep({ state, onPatch, onNext }: Pick<McpServerFormProps, 'sta
         }
       />
       <button className="btn primary" onClick={onNext}>
-        Далее
+        {t('mcp.form.next')}
       </button>
     </>
   );
 }
 
 function ParametersStep({ state, onPatch, onBack, onNext }: Pick<McpServerFormProps, 'state' | 'onPatch' | 'onBack' | 'onNext'>) {
+  const t = useT();
   const canContinue = state.name.trim().length > 0 && (state.transport === 'stdio' ? state.command.trim().length > 0 : state.url.trim().length > 0);
 
   return (
     <>
       <label>
-        Имя
+        {t('mcp.form.name')}
         <input className="input" value={state.name} onChange={event => onPatch({ name: event.target.value })} />
       </label>
       {state.transport === 'stdio' ? <StdioParameters state={state} onPatch={onPatch} /> : <HttpParameters state={state} onPatch={onPatch} />}
-      <p className="mcp-field-hint">Не вводите ключи и пароли в обычные параметры. Для них используйте следующий шаг секретов.</p>
+      <p className="mcp-field-hint">{t('mcp.form.noKeys')}</p>
       <div className="mcp-validation-actions">
         <button className="btn" onClick={onBack}>
-          Назад
+          {t('mcp.form.back')}
         </button>
         <button className="btn primary" disabled={!canContinue} onClick={onNext}>
-          Далее
+          {t('mcp.form.next')}
         </button>
       </div>
     </>
@@ -129,86 +132,90 @@ function ParametersStep({ state, onPatch, onBack, onNext }: Pick<McpServerFormPr
 }
 
 function StdioParameters({ state, onPatch }: Pick<McpServerFormProps, 'state' | 'onPatch'>) {
+  const t = useT();
   return (
     <>
       <label>
-        Команда
+        {t('mcp.form.command')}
         <input className="input" value={state.command} onChange={event => onPatch({ command: event.target.value })} />
       </label>
       <label>
-        Аргументы, по одному в строке
+        {t('mcp.form.args')}
         <textarea className="input" value={state.argsText} onChange={event => onPatch({ argsText: event.target.value })} />
       </label>
       <label>
-        Переменные среды, по одной в строке ИМЯ=значение
+        {t('mcp.form.env')}
         <textarea className="input" value={state.envText} onChange={event => onPatch({ envText: event.target.value })} />
       </label>
-      <p className="mcp-field-hint">Чтобы связать переменную с секретом из следующего шага, укажите ИМЯ=@secret.</p>
+      <p className="mcp-field-hint">{t('mcp.form.envHint')}</p>
     </>
   );
 }
 
 function HttpParameters({ state, onPatch }: Pick<McpServerFormProps, 'state' | 'onPatch'>) {
+  const t = useT();
   return (
     <>
       <label>
         URL
         <input className="input" type="url" value={state.url} onChange={event => onPatch({ url: event.target.value })} />
       </label>
-      <p className="mcp-field-hint">Для секрета в URL используйте __AGENT_HUB_SECRET__; он будет подставлен из секрета на следующем шаге.</p>
+      <p className="mcp-field-hint">{t('mcp.form.urlHint')}</p>
       <label>
-        Заголовки, по одному в строке ИМЯ=значение
+        {t('mcp.form.headers')}
         <textarea className="input" value={state.headersText} onChange={event => onPatch({ headersText: event.target.value })} />
       </label>
-      <p className="mcp-field-hint">Чтобы связать заголовок с секретом из следующего шага, укажите ИМЯ=@secret.</p>
+      <p className="mcp-field-hint">{t('mcp.form.headersHint')}</p>
     </>
   );
 }
 
 function MachineSegment({ label, machines, value, onChange }: { label: string; machines: McpMachineOption[]; value: string; onChange: (value: string) => void }) {
+  const t = useT();
   const options = machines.map(machine => ({
     value: machine.id,
     label: machine.name,
-    description: machine.online ? 'В сети' : 'Не в сети',
+    description: machine.online ? t('mcp.list.import.online') : t('mcp.list.import.offline'),
     disabled: !machine.online,
   }));
   const hasSelectedMachine = machines.some(machine => machine.id === value);
 
   return (
     <>
-      {!value && machines.length > 0 && <p className="mcp-field-hint">Выберите машину для проверки среди вариантов ниже.</p>}
-      {machines.length === 0 && <p className="mcp-field-hint">Нет машин в выбранной области. Вернитесь назад и выберите машины.</p>}
-      {value && !hasSelectedMachine && <p className="mcp-field-hint">Машина выпала из области. Выберите другую.</p>}
+      {!value && machines.length > 0 && <p className="mcp-field-hint">{t('mcp.form.pickMachine')}</p>}
+      {machines.length === 0 && <p className="mcp-field-hint">{t('mcp.form.noMachines')}</p>}
+      {value && !hasSelectedMachine && <p className="mcp-field-hint">{t('mcp.form.machineGone')}</p>}
       <McpSegment label={label} value={value} options={options} onChange={onChange} />
     </>
   );
 }
 
 function SecretStep({ state, secretFields, onPatch, onSecretChange, onBack, onNext }: Pick<McpServerFormProps, 'state' | 'secretFields' | 'onPatch' | 'onSecretChange' | 'onBack' | 'onNext'>) {
+  const t = useT();
   const suggestedName = suggestedSecretName(state);
   const currentName = state.secretNameTouched ? state.secretName : suggestedName;
   const hasNamedFieldBinding = secretFields.some(field => field.key !== 'URL');
   return (
     <>
       <label>
-        Имя секрета (необязательно)
+        {t('mcp.form.secretName')}
         <input className="input" value={currentName} disabled={!hasNamedFieldBinding} onChange={event => onPatch({ secretName: event.target.value, secretNameTouched: true })} />
       </label>
-      <p className="mcp-field-hint">По умолчанию используется имя переменной или заголовка; его можно изменить.</p>
+      <p className="mcp-field-hint">{t('mcp.form.secretNameHint')}</p>
       {secretFields.map(field => (
         <label key={field.key}>
-          Значение секрета «{field.name}»
+          {t('mcp.form.secretValue', { name: field.name })}
           <input className="input" type="password" autoComplete="new-password" value={field.value} onChange={event => onSecretChange(field.key, event.target.value)} />
         </label>
       ))}
-      <p className="mcp-field-hint">Привязанные переменные и заголовки используют имя секрета. В URL подставляется __AGENT_HUB_SECRET__.</p>
-      <p className="mcp-field-hint">После сохранения значение секрета больше не показывается.</p>
+      <p className="mcp-field-hint">{t('mcp.form.secretBound')}</p>
+      <p className="mcp-field-hint">{t('mcp.form.secretOnce')}</p>
       <div className="mcp-validation-actions">
         <button className="btn" onClick={onBack}>
-          Назад
+          {t('mcp.form.back')}
         </button>
         <button className="btn primary" onClick={onNext}>
-          Далее
+          {t('mcp.form.next')}
         </button>
       </div>
     </>
@@ -221,6 +228,7 @@ function machinesInScope(state: McpWizardState, machines: McpMachineOption[]): M
 }
 
 function ScopeStep({ state, machines, busy, onPatch, onBack, onSaveDraft }: Pick<McpServerFormProps, 'state' | 'machines' | 'busy' | 'onPatch' | 'onBack' | 'onSaveDraft'>) {
+  const t = useT();
   const toggleMachine = (machineId: string) => {
     const selected = state.scopeMachineIds.includes(machineId);
     const machineIds = selected ? state.scopeMachineIds.filter(id => id !== machineId) : [...state.scopeMachineIds, machineId];
@@ -233,48 +241,48 @@ function ScopeStep({ state, machines, busy, onPatch, onBack, onSaveDraft }: Pick
   const modeOptions =
     state.transport === 'stdio'
       ? [
-          { value: 'machine-shared', label: MCP_MODE_LABELS['machine-shared'], description: 'Один процесс для машины' },
-          { value: 'per-session', label: MCP_MODE_LABELS['per-session'], description: 'Отдельный процесс для сессии' },
+          { value: 'machine-shared', label: MCP_MODE_LABELS['machine-shared'], description: t('mcp.list.editor.modeShared') },
+          { value: 'per-session', label: MCP_MODE_LABELS['per-session'], description: t('mcp.list.editor.modePerSession') },
         ]
       : [
-          { value: 'remote', label: MCP_MODE_LABELS.remote, description: 'Подключение к удалённому серверу' },
-          { value: 'machine-shared', label: MCP_MODE_LABELS['machine-shared'], description: 'Один процесс для машины' },
-          { value: 'per-session', label: MCP_MODE_LABELS['per-session'], description: 'Отдельный процесс для сессии' },
+          { value: 'remote', label: MCP_MODE_LABELS.remote, description: t('mcp.list.editor.modeRemote') },
+          { value: 'machine-shared', label: MCP_MODE_LABELS['machine-shared'], description: t('mcp.list.editor.modeShared') },
+          { value: 'per-session', label: MCP_MODE_LABELS['per-session'], description: t('mcp.list.editor.modePerSession') },
         ];
 
   return (
     <>
-      <McpSegment label="Режим" value={state.mode} options={modeOptions} onChange={mode => onPatch({ mode: mode as McpWizardState['mode'] })} />
+      <McpSegment label={t('mcp.form.mode')} value={state.mode} options={modeOptions} onChange={mode => onPatch({ mode: mode as McpWizardState['mode'] })} />
       <McpSegment
-        label="Область"
+        label={t('mcp.form.scope')}
         value={state.scope}
         options={[
-          { value: 'all', label: 'Все машины', description: 'Доступен на каждой машине' },
-          { value: 'machines', label: 'Выбранные машины', description: 'Только отмеченные машины' },
+          { value: 'all', label: t('mcp.list.editor.allMachines'), description: t('mcp.form.scopeAllDesc') },
+          { value: 'machines', label: t('mcp.form.scopeSelected'), description: t('mcp.form.scopeSelectedDesc') },
         ]}
         onChange={scope => onPatch({ scope: scope as McpWizardState['scope'], ...(scope === 'machines' && !state.scopeMachineIds.includes(state.machineId) ? { machineId: '' } : {}) })}
       />
       {state.scope === 'machines' && (
         <fieldset>
-          <legend>Разрешённые машины</legend>
+          <legend>{t('mcp.list.editor.allowed')}</legend>
           {machines.map(machine => (
             <label key={machine.id}>
               <input className="mcp-checkbox" type="checkbox" checked={state.scopeMachineIds.includes(machine.id)} onChange={() => toggleMachine(machine.id)} />
-              {machine.name} {!machine.online && <small>Не в сети</small>}
+              {machine.name} {!machine.online && <small>{t('mcp.list.editor.offline')}</small>}
             </label>
           ))}
         </fieldset>
       )}
-      <MachineSegment label="Машина для проверки" machines={checkMachines} value={state.machineId} onChange={machineId => onPatch({ machineId })} />
+      <MachineSegment label={t('mcp.form.checkMachine')} machines={checkMachines} value={state.machineId} onChange={machineId => onPatch({ machineId })} />
       <div className="mcp-validation-actions">
         <button className="btn" onClick={onBack}>
-          Назад
+          {t('mcp.form.back')}
         </button>
         <button className="btn primary" disabled={busy || !canCheckMachine || !hasScope} onClick={onSaveDraft}>
-          Сохранить черновик и проверить
+          {t('mcp.form.saveDraft')}
         </button>
       </div>
-      {!hasScope && <p className="mcp-field-hint">Отметьте хотя бы одну машину в области.</p>}
+      {!hasScope && <p className="mcp-field-hint">{t('mcp.form.noScope')}</p>}
     </>
   );
 }
@@ -304,28 +312,29 @@ function ValidationStep({
   onSaveUnchecked,
   onClose,
 }: Omit<McpServerFormProps, 'onNext' | 'onSaveDraft'>) {
+  const t = useT();
   const checkMachines = machinesInScope(state, machines);
   const canCheckMachine = checkMachines.some(machine => machine.id === state.machineId && machine.online);
 
   return (
     <>
-      <p>Проверка сервера на выбранной машине</p>
+      <p>{t('mcp.form.validationTitle')}</p>
       <ValidationTarget state={state} />
       {secretBindingError && missingSecretFields.length > 0 && (
         <NeedsSecretStep fields={missingSecretFields} message={secretBindingError} conflict={secretConflict} onChange={onSecretChange} onSave={onSaveSecret} />
       )}
-      <MachineSegment label="Машина" machines={checkMachines} value={state.machineId} onChange={machineId => onPatch({ machineId })} />
+      <MachineSegment label={t('mcp.form.machine')} machines={checkMachines} value={state.machineId} onChange={machineId => onPatch({ machineId })} />
       {draft?.validation?.ok && <ToolList draft={draft} />}
-      {draft?.state === 'needs_auth' && !persistedServerId && <p role="status">Сервер требует входа. Сохраните его, чтобы начать OAuth.</p>}
+      {draft?.state === 'needs_auth' && !persistedServerId && <p role="status">{t('mcp.form.needsAuthSave')}</p>}
       {draft?.validation?.error && draft.state !== 'needs_auth' && <DraftValidationError draft={draft} transport={state.transport} />}
       {draft?.state === 'needs-secret' && missingSecretFields.length > 0 && !secretBindingError && (
         <NeedsSecretStep fields={missingSecretFields} conflict={secretConflict} onChange={onSecretChange} onSave={onSaveSecret} />
       )}
       {draft?.state === 'needs-secret' && missingSecretFields.length === 0 && (
         <div className="mcp-note" role="status">
-          <p>Хаб сообщает, что серверу нужен секрет, но привязка не найдена в текущей конфигурации. Проверьте имена секретов или сохраните сервер заново.</p>
+          <p>{t('mcp.form.hubNoBinding')}</p>
           <button className="btn" disabled={busy || !canCheckMachine} onClick={onValidate}>
-            Проверить снова
+            {t('mcp.form.checkAgain')}
           </button>
         </div>
       )}
@@ -344,27 +353,27 @@ function ValidationStep({
       <div className="mcp-validation-footer">
         {!persistedServerId && (
           <button className="btn" disabled={busy} onClick={onBack}>
-            Назад
+            {t('mcp.form.back')}
           </button>
         )}
         <div className="mcp-validation-actions">
           {!persistedServerId && (
             <button className="btn" disabled={busy || !canCheckMachine || Boolean(secretBindingError)} onClick={onValidate}>
-              {validating ? 'Проверяю…' : 'Проверить'}
+              {validating ? t('mcp.form.checking') : t('mcp.form.check')}
             </button>
           )}
           {!persistedServerId && (
             <button className="btn primary" disabled={(!draft?.validation?.ok && draft?.state !== 'needs_auth') || busy} onClick={onConnect}>
-              {draft?.state === 'needs_auth' ? 'Сохранить и перейти ко входу' : 'Подключить'}
+              {draft?.state === 'needs_auth' ? t('mcp.form.saveAndLogin') : t('mcp.form.connect')}
             </button>
           )}
           {!persistedServerId && (
             <button className="btn ghost" disabled={busy || Boolean(secretBindingError)} onClick={onSaveUnchecked}>
-              Сохранить без проверки…
+              {t('mcp.form.saveUnchecked')}
             </button>
           )}
           <button className="btn" onClick={onClose}>
-            Закрыть
+            {t('mcp.form.close')}
           </button>
         </div>
       </div>
@@ -385,6 +394,7 @@ function suggestedSecretName(state: McpWizardState): string {
 }
 
 function ValidationTarget({ state }: { state: McpWizardState }) {
+  const t = useT();
   if (state.transport === 'stdio') {
     const args = state.argsText
       .split('\n')
@@ -393,7 +403,7 @@ function ValidationTarget({ state }: { state: McpWizardState }) {
 
     return (
       <div className="mcp-validation-target" role="note">
-        <strong>Команда для запуска на машине</strong>
+        <strong>{t('mcp.form.targetCommand')}</strong>
         <code>{maskStdioArguments(state.command, args)}</code>
       </div>
     );
@@ -401,7 +411,7 @@ function ValidationTarget({ state }: { state: McpWizardState }) {
 
   return (
     <div className="mcp-validation-target" role="note">
-      <strong>URL для подключения с машины</strong>
+      <strong>{t('mcp.form.targetUrl')}</strong>
       <code>{safeTargetUrl(state.url, Object.values(state.secretValues))}</code>
     </div>
   );
@@ -461,14 +471,15 @@ function safeTargetUrl(value: string, secretValues: string[]): string {
 }
 
 function ToolList({ draft }: { draft: McpRegistryDraftView }) {
+  const t = useT();
   const tools = draft.validation?.tools ?? [];
   return (
     <>
       <p className="mcp-validation-success" role="status">
-        <span className="pill mcp-status-pill ok">Проверка успешна</span> · {tools.length} инструментов
+        <span className="pill mcp-status-pill ok">{t('mcp.form.validationOk')}</span> · {t('mcp.form.toolsCount', { count: tools.length })}
       </p>
       <details className="mcp-tool-list">
-        <summary>Список инструментов</summary>
+        <summary>{t('mcp.form.toolsList')}</summary>
         <ul>
           {tools.map(tool => (
             <li key={tool.name}>
@@ -483,13 +494,14 @@ function ToolList({ draft }: { draft: McpRegistryDraftView }) {
 }
 
 function DraftValidationError({ draft, transport }: { draft: McpRegistryDraftView; transport: McpTransport }) {
+  const t = useT();
   const failure = mcpErrorMessage(draft.validation?.error ?? 'MCP validation failed', transport);
   return (
     <div className="mcp-error-message" role="alert">
       <p>{failure.message}</p>
       {failure.details && failure.details !== failure.message && (
         <details>
-          <summary>Подробности</summary>
+          <summary>{t('mcp.form.details')}</summary>
           <pre>{failure.details}</pre>
         </details>
       )}
@@ -510,19 +522,20 @@ function NeedsSecretStep({
   onChange: (key: string, value: string) => void;
   onSave: (key: string) => void;
 }) {
+  const t = useT();
   return (
     <>
       <p className="mcp-inline-field-error" role="alert">
-        {conflict || message || 'Нужен секрет для запуска сервера.'}
+        {conflict || message || t('mcp.form.needsSecret')}
       </p>
       {fields.map(field => (
         <div className="mcp-secret-input" key={field.key}>
           <label>
-            Значение секрета «{field.name}»
+            {t('mcp.form.secretValue', { name: field.name })}
             <input className="input" type="password" autoComplete="new-password" value={field.value} onChange={event => onChange(field.key, event.target.value)} />
           </label>
           <button className="btn" disabled={!field.value.trim() || Boolean(conflict)} onClick={() => onSave(field.key)}>
-            Сохранить секрет
+            {t('mcp.form.saveSecret')}
           </button>
         </div>
       ))}
@@ -549,6 +562,7 @@ function OAuthStep({
   onValidate: () => void;
   onConnect: () => void;
 }) {
+  const t = useT();
   const signedIn = status?.state === 'signed-in';
 
   return (
@@ -559,22 +573,22 @@ function OAuthStep({
       {status?.error && <small role="alert">{status.error}</small>}
       {!signedIn && (
         <button className="btn" disabled={!machineId || busy || status?.state === 'pending'} onClick={onStart}>
-          Войти
+          {t('mcp.list.oauth.signIn')}
         </button>
       )}
       {signedIn && validationState !== 'checked' && (
         <button className="btn" disabled={busy || !machineId} onClick={onValidate}>
-          Проверить после входа
+          {t('mcp.form.checkAfterLogin')}
         </button>
       )}
       {signedIn && validationState === 'checked' && (
         <button className="btn primary" disabled={busy || !machineId} onClick={onConnect}>
-          Подключить
+          {t('mcp.form.connect')}
         </button>
       )}
       {link && !busy && (
         <a className="btn" href={link} target="_blank" rel="noreferrer">
-          Открыть страницу входа
+          {t('mcp.list.oauth.openLogin')}
         </a>
       )}
     </section>

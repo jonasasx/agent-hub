@@ -9,6 +9,7 @@
 import { create } from 'zustand';
 import { VOICE_COUNTDOWN_MS, VOICE_MAX_DURATION_MS } from '../../api/types';
 import { ApiError, transcribe } from '../../api/client';
+import { fmt, t } from '../../i18n';
 import { useStore } from '../../store';
 import { appendDictation } from './append';
 import { micError, startRecording, type Recording } from './recorder';
@@ -36,10 +37,10 @@ interface State {
 
 export const useVoice = create<State>()(() => ({ active: null, note: {} }));
 
-export const EMPTY_TEXT = 'Речь не распознана';
-export const FAILED_TEXT = 'Не удалось распознать';
+// Notes hold the dictionary key: VoiceNote translates it when it renders, so a language switch applies at once.
+export const EMPTY_TEXT = 'chat.voice.empty';
 /** The recorder failed (MediaRecorder `error`): there is nothing to send or to retry. */
-export const INTERRUPTED_TEXT = 'Запись прервалась';
+export const INTERRUPTED_TEXT = 'chat.voice.interrupted';
 
 /** Injected in tests (fake microphone, fake hub). */
 export const voiceDeps = {
@@ -82,26 +83,26 @@ export function resetLabel(iso: unknown): string | null {
   if (typeof iso !== 'string') return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
-  return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}`;
+  return fmt.dayMonth(d);
 }
 
 /** Hub answer → the text of the bar (design.md D2, table «код ответа → текст в UI»). */
 export function voiceErrorText(err: unknown): string {
-  if (!(err instanceof ApiError)) return FAILED_TEXT;
+  if (!(err instanceof ApiError)) return t('chat.voice.failed');
   switch (err.code) {
     case 'voice_quota_exceeded': {
       const at = resetLabel(err.body?.resetAt);
-      return at ? `Закончилась квота ElevenLabs, обновится ${at}` : 'Закончилась квота ElevenLabs';
+      return at ? t('chat.voice.quotaReset', { at }) : t('chat.voice.quota');
     }
     case 'voice_busy':
-      return 'Идёт другое распознавание, повторите через несколько секунд';
+      return t('chat.voice.busy');
     case 'voice_key_rejected':
-      return 'ElevenLabs отклонил ключ хаба';
+      return t('chat.voice.keyRejected');
     case 'too_large':
-      return 'Запись слишком большая';
+      return t('chat.voice.tooLarge');
     default:
       // voice_timeout, voice_upstream_error, empty_audio, unsupported_audio, the client's timeout, a lost connection
-      return FAILED_TEXT;
+      return t('chat.voice.failed');
   }
 }
 

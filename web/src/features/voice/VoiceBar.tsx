@@ -6,6 +6,7 @@
  * Ошибки доступа к микрофону; Ошибки распознавания; Одна запись на окно.
  */
 import { useEffect, useReducer, useRef } from 'react';
+import { tText, useT } from '../../i18n';
 import { useStore } from '../../store';
 import { EMPTY_TEXT, cancelDictation, finishDictation, focusComposer, retryDictation, setVoiceNote, timerLabel, useVoice, voiceLevel, type Dictation } from './voice';
 
@@ -21,12 +22,13 @@ export function shownHere(a: Dictation | null, sessionId: string, paneId: string
 
 /** Hint under the composer: no microphone, «Речь не распознана». */
 export function VoiceNote({ sessionId }: { sessionId: string }) {
+  const t = useT();
   const note = useVoice(v => v.note[sessionId]);
   if (!note) return null;
   return (
     <p className={`voice-note${note === EMPTY_TEXT ? ' soft' : ''}`} role="alert">
-      <span>{note}</span>
-      <button type="button" className="btn ghost voice-note-close" aria-label="Скрыть подсказку" title="Скрыть" onClick={() => setVoiceNote(sessionId, undefined)}>
+      <span>{tText(note)}</span>
+      <button type="button" className="btn ghost voice-note-close" aria-label={t('chat.voice.hideNote')} title={t('chat.voice.hide')} onClick={() => setVoiceNote(sessionId, undefined)}>
         ×
       </button>
     </p>
@@ -65,15 +67,16 @@ function Wave() {
 }
 
 function Timer({ startedAt }: { startedAt: number }) {
+  const t = useT();
   const [, tick] = useReducer((x: number) => x + 1, 0);
   useEffect(() => {
-    const t = setInterval(tick, 250);
-    return () => clearInterval(t);
+    const timer = setInterval(tick, 250);
+    return () => clearInterval(timer);
   }, []);
   const { text, countdown } = timerLabel(Date.now() - startedAt);
   return (
-    <span className={`voice-timer mono${countdown ? ' countdown' : ''}`} title={countdown ? 'До конца записи' : 'Длительность записи'}>
-      {countdown && <span className="sr-only">Осталось </span>}
+    <span className={`voice-timer mono${countdown ? ' countdown' : ''}`} title={countdown ? t('chat.voice.untilEnd') : t('chat.voice.duration')}>
+      {countdown && <span className="sr-only">{t('chat.voice.left')} </span>}
       {text}
     </span>
   );
@@ -88,9 +91,10 @@ function typingElsewhere(bar: HTMLElement | null): boolean {
   return !!el.closest('.composer') || el.matches('input, textarea, select, [contenteditable=""], [contenteditable="true"]');
 }
 
-const PHASE_TEXT = { recording: 'Идёт запись', transcribing: 'Распознаю…' } as const;
+const PHASE_TEXT = { recording: 'chat.voice.recording', transcribing: 'chat.voice.transcribing' } as const;
 
 export function VoiceBar({ sessionId }: { sessionId: string }) {
+  const t = useT();
   const a = useVoice(v => v.active);
   const first = useRef<HTMLButtonElement>(null);
   const phase = a?.sessionId === sessionId ? a.phase : null;
@@ -129,13 +133,13 @@ export function VoiceBar({ sessionId }: { sessionId: string }) {
   };
 
   return (
-    <div className={`voice-bar ${phase}`} role="group" aria-label="Диктовка">
+    <div className={`voice-bar ${phase}`} role="group" aria-label={t('chat.voice.dictation')}>
       <span className="sr-only" role="status" aria-live="polite">
-        {phase === 'error' ? '' : PHASE_TEXT[phase]}
+        {phase === 'error' ? '' : t(PHASE_TEXT[phase])}
       </span>
       {phase === 'recording' && (
         <>
-          <button type="button" className="btn ghost voice-btn voice-cancel" aria-label="Отмена" title="Отмена (Esc)" onClick={cancel}>
+          <button type="button" className="btn ghost voice-btn voice-cancel" aria-label={t('chat.voice.cancel')} title={t('chat.voice.cancelEsc')} onClick={cancel}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
               <path d="M4 4l8 8M12 4l-8 8" />
             </svg>
@@ -143,7 +147,7 @@ export function VoiceBar({ sessionId }: { sessionId: string }) {
           <span className="voice-rec-dot" aria-hidden="true" />
           <Wave />
           <Timer startedAt={a.startedAt} />
-          <button ref={first} type="button" className="btn primary voice-btn voice-done" aria-label="Готово" title="Готово" onClick={() => void finishDictation()}>
+          <button ref={first} type="button" className="btn primary voice-btn voice-done" aria-label={t('chat.voice.done')} title={t('chat.voice.done')} onClick={() => void finishDictation()}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M3 8.5l3.2 3.2L13 4.8" />
             </svg>
@@ -155,23 +159,23 @@ export function VoiceBar({ sessionId }: { sessionId: string }) {
           {/* the live region above announces it; the visible copy is not read twice */}
           <span className="voice-status" aria-hidden="true">
             <span className="spinner" />
-            Распознаю…
+            {t('chat.voice.transcribing')}
           </span>
           <button ref={first} type="button" className="btn voice-text-btn" onClick={cancel}>
-            Отмена
+            {t('chat.voice.cancel')}
           </button>
         </>
       )}
       {phase === 'error' && (
         <>
           <span className="voice-status voice-error" role="alert">
-            {a.error}
+            {a.error ? tText(a.error) : null}
           </span>
           <button ref={first} type="button" className="btn primary voice-text-btn" onClick={retryDictation}>
-            Повторить
+            {t('chat.voice.retry')}
           </button>
           <button type="button" className="btn voice-text-btn" onClick={cancel}>
-            Отмена
+            {t('chat.voice.cancel')}
           </button>
         </>
       )}

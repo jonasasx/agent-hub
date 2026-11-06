@@ -39,21 +39,20 @@ export interface Decision {
 
 const W = { edit: 3, read: 1, cwd: 3, remote: 3 } as const;
 
-function plural(n: number, one: string, few: string, many: string): string {
-  const m10 = n % 10;
-  const m100 = n % 100;
-  if (m10 === 1 && m100 !== 11) return `${n} ${one}`;
-  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return `${n} ${few}`;
-  return `${n} ${many}`;
+/** The evidence line stored with an automatic decision; English (the stored text is not translated, a manual or inherited one has a key). */
+export const DELETED_EVIDENCE = 'project removed from the catalog';
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
 }
 
 export function evidenceText(e: Omit<Evidence, 'text'>, title: string): string {
   const parts: string[] = [];
-  if (e.edits) parts.push(plural(e.edits, 'правка', 'правки', 'правок'));
-  if (e.reads) parts.push(plural(e.reads, 'чтение', 'чтения', 'чтений'));
-  const inX = parts.length ? `${parts.join(' и ')} в ${title}` : '';
+  if (e.edits) parts.push(plural(e.edits, 'edit', 'edits'));
+  if (e.reads) parts.push(plural(e.reads, 'read', 'reads'));
+  const inX = parts.length ? `${parts.join(' and ')} in ${title}` : '';
   const extra: string[] = [];
-  if (e.cwd) extra.push(`каталог запуска в ${title}`);
+  if (e.cwd) extra.push(`launch folder in ${title}`);
   if (e.remote) extra.push(`git remote ${e.remote.split('/').slice(1).join('/')}`);
   return [inX, ...extra].filter(Boolean).join(', ');
 }

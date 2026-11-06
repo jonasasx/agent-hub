@@ -14,10 +14,11 @@ import {
   type SubscriptionView,
   type SubscriptionsResponse,
 } from '../../api/types';
+import { fmt, t } from '../../i18n';
 
 /** «Коннекторы claude.ai …» (Requirement: Ограничения сессии под подпиской). */
-export const CONNECTORS_HINT = 'Коннекторы claude.ai (Gmail, Drive и др.) под подпиской недоступны, локальные MCP работают';
-export const MACHINE_LOGIN = 'вход машины';
+export const connectorsHint = (): string => t('subscriptions.hint.connectors');
+export const machineLogin = (): string => t('subscriptions.machineLogin');
 
 /** The subscription's vendor; a registry of an older hub has no field — Claude. */
 export const subProvider = (s: Pick<SubscriptionView, 'provider'>): Provider => s.provider ?? 'claude';
@@ -79,28 +80,28 @@ export function protocolAtLeast(version: string | null | undefined, min: string 
 /** «03:40» for today, «28.10 03:40» for another day, in the browser time zone. */
 export function clock(iso: string, now: Date = new Date()): string {
   const d = new Date(iso);
-  const time = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const time = fmt.time(d);
   const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-  return sameDay ? time : `${d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} ${time}`;
+  return sameDay ? time : `${fmt.dayMonth(d)} ${time}`;
 }
 
 /** The limit of a subscription while it has not reset yet; null otherwise. */
 export function limitUntil(s: Pick<SubscriptionView, 'limitResetsAt'>, now: Date = new Date()): string | null {
   if (!s.limitResetsAt) return null;
-  const t = Date.parse(s.limitResetsAt);
-  return Number.isFinite(t) && t > now.getTime() ? `лимит до ${clock(s.limitResetsAt, now)}` : null;
+  const at = Date.parse(s.limitResetsAt);
+  return Number.isFinite(at) && at > now.getTime() ? t('subscriptions.limitUntil', { time: clock(s.limitResetsAt, now) }) : null;
 }
 
 /** An option of a subscription select: the name, a known limit or a rejected token in brackets. */
 export function optionLabel(s: SubscriptionView, now: Date = new Date()): string {
-  const marks = [limitUntil(s, now), s.tokenRejected ? 'токен отклонён' : null].filter(Boolean);
+  const marks = [limitUntil(s, now), s.tokenRejected ? t('subscriptions.tokenRejected') : null].filter(Boolean);
   return marks.length ? `${s.name} (${marks.join(', ')})` : s.name;
 }
 
 /** A short option for the «⋯» menu of the tab head (UI review M5): «Имя · до 13:06», «Имя · токен отклонён». */
 export function shortOptionLabel(s: SubscriptionView, now: Date = new Date()): string {
-  const limit = limitUntil(s, now);
-  const marks = [limit ? limit.replace('лимит ', '') : null, s.tokenRejected ? 'токен отклонён' : null].filter(Boolean);
+  const until = limitUntil(s, now) ? t('subscriptions.limitUntilShort', { time: clock(s.limitResetsAt!, now) }) : null;
+  const marks = [until, s.tokenRejected ? t('subscriptions.tokenRejected') : null].filter(Boolean);
   return [s.name, ...marks].join(' · ');
 }
 
@@ -110,9 +111,9 @@ export function shortOptionLabel(s: SubscriptionView, now: Date = new Date()): s
  */
 export function choiceWarning(s: SubscriptionView | undefined, now: Date = new Date()): { level: 'warn' | 'bad'; text: string } | null {
   if (!s) return null;
-  if (s.tokenRejected) return { level: 'bad', text: 'Токен отклонён — замените токен' };
-  const t = s.limitResetsAt ? Date.parse(s.limitResetsAt) : NaN;
-  if (Number.isFinite(t) && t > now.getTime()) return { level: 'warn', text: `Лимит до ${clock(s.limitResetsAt!, now)} — первый ход упрётся в лимит` };
+  if (s.tokenRejected) return { level: 'bad', text: t('subscriptions.warn.tokenRejected') };
+  const at = s.limitResetsAt ? Date.parse(s.limitResetsAt) : NaN;
+  if (Number.isFinite(at) && at > now.getTime()) return { level: 'warn', text: t('subscriptions.warn.limit', { time: clock(s.limitResetsAt!, now) }) };
   return null;
 }
 
@@ -129,7 +130,7 @@ export function formField(subs: SubscriptionsResponse | null, runner: RunnerView
   return 'select';
 }
 
-export const outdatedText = (runnerName: string) => `Агент на ${runnerName} устарел — сессия пойдёт под входом машины — обновите агента`;
+export const outdatedText = (runnerName: string) => t('subscriptions.outdated', { runner: runnerName });
 
 /** The subscription a form starts with: the hub's default (the last choice if active, else the first active one). */
 export function initialChoice(subs: SubscriptionsResponse | null, provider: Provider = 'claude'): string {
@@ -173,11 +174,11 @@ export function subName(subs: SubscriptionsResponse | null, id: string | null | 
 // ---------- the usage screen (Requirement: Учёт ходов и расход по подпискам) ----------
 
 export type UsagePeriod = 'today' | '7d' | '30d' | 'dates';
-export const USAGE_PERIODS: Array<{ value: UsagePeriod; label: string }> = [
-  { value: 'today', label: 'Сегодня' },
-  { value: '7d', label: '7 дней' },
-  { value: '30d', label: '30 дней' },
-  { value: 'dates', label: 'Даты' },
+export const usagePeriods = (): Array<{ value: UsagePeriod; label: string }> => [
+  { value: 'today', label: t('subscriptions.period.today') },
+  { value: '7d', label: t('subscriptions.period.7d') },
+  { value: '30d', label: t('subscriptions.period.30d') },
+  { value: 'dates', label: t('subscriptions.period.dates') },
 ];
 
 const DAY = 86_400_000;
@@ -202,16 +203,16 @@ export function usageRange(period: UsagePeriod, now: Date = new Date(), dates?: 
     return { from: new Date(now.getTime() - days * DAY).toISOString(), to: now.toISOString() };
   }
   const f = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dates?.from ?? '');
-  const t = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dates?.to ?? '');
-  if (!f || !t) return { error: 'Укажите обе даты' };
+  const e = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dates?.to ?? '');
+  if (!f || !e) return { error: t('subscriptions.range.bothDates') };
   const from = new Date(Number(f[1]), Number(f[2]) - 1, Number(f[3]));
-  const to = new Date(Number(t[1]), Number(t[2]) - 1, Number(t[3]) + 1);
-  if (from >= to) return { error: 'Начало периода позже конца' };
-  if (to.getTime() - from.getTime() > 366 * DAY) return { error: 'Период — не больше 366 дней' };
+  const to = new Date(Number(e[1]), Number(e[2]) - 1, Number(e[3]) + 1);
+  if (from >= to) return { error: t('subscriptions.range.startAfterEnd') };
+  if (to.getTime() - from.getTime() > 366 * DAY) return { error: t('subscriptions.range.tooLong') };
   return { from: from.toISOString(), to: to.toISOString() };
 }
 
-export const fmtInt = (n: number) => n.toLocaleString('ru-RU');
+export const fmtInt = (n: number) => fmt.number(n);
 
 /** Moves `id` by `delta` places among the active ids; null when it cannot move. */
 export function moved(ids: string[], id: string, delta: number): string[] | null {

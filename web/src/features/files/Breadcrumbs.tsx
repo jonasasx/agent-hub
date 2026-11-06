@@ -5,6 +5,7 @@
  * Requirement (file-explorer): Крошки и действия над файлом.
  */
 import { Fragment } from 'react';
+import { useT } from '../../i18n';
 import { isInside, parentOf, samePath, baseName } from './paths';
 import { revealInTree } from './fileActions';
 
@@ -34,12 +35,13 @@ interface Props {
 }
 
 export function Breadcrumbs({ runnerId, machineName, path, home, sessionId }: Props) {
+  const t = useT();
   const crumbs = crumbsOf(path, home);
   const start = crumbs.length > 4 ? crumbs.length - 3 : 0;
   const go = (to: string) => revealInTree(runnerId, to, sessionId, true);
   const homePath = home ?? parentOf(crumbs[0]?.path ?? path) ?? path;
   return (
-    <nav className="fx-crumbs" aria-label="Путь к файлу">
+    <nav className="fx-crumbs" aria-label={t('files.crumbs.label')}>
       <button type="button" onClick={() => go(homePath)} title={home ?? machineName}>
         {machineName}
       </button>

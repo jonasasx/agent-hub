@@ -1,4 +1,5 @@
 /** Update feed on the hub (design D15). Requirement: Автообновление. */
+import { dt } from './i18n.js';
 
 export const UPDATE_FIRST_CHECK_MS = 30_000;
 export const UPDATE_INTERVAL_MS = 6 * 60 * 60_000;
@@ -19,21 +20,21 @@ export function updateRequestHeaders(cookie: string | null, userAgent: string): 
 export function manualCheckMessage(r: { kind: 'latest'; version: string } | { kind: 'available'; version: string } | { kind: 'error'; message: string }): string {
   switch (r.kind) {
     case 'latest':
-      return `Установлена последняя версия ${r.version}`;
+      return dt('desktop.updates.latest', { version: r.version });
     case 'available':
-      return `Найдена версия ${r.version}, загружается. После загрузки в меню трея появится «Перезапустить и обновить».`;
+      return dt('desktop.updates.available', { version: r.version });
     case 'error':
-      return `Не удалось проверить обновления: ${r.message}`;
+      return dt('desktop.updates.failed', { message: r.message });
   }
 }
 
 /** Short, user-facing text of an updater error (401 means the session is gone). */
 export function updateErrorText(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
-  if (/\b401\b/.test(msg)) return 'нужен вход в хаб';
-  if (/\b404\b/.test(msg)) return 'лента обновлений на хабе не настроена';
-  if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION/i.test(msg)) return 'нет связи с хабом';
-  return msg.split('\n')[0]?.slice(0, 200) ?? 'неизвестная ошибка';
+  if (/\b401\b/.test(msg)) return dt('desktop.updates.errSignIn');
+  if (/\b404\b/.test(msg)) return dt('desktop.updates.errNoFeed');
+  if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION/i.test(msg)) return dt('desktop.updates.errOffline');
+  return msg.split('\n')[0]?.slice(0, 200) ?? dt('desktop.updates.errUnknown');
 }
 
 export type UpdateCheckResult = { kind: 'latest'; version: string } | { kind: 'available'; version: string } | { kind: 'error'; message: string } | { kind: 'skipped' };

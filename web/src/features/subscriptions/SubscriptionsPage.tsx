@@ -15,13 +15,14 @@ import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent,
 import { PROVIDER_LABELS, subscriptionTokenSchema, type Provider, type SubscriptionUsageResponse, type SubscriptionView } from '../../api/types';
 import { CodexLoginFlow } from '../machines/ProviderLogin';
 import { useStore } from '../../store';
+import { currentLocale, fmt, t as tNow, useT } from '../../i18n';
 import { useMenu, useMenuPlacement } from '../ui/a11y';
 import { addSubscription, loadSubscriptions, loadUsage, patchSubscription, reorder, replaceToken } from './actions';
-import { REGISTRY_PROVIDERS, USAGE_PERIODS, activeSubs, fmtInt, fullOrder, limitUntil, localDate, moved, movedBefore, retiredSubs, tokenMask, usageRange, type UsagePeriod } from './model';
+import { REGISTRY_PROVIDERS, activeSubs, fmtInt, fullOrder, limitUntil, localDate, moved, movedBefore, retiredSubs, tokenMask, usagePeriods, usageRange, type UsagePeriod } from './model';
 import { useUnsavedInput } from '../update/unsaved';
 
-const TOKEN_FORMAT = 'Токен не похож на claude setup-token: 20–4096 символов без пробелов';
-export const DISABLED_TEXT = 'Хранение токенов не настроено: задайте SUBSCRIPTION_TOKEN_KEY';
+const tokenFormat = (): string => tNow('subscriptions.error.badToken');
+export const disabledText = (): string => tNow('subscriptions.error.disabled');
 
 /** The token as typed in an uncontrolled input; the value never goes to React state or the store. */
 function peekToken(ref: RefObject<HTMLInputElement | null>): string {
@@ -83,6 +84,7 @@ function rovingKey<T>(e: KeyboardEvent<HTMLElement>, values: readonly T[], curre
  * store at once — the next visit opens no form.
  */
 export function SubscriptionsPage() {
+  const t = useT();
   const [tokenFor] = useState(() => useStore.getState().settingsTokenFor ?? undefined);
   useEffect(() => {
     useStore.setState({ settingsTokenFor: null });
@@ -91,9 +93,9 @@ export function SubscriptionsPage() {
   return (
     <section className="subs-page" aria-labelledby="set-subscriptions">
       <div className="set-head">
-        <h2 id="set-subscriptions">Подписки</h2>
+        <h2 id="set-subscriptions">{t('subscriptions.page.title')}</h2>
       </div>
-      <p className="hint">Сессии хаба идут под выбранной подпиской — Claude или Codex. Учётные данные хранятся в хабе зашифрованными, в браузер не возвращаются.</p>
+      <p className="hint">{t('subscriptions.page.intro')}</p>
       <Registry tokenFor={tokenFor} />
     </section>
   );
@@ -104,6 +106,7 @@ export function SubscriptionsPage() {
  * 10.x: no endless spinner). null — loaded.
  */
 function SubsPending() {
+  const t = useT();
   const subs = useStore(s => s.subs);
   const failed = useStore(s => s.subsError);
   const [busy, setBusy] = useState(false);
@@ -111,12 +114,12 @@ function SubsPending() {
   if (!failed)
     return (
       <p className="hint" role="status">
-        <span className="spinner" aria-hidden="true" /> Загрузка…
+        <span className="spinner" aria-hidden="true" /> {t('subscriptions.page.loading')}
       </p>
     );
   return (
     <div className="err-box" role="alert">
-      Не удалось загрузить подписки — проверьте VPN
+      {t('subscriptions.page.loadFailed')}
       <button
         type="button"
         className="btn"
@@ -126,7 +129,7 @@ function SubsPending() {
           void loadSubscriptions().finally(() => setBusy(false));
         }}
       >
-        {busy ? 'Повторяем…' : 'Повторить'}
+        {busy ? t('subscriptions.page.retrying') : t('subscriptions.page.retry')}
       </button>
     </div>
   );
@@ -134,6 +137,7 @@ function SubsPending() {
 
 /** «Настройки → Расход». */
 export function UsagePage() {
+  const t = useT();
   // the names and the «выведена» marks come from the list: ask again if the start of the app did not get it
   useEffect(() => {
     if (!useStore.getState().subs) void loadSubscriptions();
@@ -141,7 +145,7 @@ export function UsagePage() {
   return (
     <section className="subs-page" aria-labelledby="set-usage">
       <div className="set-head">
-        <h2 id="set-usage">Расход</h2>
+        <h2 id="set-usage">{t('subscriptions.page.usageTitle')}</h2>
       </div>
       <SubsPending />
       <Usage />
@@ -150,6 +154,7 @@ export function UsagePage() {
 }
 
 function Registry({ tokenFor }: { tokenFor?: string }) {
+  const t = useT();
   const subs = useStore(s => s.subs);
   if (!subs) return <SubsPending />;
   return (
@@ -157,7 +162,7 @@ function Registry({ tokenFor }: { tokenFor?: string }) {
       {!subs.enabled && (
         <div className="banner warn subs-banner" role="alert">
           <span className="b-text">
-            <b>{DISABLED_TEXT}</b> — добавление и замена токенов недоступны, сессии идут под входом машины.
+            <b>{disabledText()}</b> {t('subscriptions.page.disabledRest')}
           </span>
         </div>
       )}
@@ -170,6 +175,7 @@ function Registry({ tokenFor }: { tokenFor?: string }) {
 
 /** The registry of one provider (the positions are shared: the order of a block is put back into the full list). */
 function ProviderRegistry({ provider, tokenFor }: { provider: Provider; tokenFor?: string }) {
+  const t = useT();
   const subs = useStore(s => s.subs);
   const [err, setErr] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
@@ -190,16 +196,16 @@ function ProviderRegistry({ provider, tokenFor }: { provider: Provider; tokenFor
       <h3 className="subs-h subs-provider-h">{label}</h3>
       <section aria-labelledby={`subs-active-h-${provider}`} className="subs-sec">
         <h3 id={`subs-active-h-${provider}`} className="subs-h">
-          Активные
-          {active.length > 0 && <span className="hint"> · порядок — для автопереключения и подписки по умолчанию</span>}
+          {t('subscriptions.page.active')}
+          {active.length > 0 && <span className="hint"> · {t('subscriptions.page.activeOrderHint')}</span>}
         </h3>
         {active.length === 0 ? (
-          <p className="hint">{provider === 'claude' ? 'Подписок нет — сессии идут под входом машины.' : `Подписок ${label} нет — войдите в ChatGPT ниже.`}</p>
+          <p className="hint">{provider === 'claude' ? t('subscriptions.page.noneClaude') : t('subscriptions.page.noneOther', { provider: label })}</p>
         ) : (
           <>
             {/* M4: one column header instead of the label in every row (the phone keeps the label in the row) */}
             <div className="subs-cols" aria-hidden="true">
-              <span className="subs-col-auto">Автопереключение</span>
+              <span className="subs-col-auto">{t('subscriptions.page.autoSwitch')}</span>
               <span className="subs-col-rest" />
             </div>
             <ol className="subs-list" onDragOver={e => dragId && e.preventDefault()}>
@@ -260,7 +266,7 @@ function ProviderRegistry({ provider, tokenFor }: { provider: Provider; tokenFor
       {retired.length > 0 && (
         <section aria-labelledby={`subs-retired-h-${provider}`} className="subs-sec">
           <h3 id={`subs-retired-h-${provider}`} className="subs-h">
-            Выведенные <span className="hint">· в формах не предлагаются, ходы остаются в расходе</span>
+            {t('subscriptions.page.retired')} <span className="hint">· {t('subscriptions.page.retiredHint')}</span>
           </h3>
           <ul className="subs-list">
             {retired.map(s => (
@@ -281,7 +287,7 @@ function ProviderRegistry({ provider, tokenFor }: { provider: Provider; tokenFor
                       })
                     }
                   >
-                    Вернуть
+                    {t('subscriptions.page.restore')}
                   </button>
                 </div>
               </li>
@@ -320,6 +326,7 @@ function ActiveRow({
   useMenu(menu, box, () => setMenu(false));
   const place = useMenuPlacement(menu, moreBtn, menuRef);
   const id = useId();
+  const t = useT();
   const limit = limitUntil(s);
   const codex = s.provider === 'codex';
   return (
@@ -327,23 +334,23 @@ function ActiveRow({
       <div className="subs-main">
         {/* the grip and the name never wrap apart (6.6 re-review, phone) */}
         <span className="subs-id">
-          <span className="subs-grip" aria-hidden="true" title="Перетащите, чтобы поменять порядок">
+          <span className="subs-grip" aria-hidden="true" title={t('subscriptions.row.dragTitle')}>
             ⋮⋮
           </span>
           <span className="subs-name" title={s.name}>
             {s.name}
           </span>
         </span>
-        <span className="subs-meta mono" title={`${codex ? 'Вход выполнен' : 'Токен заменён'} ${new Date(s.tokenUpdatedAt).toLocaleString('ru-RU')}`}>
+        <span className="subs-meta mono" title={`${codex ? t('subscriptions.row.loginDone') : t('subscriptions.row.tokenReplaced')} ${fmt.dateTime(new Date(s.tokenUpdatedAt))}`}>
           {tokenMask(s.tokenHint)}
         </span>
-        {isDefault && <span className="pill subs-tag">по умолчанию</span>}
+        {isDefault && <span className="pill subs-tag">{t('subscriptions.row.default')}</span>}
         {limit && <span className="pill subs-tag warn">{limit}</span>}
-        {s.tokenRejected && <span className="pill subs-tag bad">{codex ? 'вход отклонён' : 'токен отклонён'}</span>}
+        {s.tokenRejected && <span className="pill subs-tag bad">{codex ? t('subscriptions.row.loginRejected') : t('subscriptions.tokenRejected')}</span>}
         {/* H2: a rejected token is fixed from the row itself, not only from «⋯» */}
         {s.tokenRejected && enabled && edit !== 'token' && (
           <button type="button" className="btn subs-fix" onClick={() => setEdit('token')}>
-            {codex ? 'Войти заново' : 'Заменить токен'}
+            {codex ? t('subscriptions.row.relogin') : t('subscriptions.row.replaceToken')}
           </button>
         )}
       </div>
@@ -351,7 +358,7 @@ function ActiveRow({
         <label className="check subs-auto">
           <input
             type="checkbox"
-            aria-label={`${s.name}: автопереключение`}
+            aria-label={t('subscriptions.row.autoAria', { name: s.name })}
             checked={s.autoSwitch}
             onChange={e =>
               void patchSubscription(s.id, { autoSwitch: e.target.checked }).then(r => {
@@ -359,20 +366,29 @@ function ActiveRow({
               })
             }
           />
-          <span className="subs-auto-txt">Автопереключение</span>
+          <span className="subs-auto-txt">{t('subscriptions.page.autoSwitch')}</span>
         </label>
-        <button type="button" className="icon-btn" aria-label={`${s.name}: выше`} title="Выше" disabled={first} onClick={() => onMove(-1)}>
+        <button type="button" className="icon-btn" aria-label={t('subscriptions.row.upAria', { name: s.name })} title={t('subscriptions.row.up')} disabled={first} onClick={() => onMove(-1)}>
           ↑
         </button>
-        <button type="button" className="icon-btn" aria-label={`${s.name}: ниже`} title="Ниже" disabled={last} onClick={() => onMove(1)}>
+        <button type="button" className="icon-btn" aria-label={t('subscriptions.row.downAria', { name: s.name })} title={t('subscriptions.row.down')} disabled={last} onClick={() => onMove(1)}>
           ↓
         </button>
         <div className="subs-more" ref={box}>
-          <button type="button" ref={moreBtn} className="icon-btn" aria-haspopup="menu" aria-expanded={menu} aria-label={`${s.name}: действия`} title="Действия" onClick={() => setMenu(!menu)}>
+          <button
+            type="button"
+            ref={moreBtn}
+            className="icon-btn"
+            aria-haspopup="menu"
+            aria-expanded={menu}
+            aria-label={t('subscriptions.row.actionsAria', { name: s.name })}
+            title={t('subscriptions.row.actions')}
+            onClick={() => setMenu(!menu)}
+          >
             ⋯
           </button>
           {menu && (
-            <div ref={menuRef} className={`menu${place === 'up' ? ' up' : ''}`} role="menu" aria-label={`Действия: ${s.name}`}>
+            <div ref={menuRef} className={`menu${place === 'up' ? ' up' : ''}`} role="menu" aria-label={t('subscriptions.row.actionsMenu', { name: s.name })}>
               <button
                 type="button"
                 role="menuitem"
@@ -381,19 +397,19 @@ function ActiveRow({
                   setEdit('rename');
                 }}
               >
-                Переименовать
+                {t('subscriptions.row.rename')}
               </button>
               <button
                 type="button"
                 role="menuitem"
                 disabled={!enabled}
-                title={enabled ? undefined : DISABLED_TEXT}
+                title={enabled ? undefined : disabledText()}
                 onClick={() => {
                   setMenu(false);
                   setEdit('token');
                 }}
               >
-                {codex ? 'Войти заново' : 'Заменить токен'}
+                {codex ? t('subscriptions.row.relogin') : t('subscriptions.row.replaceToken')}
               </button>
               <button
                 type="button"
@@ -404,7 +420,7 @@ function ActiveRow({
                   void patchSubscription(s.id, { retired: true }).then(r => onError(r.ok ? null : r.message));
                 }}
               >
-                Вывести
+                {t('subscriptions.row.retire')}
               </button>
             </div>
           )}
@@ -417,6 +433,7 @@ function ActiveRow({
 }
 
 function RenameForm({ id, s, onDone }: { id: string; s: SubscriptionView; onDone: () => void }) {
+  const t = useT();
   const [name, setName] = useState(s.name);
   useUnsavedInput(name !== s.name);
   const [err, setErr] = useState<string | null>(null);
@@ -425,7 +442,7 @@ function RenameForm({ id, s, onDone }: { id: string; s: SubscriptionView; onDone
     e.preventDefault();
     e.stopPropagation();
     const n = name.trim();
-    if (!n || n.length > 60) return setErr('Имя — от 1 до 60 символов');
+    if (!n || n.length > 60) return setErr(t('subscriptions.row.nameRange'));
     if (n === s.name) return onDone();
     setBusy(true);
     const r = await patchSubscription(s.id, { name: n });
@@ -435,7 +452,7 @@ function RenameForm({ id, s, onDone }: { id: string; s: SubscriptionView; onDone
   };
   return (
     <form className="subs-edit" onSubmit={e => void submit(e)}>
-      <label htmlFor={`${id}-rn`}>Новое имя</label>
+      <label htmlFor={`${id}-rn`}>{t('subscriptions.rename.newName')}</label>
       <div className="subs-edit-row">
         <input
           id={`${id}-rn`}
@@ -448,10 +465,10 @@ function RenameForm({ id, s, onDone }: { id: string; s: SubscriptionView; onDone
           aria-describedby={err ? `${id}-rn-err` : undefined}
         />
         <button type="submit" className="btn primary" disabled={busy}>
-          Сохранить
+          {t('subscriptions.page.save')}
         </button>
         <button type="button" className="btn ghost" onClick={onDone}>
-          Отмена
+          {t('subscriptions.page.cancel')}
         </button>
       </div>
       {err && (
@@ -464,6 +481,7 @@ function RenameForm({ id, s, onDone }: { id: string; s: SubscriptionView; onDone
 }
 
 function TokenForm({ id, s, onDone }: { id: string; s: SubscriptionView; onDone: () => void }) {
+  const t = useT();
   const ref = useRef<HTMLInputElement>(null);
   // client-versions D4: an open token form (the token is an uncontrolled input) blocks a silent reload
   useUnsavedInput(true);
@@ -478,7 +496,7 @@ function TokenForm({ id, s, onDone }: { id: string; s: SubscriptionView; onDone:
     e.stopPropagation();
     const token = peekToken(ref);
     // H1: a bad token stays in the field to be fixed; it is cleared only when the request leaves
-    if (!subscriptionTokenSchema.safeParse(token).success) return setErr(TOKEN_FORMAT);
+    if (!subscriptionTokenSchema.safeParse(token).success) return setErr(tokenFormat());
     clearToken(ref);
     setBusy(true);
     const r = await replaceToken(s.id, token);
@@ -488,14 +506,14 @@ function TokenForm({ id, s, onDone }: { id: string; s: SubscriptionView; onDone:
   };
   return (
     <form className="subs-edit" onSubmit={e => void submit(e)} autoComplete="off">
-      <label htmlFor={`${id}-tk`}>Новый токен «{s.name}» (claude setup-token)</label>
+      <label htmlFor={`${id}-tk`}>{t('subscriptions.token.new', { name: s.name })}</label>
       <div className="subs-edit-row">
         <TokenInput id={`${id}-tk`} inputRef={ref} invalid={!!err} describedBy={err ? `${id}-tk-err` : undefined} />
         <button type="submit" className="btn primary" disabled={busy}>
-          Заменить
+          {t('subscriptions.token.replace')}
         </button>
         <button type="button" className="btn ghost" onClick={onDone}>
-          Отмена
+          {t('subscriptions.page.cancel')}
         </button>
       </div>
       {err && (
@@ -509,14 +527,15 @@ function TokenForm({ id, s, onDone }: { id: string; s: SubscriptionView; onDone:
 
 /** «Войти заново»: a new ChatGPT sign-in replaces the credential of the subscription. */
 function CodexReloginForm({ s, onDone }: { s: SubscriptionView; onDone: () => void }) {
+  const t = useT();
   useUnsavedInput(true);
   return (
     <div className="subs-edit">
-      <span>Новый вход в ChatGPT для «{s.name}»</span>
-      <CodexLoginFlow subscriptionId={s.id} label="Войти заново" onEnd={ok => ok && onDone()} />
+      <span>{t('subscriptions.codex.relogin', { name: s.name })}</span>
+      <CodexLoginFlow subscriptionId={s.id} label={t('subscriptions.row.relogin')} onEnd={ok => ok && onDone()} />
       <div className="subs-edit-row">
         <button type="button" className="btn ghost" onClick={onDone}>
-          Закрыть
+          {t('subscriptions.page.close')}
         </button>
       </div>
     </div>
@@ -525,6 +544,7 @@ function CodexReloginForm({ s, onDone }: { s: SubscriptionView; onDone: () => vo
 
 /** A new Codex subscription: the name, then the ChatGPT sign-in on a machine; the hub adds it when the sign-in ends. */
 function CodexAddForm({ enabled, names }: { enabled: boolean; names: string[] }) {
+  const t = useT();
   const id = useId();
   const [name, setName] = useState('');
   useUnsavedInput(name.trim() !== '');
@@ -534,10 +554,10 @@ function CodexAddForm({ enabled, names }: { enabled: boolean; names: string[] })
   return (
     <section className="subs-add" aria-labelledby={`${id}-h`}>
       <h3 id={`${id}-h`} className="subs-h">
-        Войти в ChatGPT (новая подписка Codex)
+        {t('subscriptions.codex.addTitle')}
       </h3>
       <div className="field">
-        <label htmlFor={`${id}-n`}>Название</label>
+        <label htmlFor={`${id}-n`}>{t('subscriptions.codex.name')}</label>
         <input
           id={`${id}-n`}
           ref={nameRef}
@@ -545,7 +565,7 @@ function CodexAddForm({ enabled, names }: { enabled: boolean; names: string[] })
           value={name}
           maxLength={60}
           disabled={!enabled}
-          placeholder="например, ChatGPT Pro"
+          placeholder={t('subscriptions.codex.namePlaceholder')}
           onChange={e => {
             setName(e.target.value);
             setErr(undefined);
@@ -563,7 +583,7 @@ function CodexAddForm({ enabled, names }: { enabled: boolean; names: string[] })
       {enabled && (
         <CodexLoginFlow
           name={name}
-          label="Войти в ChatGPT"
+          label={t('subscriptions.codex.signIn')}
           onStart={() => {
             const e = nameError(name, names);
             setErr(e);
@@ -572,7 +592,7 @@ function CodexAddForm({ enabled, names }: { enabled: boolean; names: string[] })
           }}
           onEnd={ok => {
             if (!ok) return;
-            setDone(`Подписка «${name.trim()}» добавлена`);
+            setDone(t('subscriptions.add.added', { name: name.trim() }));
             setName('');
           }}
         />
@@ -589,13 +609,14 @@ function CodexAddForm({ enabled, names }: { enabled: boolean; names: string[] })
 /** The name check of the add form, before the token is read (H1): empty, too long, taken by an active one (any case). */
 export function nameError(name: string, taken: string[]): string | undefined {
   const n = name.trim();
-  if (!n || n.length > 60) return 'Имя — от 1 до 60 символов';
-  const low = n.toLocaleLowerCase('ru-RU');
-  if (taken.some(t => t.toLocaleLowerCase('ru-RU') === low)) return 'Подписка с таким именем уже есть';
+  if (!n || n.length > 60) return tNow('subscriptions.row.nameRange');
+  const low = n.toLocaleLowerCase(currentLocale());
+  if (taken.some(x => x.toLocaleLowerCase(currentLocale()) === low)) return tNow('subscriptions.error.nameTaken');
   return undefined;
 }
 
 function AddForm({ enabled, names, autoFocusName }: { enabled: boolean; names: string[]; autoFocusName: boolean }) {
+  const t = useT();
   const id = useId();
   const [name, setName] = useState('');
   const [auto, setAuto] = useState(false);
@@ -625,7 +646,7 @@ function AddForm({ enabled, names, autoFocusName }: { enabled: boolean; names: s
     }
     const token = peekToken(tokenRef);
     if (!subscriptionTokenSchema.safeParse(token).success) {
-      setErrors({ token: token ? TOKEN_FORMAT : 'Вставьте токен claude setup-token' });
+      setErrors({ token: token ? tokenFormat() : t('subscriptions.add.pasteToken') });
       tokenRef.current?.focus();
       return;
     }
@@ -639,17 +660,17 @@ function AddForm({ enabled, names, autoFocusName }: { enabled: boolean; names: s
     if (r.ok) {
       setName('');
       setAuto(false);
-      setDone(`Подписка «${n}» добавлена`);
+      setDone(t('subscriptions.add.added', { name: n }));
     } else setErrors({ [r.field ?? 'form']: r.message });
   };
   return (
     <form className="subs-add" aria-labelledby={`${id}-h`} onSubmit={e => void submit(e)} onInput={() => setTokenTyped(peekToken(tokenRef) !== '')} autoComplete="off">
       <h3 id={`${id}-h`} className="subs-h">
-        Добавить подписку
+        {t('subscriptions.add.title')}
       </h3>
       <div className="row2">
         <div className="field">
-          <label htmlFor={`${id}-n`}>Имя</label>
+          <label htmlFor={`${id}-n`}>{t('subscriptions.add.name')}</label>
           <input
             id={`${id}-n`}
             ref={nameRef}
@@ -657,7 +678,7 @@ function AddForm({ enabled, names, autoFocusName }: { enabled: boolean; names: s
             value={name}
             maxLength={60}
             disabled={!enabled}
-            placeholder="например, Team рабочая"
+            placeholder={t('subscriptions.add.namePlaceholder')}
             onChange={e => {
               setName(e.target.value);
               if (errors.name) setErrors(x => ({ ...x, name: undefined }));
@@ -672,7 +693,7 @@ function AddForm({ enabled, names, autoFocusName }: { enabled: boolean; names: s
           )}
         </div>
         <div className="field">
-          <label htmlFor={`${id}-t`}>Токен</label>
+          <label htmlFor={`${id}-t`}>{t('subscriptions.add.token')}</label>
           {enabled ? (
             <TokenInput id={`${id}-t`} inputRef={tokenRef} invalid={!!errors.token} describedBy={errors.token ? `${id}-t-err` : `${id}-t-hint`} />
           ) : (
@@ -684,17 +705,17 @@ function AddForm({ enabled, names, autoFocusName }: { enabled: boolean; names: s
             </span>
           ) : (
             <span className="hint" id={`${id}-t-hint`}>
-              Выпустите командой claude setup-token; копию сохраните в Vaultwarden
+              {t('subscriptions.add.tokenHint')}
             </span>
           )}
         </div>
       </div>
       <div className="subs-add-foot">
         <label className="check">
-          <input type="checkbox" checked={auto} disabled={!enabled} onChange={e => setAuto(e.target.checked)} /> Автопереключение при лимите
+          <input type="checkbox" checked={auto} disabled={!enabled} onChange={e => setAuto(e.target.checked)} /> {t('subscriptions.add.autoSwitch')}
         </label>
         <button type="submit" className="btn primary" disabled={!enabled || busy}>
-          {busy ? 'Добавляем…' : 'Добавить'}
+          {busy ? t('subscriptions.add.adding') : t('subscriptions.add.add')}
         </button>
       </div>
       {errors.form && (
@@ -713,27 +734,30 @@ function AddForm({ enabled, names, autoFocusName }: { enabled: boolean; names: s
 
 type UsageRow = SubscriptionUsageResponse['rows'][number];
 type UsageKey = keyof Omit<UsageRow, 'subscriptionId' | 'name'>;
-const COLS: Array<{ key: UsageKey; label: string }> = [
-  { key: 'turns', label: 'Ходы' },
-  { key: 'inputTokens', label: 'Ввод' },
-  { key: 'outputTokens', label: 'Вывод' },
-  { key: 'cacheReadTokens', label: 'Чтение кэша' },
-  { key: 'cacheCreationTokens', label: 'Запись кэша' },
-  { key: 'limitHits', label: 'Лимиты' },
+const usageCols = (): Array<{ key: UsageKey; label: string }> => [
+  { key: 'turns', label: tNow('subscriptions.usage.col.turns') },
+  { key: 'inputTokens', label: tNow('subscriptions.usage.col.input') },
+  { key: 'outputTokens', label: tNow('subscriptions.usage.col.output') },
+  { key: 'cacheReadTokens', label: tNow('subscriptions.usage.col.cacheRead') },
+  { key: 'cacheCreationTokens', label: tNow('subscriptions.usage.col.cacheWrite') },
+  { key: 'limitHits', label: tNow('subscriptions.usage.col.limits') },
 ];
 
 /** «21.10.2026 — 27.10.2026»: the interval the table counts, `to` exclusive (M8). */
 export function rangeText(from: string, to: string): string | null {
   const f = Date.parse(from);
-  const t = Date.parse(to);
-  if (!Number.isFinite(f) || !Number.isFinite(t)) return null;
-  const d = (ms: number) => new Date(ms).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const end = Date.parse(to);
+  if (!Number.isFinite(f) || !Number.isFinite(end)) return null;
+  const d = (ms: number) => fmt.date(ms, { day: '2-digit', month: '2-digit', year: 'numeric' });
   const a = d(f);
-  const b = d(Math.max(f, t - 1));
+  const b = d(Math.max(f, end - 1));
   return a === b ? a : `${a} — ${b}`;
 }
 
 function Usage() {
+  const t = useT();
+  const COLS = usageCols();
+  const USAGE_PERIODS = usagePeriods();
   const id = useId();
   const subs = useStore(s => s.subs);
   const [period, setPeriod] = useState<UsagePeriod>('7d');
@@ -775,7 +799,7 @@ function Usage() {
     <>
       <div className="field">
         <span className="lbl" id={`${id}-p`}>
-          Период
+          {t('subscriptions.usage.period')}
         </span>
         <div className="seg subs-periods" role="radiogroup" aria-labelledby={`${id}-p`} onKeyDown={e => rovingKey(e, periods, period, setPeriod)}>
           {USAGE_PERIODS.map(p => (
@@ -796,7 +820,7 @@ function Usage() {
       {period === 'dates' && (
         <div className="row2">
           <div className="field">
-            <label htmlFor={`${id}-f`}>С</label>
+            <label htmlFor={`${id}-f`}>{t('subscriptions.usage.from')}</label>
             <input
               id={`${id}-f`}
               type="date"
@@ -809,7 +833,7 @@ function Usage() {
             />
           </div>
           <div className="field">
-            <label htmlFor={`${id}-to`}>По</label>
+            <label htmlFor={`${id}-to`}>{t('subscriptions.usage.to')}</label>
             <input
               id={`${id}-to`}
               type="date"
@@ -830,23 +854,23 @@ function Usage() {
       )}
       {loading && !data && (
         <p className="hint" role="status">
-          <span className="spinner" aria-hidden="true" /> Считаем…
+          <span className="spinner" aria-hidden="true" /> {t('subscriptions.usage.calculating')}
         </p>
       )}
       {data &&
         (data.rows.length === 0 ? (
           <p className={`hint${err ? ' stale' : ''}`} role="status">
-            За период ходов не было.
+            {t('subscriptions.usage.none')}
           </p>
         ) : (
           <table className={`subs-usage${err ? ' stale' : ''}`} aria-busy={loading || !!err}>
             <caption>
               {shown && <b className="subs-range">{shown}. </b>}
-              Токены — основной цикл, без субагентов. Деньги и процент лимита не показываются.
+              {t('subscriptions.usage.caption')}
             </caption>
             <thead>
               <tr>
-                <th scope="col">Подписка</th>
+                <th scope="col">{t('subscriptions.field.label')}</th>
                 {COLS.map(c => (
                   <th key={c.key} scope="col">
                     {c.label}
@@ -858,8 +882,8 @@ function Usage() {
               {data.rows.map(r => (
                 <tr key={r.subscriptionId ?? 'machine'} className={r.subscriptionId === null ? 'machine' : undefined}>
                   <th scope="row">
-                    {r.subscriptionId === null ? 'Вход машины' : r.name}
-                    {r.subscriptionId !== null && retiredIds.has(r.subscriptionId) && <span className="pill subs-tag">выведена</span>}
+                    {r.subscriptionId === null ? t('subscriptions.usage.machineLogin') : r.name}
+                    {r.subscriptionId !== null && retiredIds.has(r.subscriptionId) && <span className="pill subs-tag">{t('subscriptions.usage.retired')}</span>}
                   </th>
                   {COLS.map(c => (
                     <td key={c.key} data-label={c.label} className={c.key === 'limitHits' && r[c.key] > 0 ? 'warn' : undefined}>
@@ -872,7 +896,7 @@ function Usage() {
             {total && data.rows.length > 1 && (
               <tfoot>
                 <tr>
-                  <th scope="row">Итого</th>
+                  <th scope="row">{t('subscriptions.usage.total')}</th>
                   {COLS.map(c => (
                     <td key={c.key} data-label={c.label}>
                       {fmtInt(total[c.key])}

@@ -388,7 +388,7 @@ export function createAgent(o: AgentOptions): Agent {
     const droppedMessages = messagesBeforeWelcome.splice(0);
     // The hub expires outstanding command IDs on its own timeout.
     if (droppedMessages.length) log.warn('dropping buffered hub messages after disconnect', { count: droppedMessages.length });
-    peers.failAll('связь с хабом потеряна');
+    peers.failAll('connection to the hub lost');
     mcpDraft.failAll();
     replicator.onDisconnected();
   });

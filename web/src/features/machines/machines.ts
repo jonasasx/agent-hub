@@ -1,8 +1,9 @@
 /**
  * Machines of the user (change `multi-user`, spec runner-enrollment): the OS guessed from the browser, the OS family of
- * a runner, the commands shown in the enrollment window and on «Машины», plural forms and copying to the clipboard.
+ * a runner, the commands shown in the enrollment window and on «Машины» and copying to the clipboard.
  */
 import type { EnrollStage, MachineOs, RunnerView } from '../../api/types';
+import { fmt } from '../../i18n';
 
 export const OS_LABEL: Record<MachineOs, string> = { linux: 'Linux', macos: 'macOS', windows: 'Windows' };
 export const OS_ORDER: MachineOs[] = ['linux', 'macos', 'windows'];
@@ -40,16 +41,6 @@ export const needsClaudeLogin = (r: RunnerView | undefined) => !!r && (r.claudeL
 /** The order of the enrollment stages for the progress list. */
 export const STAGE_INDEX: Record<EnrollStage, number> = { waiting: 0, code_used: 1, connected: 2, claude_checked: 3, ready: 4 };
 
-/** Russian plural: plural(2, ['машина', 'машины', 'машин']) → «машины». */
-export function plural(n: number, forms: [string, string, string]): string {
-  const a = Math.abs(n) % 100;
-  const b = a % 10;
-  if (a > 10 && a < 20) return forms[2];
-  if (b === 1) return forms[0];
-  if (b >= 2 && b <= 4) return forms[1];
-  return forms[2];
-}
-
 /** Copies text; false when the browser refuses (no clipboard API outside a secure context). */
 export async function copyText(text: string): Promise<boolean> {
   try {
@@ -64,5 +55,5 @@ export async function copyText(text: string): Promise<boolean> {
 export function dateTime(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);
-  return `${d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })} ${d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+  return `${fmt.date(d, { day: '2-digit', month: '2-digit', year: 'numeric' })} ${fmt.time(d)}`;
 }

@@ -304,7 +304,7 @@ export class CatalogDetection {
         } else {
           await sql`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`.execute(tx);
           const taken = await tx.selectFrom('catalog_projects').select('id').where('user_id', '=', userId).where('archived', '=', false).where('name', '=', a.name).executeTakeFirst();
-          if (taken) throw new HttpError(409, 'name_conflict', 'Название проекта уже используется');
+          if (taken) throw new HttpError(409, 'name_conflict', { key: 'hub.api.nameConflict' });
           const used = await tx.selectFrom('catalog_projects').select('color_key').where('user_id', '=', userId).where('archived', '=', false).execute();
           projectId = randomUUID();
           const colorKey = allocateProjectColor(

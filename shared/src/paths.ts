@@ -2,6 +2,7 @@
 // (\\host\share, //host/share, \\?\UNC\..., \\.\pipe) makes Windows authenticate to that host and leaks the
 // user's NTLM hash; relative paths depend on the agent's working directory.
 // Requirement: Запуск сессии из UI (каталог на машине).
+import type { I18nText } from './i18n/index.js';
 
 const WIN_RESERVED = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]|conin\$|conout\$)(\..*)?$/i;
 // eslint-disable-next-line no-control-regex
@@ -28,7 +29,7 @@ export function isAbsoluteLocalPath(p: string): boolean {
   return p.length > 0 && p.length <= 4096 && (isLocalWindowsPath(p) || isLocalPosixPath(p));
 }
 
-export const LOCAL_PATH_MESSAGE = 'нужен абсолютный локальный путь (C:\\… или /…), сетевые пути не допускаются';
+export const LOCAL_PATH_MESSAGE = 'an absolute local path is required (C:\\… or /…); network paths are not allowed';
 
 // ---------- path vs the runner's OS (M2.1, D10 «Пути по ОС раннера») ----------
 
@@ -50,11 +51,11 @@ export function pathFitsPlatform(path: string, platform: RunnerPlatform | null):
   return isAbsoluteLocalPath(path);
 }
 
-/** Russian text of 422 bad_path, shown at the directory field. */
-export function badPathMessage(platform: RunnerPlatform | null): string {
-  if (platform === 'windows') return 'Путь не подходит для Windows: нужен вид C:\\…';
-  if (platform === 'linux') return 'Путь не подходит для Linux: нужен вид /…';
-  return 'Путь не подходит: нужен полный локальный путь — C:\\… или /…';
+/** The text of 422 bad_path (a `hub.files.badPath*` key), shown at the directory field. */
+export function badPathMessage(platform: RunnerPlatform | null): I18nText {
+  if (platform === 'windows') return { key: 'hub.files.badPathWindows' };
+  if (platform === 'linux') return { key: 'hub.files.badPathLinux' };
+  return { key: 'hub.files.badPath' };
 }
 
 /**

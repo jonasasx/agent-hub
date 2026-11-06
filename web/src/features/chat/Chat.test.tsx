@@ -11,6 +11,7 @@ import { fixtureEvents } from './fixtures';
 import { ApiError } from '../../api/client';
 import type { Recording } from '../voice/recorder';
 import { resetVoice, useVoice, voiceDeps } from '../voice/voice';
+import { chooseLocale, initLocale } from '../../i18n';
 
 function show(s: SessionView, events: HubEvent[] = fixtureEvents()) {
   useStore.setState({
@@ -67,6 +68,18 @@ describe('Chat on real transcript lines', () => {
     expect(screen.getByText('Ход прерван')).toHaveClass('sysnote');
     expect(screen.getByText('Контекст сжат')).toHaveClass('sysnote');
     expect(screen.queryByText(/\[Image: original/)).not.toBeInTheDocument();
+  });
+
+  it('a language switch re-renders the hub notes of an open chat', async () => {
+    const note = { kind: 'note', id: 'n:1', ts: '2026-11-06T10:00:00Z', text: 'Поднята через resume', i18n: { key: 'hub.sessions.noteResumed' } } as HubEvent;
+    show(session(), [note]);
+    expect(screen.getByText('Поднята через resume')).toHaveClass('sysnote');
+    try {
+      await act(() => chooseLocale('en'));
+      expect(screen.getByText('Resumed')).toHaveClass('sysnote');
+    } finally {
+      await act(() => initLocale('ru'));
+    }
   });
 
   it('Дифф правки: the Edit row holds added/removed lines; Bash shows the command and its output', () => {
@@ -392,7 +405,9 @@ describe('Chat: dictation in the composer', () => {
   let rec: { cancel: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> };
 
   const signIn = (voiceInput: boolean) =>
-    useStore.setState({ auth: { kind: 'signed_in', me: { user: { id: 'u1', email: 'alice@example.com', role: 'admin', name: null, provider: 'google' }, vapidPublicKey: null, voiceInput } } });
+    useStore.setState({
+      auth: { kind: 'signed_in', me: { user: { id: 'u1', email: 'alice@example.com', role: 'admin', name: null, provider: 'google' }, vapidPublicKey: null, voiceInput, locale: null } },
+    });
   const flush = () =>
     act(async () => {
       for (let i = 0; i < 5; i++) await Promise.resolve();

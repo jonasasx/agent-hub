@@ -7,6 +7,7 @@
  */
 import { useEffect, useId, useMemo, useRef, type KeyboardEvent } from 'react';
 import type { FsEntry } from '@agent-hub/shared';
+import { fmt, useT } from '../../i18n';
 import { openFileTab } from '../workspace/actions';
 import { FileIcon, ICON_CHEV, entryKind } from './fileIcons';
 import { listingKey, loadDir, sessionFor, useFiles, type Listing } from './filesStore';
@@ -19,10 +20,9 @@ type Row =
   | { type: 'loading'; depth: number; key: string }
   | { type: 'error'; depth: number; key: string; text: string; path: string };
 
-const collator = new Intl.Collator('ru', { sensitivity: 'base', numeric: true });
-
 /** Folders first, then by name. */
 export function sortEntries(entries: FsEntry[]): FsEntry[] {
+  const collator = fmt.collator({ sensitivity: 'base', numeric: true });
   return [...entries].sort((a, b) => {
     const da = a.kind === 'dir' ? 0 : 1;
     const db = b.kind === 'dir' ? 0 : 1;
@@ -71,6 +71,7 @@ export function buildRows(src: Source, rootPath: string, listings: Record<string
 }
 
 export function FileTree({ src, flash }: Props) {
+  const t = useT();
   const uid = useId();
   const hidden = useFiles(s => s.hidden);
   const listings = useFiles(s => s.listings);
@@ -178,36 +179,36 @@ export function FileTree({ src, flash }: Props) {
   const retry = (path: string) => void loadDir(src.runnerId, path || undefined, sessionFor(src, path), true);
   const activeId = selIdx >= 0 ? `${uid}-${items[selIdx]!.i}` : undefined;
 
-  if (!src.online) return <TreeNote big="Машина не в сети" text={`${src.machineName}: файлы недоступны, пока агент не подключится`} />;
-  if (!src.supported) return <TreeNote big="Обновите агента" text={`На машине ${src.machineName} агент не умеет показывать файлы`} />;
-  if (!rootListing || rootListing.status === 'loading') return <TreeNote text="Загрузка…" />;
+  if (!src.online) return <TreeNote big={t('files.error.runner_offline')} text={t('files.tree.offlineHint', { machine: src.machineName })} />;
+  if (!src.supported) return <TreeNote big={t('files.error.capability_unavailable')} text={t('files.tree.outdatedHint', { machine: src.machineName })} />;
+  if (!rootListing || rootListing.status === 'loading') return <TreeNote text={t('files.loading')} />;
   if (rootListing.status === 'error') {
     const timeout = rootListing.code === 'agent_timeout';
     return (
-      <TreeNote big={rootListing.text} text={timeout ? 'Агент не ответил вовремя' : undefined}>
+      <TreeNote big={rootListing.text} text={timeout ? t('files.tree.agentTimeout') : undefined}>
         <button type="button" className="btn sm" onClick={() => retry(rootPath)}>
-          Повторить
+          {t('files.retry')}
         </button>
       </TreeNote>
     );
   }
-  if (!rows.length) return <TreeNote text="Папка пуста" />;
+  if (!rows.length) return <TreeNote text={t('files.tree.empty')} />;
 
   return (
-    <div className="fx-tree" role="tree" aria-label="Файлы" tabIndex={0} aria-activedescendant={activeId} ref={treeRef} onKeyDown={onKeyDown} data-testid="file-tree">
+    <div className="fx-tree" role="tree" aria-label={t('files.title')} tabIndex={0} aria-activedescendant={activeId} ref={treeRef} onKeyDown={onKeyDown} data-testid="file-tree">
       {rows.map((r, i) => {
         const pad = { '--d': r.depth } as React.CSSProperties;
         if (r.type === 'loading') {
           return (
             <div key={`l${r.key}`} className="fx-tr fx-note" style={pad} role="none">
-              Загрузка…
+              {t('files.loading')}
             </div>
           );
         }
         if (r.type === 'more') {
           return (
             <div key={`m${r.key}`} className="fx-tr fx-note" style={pad} role="none">
-              Показаны первые {r.shown} из {r.total}
+              {t('files.tree.more', { shown: r.shown, total: r.total })}
             </div>
           );
         }
@@ -216,7 +217,7 @@ export function FileTree({ src, flash }: Props) {
             <div key={`e${r.key}`} className="fx-tr fx-note fx-err" style={pad} role="none">
               <span className="nm">{r.text}</span>
               <button type="button" className="btn sm ghost" onClick={() => retry(r.path)}>
-                Повторить
+                {t('files.retry')}
               </button>
             </div>
           );
@@ -238,15 +239,15 @@ export function FileTree({ src, flash }: Props) {
             aria-disabled={r.blocked || undefined}
             data-selected={isSel}
             data-path={r.path}
-            title={r.blocked ? 'Нет доступа' : r.path}
-            aria-label={r.blocked ? `${r.entry.name} — Нет доступа` : undefined}
+            title={r.blocked ? t('files.error.permission_denied') : r.path}
+            aria-label={r.blocked ? t('files.tree.blockedNamed', { name: r.entry.name }) : undefined}
             onClick={() => choose(r)}
             onDoubleClick={() => open(r, true)}
           >
             <span className={`chev${r.open ? ' open' : ''}`}>{isDir && !r.blocked ? ICON_CHEV : null}</span>
             <FileIcon kind={entryKind(r.entry)} open={r.open} blocked={r.blocked} />
             <span className="nm">{r.entry.name}</span>
-            {r.blocked ? <span className="meta">Нет доступа</span> : null}
+            {r.blocked ? <span className="meta">{t('files.error.permission_denied')}</span> : null}
           </div>
         );
       })}

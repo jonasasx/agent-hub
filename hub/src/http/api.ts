@@ -44,7 +44,6 @@ import {
   type UserProjectView,
   pathFitsPlatform,
   platformOfHome,
-  LOCAL_PATH_MESSAGE,
 } from '@agent-hub/shared';
 import type { Db } from '../db/db.js';
 import type { AgentGateway, CommandError } from '../runners/agentGateway.js';
@@ -56,6 +55,9 @@ import { getSubagent, listHubChildren, listSubagents, runFile, subagentEventsPag
 import { listBackground } from '../subagents/background.js';
 import { searchSessions } from '../sessions/search.js';
 import { registerFileRoutes, type FsRouteOptions } from './files.js';
+import { LOCALE_IDS } from '@agent-hub/shared';
+import { render, tr } from '../i18n.js';
+import { tx } from '../texts.js';
 
 function parse<T extends z.ZodType>(schema: T, v: unknown): z.infer<T> {
   const r = schema.safeParse(v ?? {});
@@ -90,14 +92,17 @@ export function registerApi(
   const { db, sessions, handoff, agents, latestAgent, detection } = deps;
 
   app.setErrorHandler((err, req, reply: FastifyReply) => {
-    if (err instanceof HttpError) return reply.code(err.status).send({ ...err.details, error: err.code, message: err.message });
-    if ((err as { code?: string; constraint?: string }).code === '23505' && /^(catalog_projects_active_name|project_bindings_)/.test((err as { constraint?: string }).constraint ?? ''))
-      return reply.code(409).send({
-        error: (err as { constraint?: string }).constraint === 'catalog_projects_active_name' ? 'name_conflict' : 'binding_conflict',
-        message: (err as { constraint?: string }).constraint === 'catalog_projects_active_name' ? 'Название проекта уже используется' : 'Папка уже привязана к другому проекту',
-      });
+    if (err instanceof HttpError) {
+      const message = err.i18n ? tr(req.locale).text(err.i18n.key, err.i18n.params) : err.message;
+      return reply.code(err.status).send({ ...err.details, error: err.code, message });
+    }
+    if ((err as { code?: string; constraint?: string }).code === '23505' && /^(catalog_projects_active_name|project_bindings_)/.test((err as { constraint?: string }).constraint ?? '')) {
+      const nameTaken = (err as { constraint?: string }).constraint === 'catalog_projects_active_name';
+      const key = nameTaken ? 'hub.api.nameConflict' : 'hub.api.bindingConflict';
+      return reply.code(409).send({ error: nameTaken ? 'name_conflict' : 'binding_conflict', message: tr(req.locale).text(key) });
+    }
     const e = err as { statusCode?: number; message?: string };
-    if (e.statusCode === 413) return reply.code(413).send({ error: 'too_large', message: 'Тело запроса больше допустимого' });
+    if (e.statusCode === 413) return reply.code(413).send({ error: 'too_large', message: tr(req.locale).text('hub.api.bodyTooLarge') });
     if (e.statusCode && e.statusCode < 500) return reply.code(e.statusCode).send({ error: 'invalid_request', message: e.message });
     req.log.error({ err }, 'request failed');
     return reply.code(500).send({ error: 'internal' });
@@ -114,7 +119,7 @@ export function registerApi(
     const query = parse(z.object({ path: z.string().max(4096).optional(), showHidden: z.enum(['true', 'false']).default('false') }), req.query);
     const owned = await db.selectFrom('runners').select(['id', 'home_dir']).where('id', '=', params.runnerId).where('user_id', '=', req.user!.id).where('state', '=', 'active').executeTakeFirst();
     if (!owned) throw new HttpError(404, 'runner_not_found', 'Runner not found');
-    if (query.path && !pathFitsPlatform(query.path, platformOfHome(owned.home_dir))) throw new HttpError(400, 'invalid_path', LOCAL_PATH_MESSAGE);
+    if (query.path && !pathFitsPlatform(query.path, platformOfHome(owned.home_dir))) throw new HttpError(400, 'invalid_path', { key: 'hub.files.invalidPath' });
     const connection = agents.get(params.runnerId);
     if (!connection) throw new HttpError(409, 'runner_offline', 'Runner is offline');
     if (!connection.capabilities.includes('fs.list-dirs')) throw new HttpError(409, 'capability_unavailable', 'Agent does not support directory browsing');
@@ -137,6 +142,18 @@ export function registerApi(
     const { created } = await detection.answer(req.user!.id, id, answer);
     if (created) sessions.projectsChanged(req.user!.id);
     return { ok: true };
+  });
+
+  // change i18n D4: the interface language of the profile; null — «Как в браузере»
+  app.put('/api/preferences/locale', async (req, reply) => {
+    const { locale } = parse(z.object({ locale: z.enum(LOCALE_IDS).nullable() }), req.body);
+    const userId = req.user!.id;
+    await db
+      .insertInto('user_preferences')
+      .values({ user_id: userId, last_runner_id: null, last_provider: null, locale })
+      .onConflict(oc => oc.column('user_id').doUpdateSet({ locale }))
+      .execute();
+    return reply.code(204).send();
   });
 
   app.get('/api/preferences/launch', async (req): Promise<{ runnerId: string | null; provider: 'claude' | 'codex' | null }> => {
@@ -188,9 +205,9 @@ export function registerApi(
   app.post('/api/catalog/projects', async (req, reply): Promise<UserProjectView> => {
     const b = parse(createUserProjectSchema, req.body);
     const userId = req.user!.id;
-    if (!!b.runnerId !== !!b.path) throw new HttpError(400, 'invalid_request', 'runnerId и path задаются вместе');
+    if (!!b.runnerId !== !!b.path) throw new HttpError(400, 'invalid_request', { key: 'hub.api.runnerPathTogether' });
     if (b.runnerId && !(await db.selectFrom('runners').select('id').where('id', '=', b.runnerId).where('user_id', '=', userId).where('state', '=', 'active').executeTakeFirst()))
-      throw new HttpError(404, 'runner_not_found', 'Машина не найдена');
+      throw new HttpError(404, 'runner_not_found', { key: 'hub.sessions.runnerNotFound' });
     const p = await db.transaction().execute(async tx => {
       await sql`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`.execute(tx);
       const used = await tx.selectFrom('catalog_projects').select('color_key').where('user_id', '=', userId).where('archived', '=', false).execute();
@@ -235,7 +252,7 @@ export function registerApi(
     const userId = req.user!.id;
     await db.transaction().execute(async tx => {
       const own = await tx.selectFrom('catalog_projects').select('id').where('id', '=', id).where('user_id', '=', userId).forUpdate().executeTakeFirst();
-      if (!own) throw new HttpError(404, 'not_found', 'Проект не найден');
+      if (!own) throw new HttpError(404, 'not_found', { key: 'hub.api.projectNotFound' });
       await tx
         .updateTable('catalog_projects')
         .set({ ...metadata, ...(colorKey ? { color_key: colorKey } : {}), updated_at: sql`now()` })
@@ -244,7 +261,7 @@ export function registerApi(
         .execute();
       for (const binding of bindings ?? []) {
         const runner = await tx.selectFrom('runners').select(['id', 'state']).where('id', '=', binding.runnerId).where('user_id', '=', userId).forKeyShare().executeTakeFirst();
-        if (!runner || (binding.path !== null && runner.state !== 'active')) throw new HttpError(404, 'not_found', 'Машина не найдена');
+        if (!runner || (binding.path !== null && runner.state !== 'active')) throw new HttpError(404, 'not_found', { key: 'hub.sessions.runnerNotFound' });
         if (binding.path === null) await tx.deleteFrom('project_bindings').where('user_id', '=', userId).where('project_id', '=', id).where('runner_id', '=', binding.runnerId).execute();
         else
           await tx
@@ -265,7 +282,7 @@ export function registerApi(
     await db.transaction().execute(async tx => {
       const project = await tx.selectFrom('catalog_projects').select('id').where('id', '=', id).where('user_id', '=', userId).forUpdate().executeTakeFirst();
       const runner = await tx.selectFrom('runners').select('id').where('id', '=', runnerId).where('user_id', '=', userId).where('state', '=', 'active').forKeyShare().executeTakeFirst();
-      if (!project || !runner) throw new HttpError(404, 'not_found', 'Проект или машина не найдены');
+      if (!project || !runner) throw new HttpError(404, 'not_found', { key: 'hub.api.projectOrRunnerNotFound' });
       await tx
         .insertInto('project_bindings')
         .values({ user_id: userId, project_id: id, runner_id: runnerId, path: b.path })
@@ -279,7 +296,7 @@ export function registerApi(
     const userId = req.user!.id;
     const project = await db.selectFrom('catalog_projects').select('id').where('id', '=', id).where('user_id', '=', userId).executeTakeFirst();
     const runner = await db.selectFrom('runners').select('id').where('id', '=', runnerId).where('user_id', '=', userId).executeTakeFirst();
-    if (!project || !runner) throw new HttpError(404, 'not_found', 'Проект или машина не найдены');
+    if (!project || !runner) throw new HttpError(404, 'not_found', { key: 'hub.api.projectOrRunnerNotFound' });
     await db.deleteFrom('project_bindings').where('user_id', '=', userId).where('project_id', '=', id).where('runner_id', '=', runnerId).execute();
     return { ok: true };
   });
@@ -287,7 +304,7 @@ export function registerApi(
     const { id } = parse(userProjectParamsSchema, req.params);
     const linked = await db.transaction().execute(async tx => {
       const own = await tx.selectFrom('catalog_projects').select('id').where('user_id', '=', req.user!.id).where('id', '=', id).forUpdate().executeTakeFirst();
-      if (!own) throw new HttpError(404, 'not_found', 'Проект не найден');
+      if (!own) throw new HttpError(404, 'not_found', { key: 'hub.api.projectNotFound' });
       const rows = await tx.selectFrom('session_projects').select('session_id').where('user_id', '=', req.user!.id).where('project_id', '=', id).execute();
       // Cascades remove only bindings and explicit links; sessions and transcript data are independent.
       await tx.deleteFrom('catalog_projects').where('user_id', '=', req.user!.id).where('id', '=', id).execute();
@@ -305,7 +322,7 @@ export function registerApi(
   app.patch('/api/projects/:id/color', async req => {
     const { id } = parse(userProjectParamsSchema, req.params);
     const { colorKey } = parse(z.object({ colorKey: projectColorSchema }), req.body);
-    if (!(await sessions.projects?.catalog.setColor(req.user!.id, id, colorKey))) throw new HttpError(404, 'not_found', 'Группа не найдена');
+    if (!(await sessions.projects?.catalog.setColor(req.user!.id, id, colorKey))) throw new HttpError(404, 'not_found', { key: 'hub.api.groupNotFound' });
     sessions.projectsChanged(req.user!.id);
     return { ok: true };
   });
@@ -323,7 +340,7 @@ export function registerApi(
     const { id } = parse(userProjectParamsSchema, req.params);
     const userId = req.user!.id;
     const own = await db.selectFrom('projects').select('id').where('id', '=', id).where('user_id', '=', userId).executeTakeFirst();
-    if (!own) throw new HttpError(404, 'not_found', 'Группа не найдена');
+    if (!own) throw new HttpError(404, 'not_found', { key: 'hub.api.groupNotFound' });
     if (hidden)
       await db
         .insertInto('hidden_project_groups')
@@ -342,7 +359,7 @@ export function registerApi(
     const { runnerId } = parse(userProjectResolveQuerySchema, req.query);
     const userId = req.user!.id;
     const own = await db.selectFrom('catalog_projects').select('id').where('id', '=', id).where('user_id', '=', userId).executeTakeFirst();
-    if (!own) throw new HttpError(404, 'not_found', 'Проект не найден');
+    if (!own) throw new HttpError(404, 'not_found', { key: 'hub.api.projectNotFound' });
     const runner = runnerId
       ? await db.selectFrom('runners').select(['id', 'online']).where('id', '=', runnerId).where('user_id', '=', userId).where('state', '=', 'active').executeTakeFirst()
       : undefined;
@@ -355,7 +372,7 @@ export function registerApi(
     const { id } = parse(userProjectParamsSchema, req.params);
     const q = parse(pageQuery, req.query);
     const project = await db.selectFrom('catalog_projects').select('id').where('id', '=', id).where('user_id', '=', userId).executeTakeFirst();
-    if (!project) throw new HttpError(404, 'not_found', 'Проект не найден');
+    if (!project) throw new HttpError(404, 'not_found', { key: 'hub.api.projectNotFound' });
     const ids = await db
       .selectFrom('session_projects as sp')
       .innerJoin('sessions as s', 's.id', 'sp.session_id')
@@ -508,7 +525,7 @@ export function registerApi(
     const q = parse(pageQuery, req.query);
     if (id !== 'none' && (!own || !sessions.projects?.catalog.list(userId).some(p => p.id === id))) {
       const catalogOwn = await db.selectFrom('catalog_projects').select('id').where('id', '=', id).where('user_id', '=', userId).executeTakeFirst();
-      if (!catalogOwn) throw new HttpError(404, 'not_found', 'Проект не найден');
+      if (!catalogOwn) throw new HttpError(404, 'not_found', { key: 'hub.api.projectNotFound' });
       const ids = await db
         .selectFrom('session_projects as sp')
         .innerJoin('sessions as s', 's.id', 'sp.session_id')
@@ -570,7 +587,6 @@ export function registerApi(
 
   /** The catalogue for «Перенести в…» (D10): areas, systems, projects, clones, «Vault», «Знания», then «Без проекта». */
   app.get('/api/projects', async (req): Promise<ProjectListItem[]> => {
-    await sessions.projects?.catalog.ensureUser(req.user!.id);
     const list = sessions.projects?.catalog.list(req.user!.id) ?? [];
     const curated = await db.selectFrom('catalog_projects').select(['id', 'name']).where('user_id', '=', req.user!.id).where('archived', '=', false).orderBy('name').execute();
     const order = { area: 0, system: 1, project: 2, repo: 3, builtin: 4 } as const;
@@ -588,7 +604,7 @@ export function registerApi(
             order[a.kind as keyof typeof order] - order[b.kind as keyof typeof order] ||
             a.title.localeCompare(b.title),
         ),
-      { id: 'none', kind: 'none', title: 'Без проекта', path: '', areaPath: null, colorKey: 'none', archived: false },
+      { id: 'none', kind: 'none', title: render({ key: 'hub.api.noProject' }, 'en'), i18n: { key: 'hub.api.noProject' }, path: '', areaPath: null, colorKey: 'none', archived: false },
     ];
   });
 
@@ -613,7 +629,7 @@ export function registerApi(
       });
       return sessions.upsert(s.id);
     }
-    if (projectId && !sessions.projects?.catalog.list(userId).some(p => p.id === projectId)) throw new HttpError(422, 'unknown_project', 'Проекта нет в справочнике');
+    if (projectId && !sessions.projects?.catalog.list(userId).some(p => p.id === projectId)) throw new HttpError(422, 'unknown_project', { key: 'hub.api.unknownProject' });
     return pin(userId, s.id, projectId);
   });
 
@@ -638,7 +654,7 @@ export function registerApi(
       await db.updateTable('session_projects').set({ source: 'auto', reason_code: 'unpinned' }).where('user_id', '=', userId).where('session_id', '=', s.id).execute();
       return sessions.upsert(s.id);
     }
-    if (s.project_source !== 'manual') throw new HttpError(409, 'not_pinned', 'Сессия не закреплена');
+    if (s.project_source !== 'manual') throw new HttpError(409, 'not_pinned', { key: 'hub.api.notPinned' });
     if (sessions.projects) await sessions.projects.unpin(s.id);
     return sessions.upsert(s.id);
   });
@@ -658,7 +674,7 @@ export function registerApi(
     // In the queue of the session's project decisions (a recompute running now does not overwrite the pin).
     await (sessions.projects ? sessions.projects.serialized(sessionId, write) : write());
     const v = await sessions.upsert(sessionId);
-    sessions.toast(userId, { type: 'toast', kind: 'project_pinned', sessionId, title: v.title, text: `Проект закреплён: ${v.project.title}` });
+    sessions.toast(userId, { type: 'toast', kind: 'project_pinned', sessionId, title: v.title, ...tx('hub.api.toastPinned', { title: v.project.title }) });
     return v;
   }
 
@@ -716,7 +732,7 @@ export function registerApi(
         .where('b.runner_id', '=', b.runnerId)
         .where('p.archived', '=', false)
         .executeTakeFirst();
-      if (!binding) throw new HttpError(422, 'needs_binding', 'Для этого проекта нет каталога на выбранной машине');
+      if (!binding) throw new HttpError(422, 'needs_binding', { key: 'hub.api.needsBinding' });
       b.cwd = binding.path;
     }
     const session = await sessions.create(userId, { ...b, ...(b.projectId ? { catalogProjectId: b.projectId } : {}) });
@@ -770,14 +786,14 @@ export function registerApi(
 
   app.get('/api/subagents/:id', async (req): Promise<SubagentView> => {
     const v = await getSubagent(db, req.user!.id, (req.params as { id: string }).id);
-    if (!v) throw new HttpError(404, 'not_found', 'Субагент не найден');
+    if (!v) throw new HttpError(404, 'not_found', { key: 'hub.api.subagentNotFound' });
     return v;
   });
 
   /** The transcript of a subagent, page by page from the end. Requirement (subagents): Чат субагента только для чтения */
   app.get('/api/subagents/:id/events', async (req): Promise<EventsPage> => {
     const run = await runFile(db, req.user!.id, (req.params as { id: string }).id);
-    if (!run) throw new HttpError(404, 'not_found', 'Субагент не найден');
+    if (!run) throw new HttpError(404, 'not_found', { key: 'hub.api.subagentNotFound' });
     const q = parse(eventsQuery, req.query);
     return subagentEventsPage(db, run, q.before, q.limit);
   });

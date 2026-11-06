@@ -117,7 +117,7 @@ describe('session title (integration)', () => {
     const transcript = String(generated[0]!.transcript);
     expect(transcript).toContain('сделай отчёт по Selectel');
     expect(transcript).toContain('Добавляю PATCH title и кнопку перегенерации');
-    expect(String(generated[0]!.systemPrompt)).toMatch(/другую сторону/);
+    expect(String(generated[0]!.systemPrompt)).toMatch(/different direction/);
   });
 
   it('does not send secrets to the model', async () => {

@@ -8,6 +8,7 @@ import { buildKey, isBuildInfo, sameBuild, type BuildInfo } from './buildInfo';
 import { CLIENT_BUILD } from './currentBuild';
 import { canReloadSilently, hasUnsavedInput } from './silent';
 import { applyUpdate, autoReloadBlocked, checkSw, readRecord, registerSw, writeRecord } from './sw';
+import { t } from '../../i18n';
 
 export const DEBOUNCE_MS = 5_000;
 export const INTERVAL_MS = 10 * 60_000;
@@ -71,7 +72,7 @@ export function trySilent(): boolean {
 export function requestUpdate(): boolean {
   const { hub } = useUpdate.getState();
   if (!hub) return false;
-  if (hasUnsavedInput() && !window.confirm('Черновик пропадёт. Обновить сейчас?')) return false;
+  if (hasUnsavedInput() && !window.confirm(t('workspace.update.confirm'))) return false;
   void applyUpdate(hub);
   return true;
 }

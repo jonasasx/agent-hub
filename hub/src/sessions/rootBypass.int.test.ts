@@ -23,7 +23,14 @@ describe('root machine and bypassPermissions (integration)', () => {
     t.hub.app.inject({ method, url, cookies: { ah_session: cookie }, headers: { origin: PUBLIC_URL }, ...(payload ? { payload } : {}) });
   const start = (runnerId: string, permissionMode: string) =>
     api('POST', '/api/sessions', { runnerId, cwd: runnerId === 'vm' ? '/root' : 'C:\\Users\\alice\\vault', permissionMode, model: 'haiku', prompt: `привет ${randomUUID()}` });
-  const notes = async (id: string) => (await t.tdb.pool.query(`SELECT kind, text FROM session_notes WHERE session_id = $1 ORDER BY id`, [id])).rows as Array<{ kind: string; text: string }>;
+  // a keyed note is stored as {display, i18n} (D6): `text` is the English display, `i18n` the key
+  const notes = async (id: string) => {
+    const rows = (await t.tdb.pool.query(`SELECT kind, text FROM session_notes WHERE session_id = $1 ORDER BY id`, [id])).rows as Array<{ kind: string; text: string }>;
+    return rows.map(r => {
+      const u = r.text.startsWith('{') ? (JSON.parse(r.text) as { display: string; i18n: { key: string } }) : null;
+      return { kind: r.kind, text: u ? u.display : r.text, i18n: u?.i18n };
+    });
+  };
   /** The payload of the last command of this type the runner got for the session. */
   const payloads: Array<[string, string, Record<string, unknown>]> = [];
   const lastPayload = (runner: string, type: string, id: string) => payloads.filter(([r, ty, p]) => r === runner && ty === type && p.sessionId === id).at(-1)?.[2];
@@ -118,7 +125,7 @@ describe('root machine and bypassPermissions (integration)', () => {
     expect(r.statusCode, r.body).toBe(201);
     const s = r.json() as SessionView;
     const n = await waitFor(async () => (await notes(s.id)).find(x => x.kind === 'launch_failed'));
-    expect(n.text).toBe(ROOT_BYPASS_NOTE);
+    expect(n.i18n).toEqual(ROOT_BYPASS_NOTE);
   });
 
   it('an agent without hello.root: the root stderr becomes advice when the process crashes', async () => {
@@ -127,7 +134,7 @@ describe('root machine and bypassPermissions (integration)', () => {
     await waitFor(() => sent('hp', 'session.start', s.id));
     agentSend(hp, 'session.exited', { sessionId: s.id, code: null, reason: 'crashed', errorText: STDERR });
     const n = await waitFor(async () => (await notes(s.id)).find(x => x.kind === 'crashed'));
-    expect(n.text).toBe(ROOT_BYPASS_NOTE);
+    expect(n.i18n).toEqual(ROOT_BYPASS_NOTE);
   });
 
   it('any other process error is kept as it is', async () => {
@@ -136,7 +143,7 @@ describe('root machine and bypassPermissions (integration)', () => {
     await waitFor(() => sent('hp', 'session.start', s.id));
     agentSend(hp, 'session.exited', { sessionId: s.id, code: null, reason: 'crashed', errorText: 'boom' });
     const n = await waitFor(async () => (await notes(s.id)).find(x => x.kind === 'crashed'));
-    expect(n.text).toBe('Процесс Claude Code упал: boom');
+    expect(n.text).toBe('The Claude Code process crashed: boom');
   });
 
   it('handoff of a bypassPermissions session onto the root machine: acceptEdits with a note; an explicit bypassPermissions is 422', async () => {
@@ -151,7 +158,7 @@ describe('root machine and bypassPermissions (integration)', () => {
     expect(h.permissionMode).toBe('acceptEdits');
     await waitFor(() => lastPayload('vm', 'session.start', h.id));
     expect(lastPayload('vm', 'session.start', h.id)!.permissionMode).toBe('acceptEdits');
-    expect((await notes(h.id)).find(n => n.kind === 'mode')?.text).toBe(ROOT_MODE_NOTE);
+    expect((await notes(h.id)).find(n => n.kind === 'mode')?.i18n).toEqual(ROOT_MODE_NOTE);
     // onto a machine not under root the mode is inherited as it is
     const ok = await api('POST', `/api/sessions/${src.id}/fork`, { mode: 'handoff', prompt: 'продолжи', runnerId: 'hp', cwd: 'C:\\Users\\alice\\vault' });
     expect(ok.statusCode, ok.body).toBe(201);
@@ -166,6 +173,6 @@ describe('root machine and bypassPermissions (integration)', () => {
     expect(res.statusCode, res.body).toBe(201);
     const c = res.json() as SessionView;
     expect(c.permissionMode).toBe('acceptEdits');
-    expect((await notes(c.id)).find(n => n.kind === 'mode')?.text).toBe(ROOT_MODE_NOTE);
+    expect((await notes(c.id)).find(n => n.kind === 'mode')?.i18n).toEqual(ROOT_MODE_NOTE);
   });
 });

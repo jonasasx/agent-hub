@@ -2,6 +2,7 @@
  * The «Диктовка» button next to «Прикрепить» (voice-input design D7).
  * Requirements (voice-input): Кнопка микрофона в композере; Одна запись на окно.
  */
+import { useT } from '../../i18n';
 import { startDictation, useVoice } from './voice';
 
 function MicIcon() {
@@ -14,17 +15,18 @@ function MicIcon() {
 }
 
 export function MicButton({ sessionId, paneId, disabled }: { sessionId: string; paneId: string; disabled?: boolean }) {
+  const t = useT();
   const active = useVoice(v => v.active);
   const mine = !!active && active.sessionId === sessionId && (active.paneId === paneId || active.paneId === null);
   const starting = mine && active.phase === 'starting';
   // one microphone per window: while a dictation runs anywhere else, this button waits
   const other = !!active && !mine;
-  const title = other ? (active.paneId && active.paneId !== paneId ? 'Идёт запись в другой панели' : 'Идёт распознавание другой записи') : 'Диктовка';
+  const title = other ? (active.paneId && active.paneId !== paneId ? t('chat.voice.otherPane') : t('chat.voice.otherBusy')) : t('chat.voice.dictation');
   return (
     <button
       type="button"
       className="btn ghost mic-btn"
-      aria-label="Диктовка"
+      aria-label={t('chat.voice.dictation')}
       title={title}
       aria-busy={starting || undefined}
       disabled={disabled || other || starting}

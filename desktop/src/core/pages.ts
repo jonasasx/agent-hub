@@ -3,6 +3,7 @@
  * Static HTML without scripts (CSP `default-src 'none'`), loaded by the main process as a `data:` URL; the buttons are
  * plain links to the hub, which the navigation policy (D3) allows (`/auth/login` → sign-in through the browser).
  */
+import { currentLocale, dt } from './i18n.js';
 
 export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c);
@@ -22,7 +23,7 @@ a.btn:focus-visible{outline:2px solid #4a7fd6;outline-offset:2px}
 
 function page(title: string, heading: string, text: string, hubUrl: string, button: { href: string; label: string } | null): string {
   const btn = button ? `<a class="btn" href="${escapeHtml(button.href)}">${escapeHtml(button.label)}</a>` : '';
-  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>${escapeHtml(title)}</title><style>${STYLE}</style></head><body><main role="main"><h1>${escapeHtml(heading)}</h1><p>${escapeHtml(text)}</p><p class="hub">${escapeHtml(hubUrl)}</p>${btn}</main></body></html>`;
+  return `<!doctype html><html lang="${currentLocale()}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>${escapeHtml(title)}</title><style>${STYLE}</style></head><body><main role="main"><h1>${escapeHtml(heading)}</h1><p>${escapeHtml(text)}</p><p class="hub">${escapeHtml(hubUrl)}</p>${btn}</main></body></html>`;
 }
 
 export function toDataUrl(html: string): string {
@@ -31,9 +32,9 @@ export function toDataUrl(html: string): string {
 
 /** «Нет связи с хабом — проверьте VPN», «Повторить» → the remembered hub address. */
 export function offlinePage(hubUrl: string, retryUrl: string): string {
-  return page('Agent Hub — нет связи', 'Нет связи с хабом — проверьте VPN', 'Приложение проверяет хаб каждые 10 секунд и вернётся само, когда связь появится.', hubUrl, {
+  return page(dt('desktop.pages.offline.window'), dt('desktop.pages.offline.heading'), dt('desktop.pages.offline.text'), hubUrl, {
     href: retryUrl,
-    label: 'Повторить',
+    label: dt('desktop.pages.offline.retry'),
   });
 }
 
@@ -42,16 +43,22 @@ function loginHref(hubUrl: string, returnPath: string): string {
 }
 
 export function signInPage(hubUrl: string, returnPath: string): string {
-  return page('Agent Hub — нужен вход', 'Нужен вход', 'Вход выполняется в системном браузере через Google.', hubUrl, { href: loginHref(hubUrl, returnPath), label: 'Войти' });
+  return page(dt('desktop.pages.signIn.window'), dt('desktop.pages.signIn.heading'), dt('desktop.pages.signIn.text'), hubUrl, {
+    href: loginHref(hubUrl, returnPath),
+    label: dt('desktop.pages.signIn.button'),
+  });
 }
 
 export function loginPendingPage(hubUrl: string, returnPath: string): string {
-  return page('Agent Hub — вход', 'Вход в системном браузере', 'Завершите вход в открывшемся браузере и подтвердите «Открыть Agent Hub».', hubUrl, {
+  return page(dt('desktop.pages.pending.window'), dt('desktop.pages.pending.heading'), dt('desktop.pages.pending.text'), hubUrl, {
     href: loginHref(hubUrl, returnPath),
-    label: 'Открыть браузер снова',
+    label: dt('desktop.pages.pending.button'),
   });
 }
 
 export function loginErrorPage(hubUrl: string, returnPath: string, message: string): string {
-  return page('Agent Hub — ошибка входа', 'Не удалось войти', message, hubUrl, { href: loginHref(hubUrl, returnPath), label: 'Войти снова' });
+  return page(dt('desktop.pages.error.window'), dt('desktop.pages.error.heading'), message, hubUrl, {
+    href: loginHref(hubUrl, returnPath),
+    label: dt('desktop.pages.error.button'),
+  });
 }

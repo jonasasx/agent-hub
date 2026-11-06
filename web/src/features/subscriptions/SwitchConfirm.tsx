@@ -8,6 +8,7 @@
 import { useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useStore } from '../../store';
+import { useT } from '../../i18n';
 import { useDialog } from '../ui/a11y';
 import { cancelSwitch, confirmSwitch } from './actions';
 import { subName } from './model';
@@ -19,8 +20,9 @@ export function SwitchConfirm() {
 }
 
 function ConfirmDialog() {
+  const t = useT();
   const p = useStore(s => s.pendingSwitch)!;
-  const name = useStore(s => subName(s.subs, p.subscriptionId)) ?? 'другую подписку';
+  const name = useStore(s => subName(s.subs, p.subscriptionId)) ?? t('subscriptions.switch.otherSub');
   const title = useStore(s => s.sessions[p.sessionId]?.title);
   // the hub refuses a switch of a waiting session while its subagents or background commands work (busyForSwitch):
   // stopping the process stops them, not a turn
@@ -36,20 +38,16 @@ function ConfirmDialog() {
     <div className="scrim modal-top" onMouseDown={e => e.target === e.currentTarget && cancelSwitch()}>
       <div className="modal confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={`${titleId}-d`} ref={dialog}>
         <div className="modal-head">
-          <h2 id={titleId}>{background ? 'Работает в фоне: остановить и переключить?' : 'Идёт ход: прервать и переключить?'}</h2>
+          <h2 id={titleId}>{background ? t('subscriptions.switch.titleBackground') : t('subscriptions.switch.titleTurn')}</h2>
           {background ? (
-            <p id={`${titleId}-d`}>
-              Фоновые задачи сессии будут остановлены. Затем {title ? `«${title}»` : 'сессия'} поднимется под «{name}». Первый ход пересчитает контекст без кэша.
-            </p>
+            <p id={`${titleId}-d`}>{t('subscriptions.switch.bodyBackground', { subject: title ? `«${title}»` : t('subscriptions.switch.session'), name })}</p>
           ) : (
-            <p id={`${titleId}-d`}>
-              {title ? `«${title}» ` : 'Сессия '}сейчас выполняет ход. Ход будет прерван, затем сессия поднимется под «{name}». Первый ход пересчитает контекст без кэша.
-            </p>
+            <p id={`${titleId}-d`}>{t('subscriptions.switch.bodyTurn', { subject: title ? `«${title}»` : t('subscriptions.switch.sessionCap'), name })}</p>
           )}
         </div>
         <div className="modal-foot">
           <button type="button" className="btn ghost" autoFocus onClick={cancelSwitch}>
-            Отмена
+            {t('subscriptions.switch.cancel')}
           </button>
           <button
             type="button"
@@ -60,7 +58,7 @@ function ConfirmDialog() {
               void confirmSwitch();
             }}
           >
-            {busy ? 'Переключаем…' : background ? 'Остановить и переключить' : 'Прервать и переключить'}
+            {busy ? t('subscriptions.switch.switching') : background ? t('subscriptions.switch.stopAndSwitch') : t('subscriptions.switch.interruptAndSwitch')}
           </button>
         </div>
       </div>

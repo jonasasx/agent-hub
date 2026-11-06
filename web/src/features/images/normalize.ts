@@ -13,10 +13,10 @@ export const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
 export const MAX_SEND_BYTES = 3.75 * 1024 * 1024;
 export const MAX_SIDE = 2000;
 
-export const ERR_FORMAT = 'Формат не поддерживается: PNG, JPEG, GIF, WebP';
-export const ERR_TOO_BIG = 'Файл больше 20 МБ';
-export const ERR_DECODE = 'Не удалось прочитать изображение';
-export const ERR_GIF_TOO_BIG = 'GIF больше 3,75 МБ — модель его не примет. Уменьшите GIF или сохраните нужный кадр как PNG';
+export const ERR_FORMAT = 'chat.images.err.format';
+export const ERR_TOO_BIG = 'chat.images.err.sourceTooBig';
+export const ERR_DECODE = 'chat.images.err.decode';
+export const ERR_GIF_TOO_BIG = 'chat.images.err.gifTooBig';
 
 export interface Normalized {
   blob: Blob;
@@ -104,7 +104,7 @@ export async function normalizeImage(file: Blob, codec: Codec = browserCodec): P
   if (plan.keep) return { ok: true, image: { blob: file.type === mime ? file : new Blob([file], { type: mime }), mime, width: decoded.width, height: decoded.height } };
   try {
     const blob = await encodeWithin(q => decoded.draw(plan.width, plan.height, plan.mime, q), plan.quality);
-    if (blob.size > MAX_SEND_BYTES) return { ok: false, error: 'Не удалось уменьшить изображение до 3,75 МБ' };
+    if (blob.size > MAX_SEND_BYTES) return { ok: false, error: 'chat.images.err.shrink' };
     return { ok: true, image: { blob, mime: plan.mime, width: plan.width, height: plan.height } };
   } catch {
     return { ok: false, error: ERR_DECODE };

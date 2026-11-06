@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
+import { t, useT } from '../../i18n';
 import { useDialog } from '../ui/a11y';
 
 type Listing = Awaited<ReturnType<typeof api.runnerDirectories>>;
@@ -19,6 +20,7 @@ export function directoryBreadcrumbs(path: string): { label: string; target: str
 }
 
 export function FolderPicker({ runnerId, initialPath, onChoose, onClose }: { runnerId: string; initialPath: string; onChoose: (path: string) => void; onClose: () => void }) {
+  const tr = useT();
   const [listing, setListing] = useState<Listing | null>(null);
   const [path, setPath] = useState(initialPath);
   const [showHidden, setShowHidden] = useState(false);
@@ -36,7 +38,7 @@ export function FolderPicker({ runnerId, initialPath, onChoose, onClose }: { run
         setListing(result);
         setPath(result.path);
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Не удалось открыть папку');
+        setError(e instanceof Error ? e.message : t('newSession.picker.openFailed'));
       } finally {
         setBusy(false);
       }
@@ -56,15 +58,15 @@ export function FolderPicker({ runnerId, initialPath, onChoose, onClose }: { run
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <section ref={dialog} data-own-escape className="modal folder-picker" role="dialog" aria-modal="true" aria-label="Выбрать папку" onMouseDown={e => e.stopPropagation()}>
+      <section ref={dialog} data-own-escape className="modal folder-picker" role="dialog" aria-modal="true" aria-label={tr('newSession.picker.title')} onMouseDown={e => e.stopPropagation()}>
         <header className="modal-head">
-          <b>Выбрать папку</b>
-          <button ref={firstAction} type="button" className="icon-btn" aria-label="Закрыть" onClick={onClose}>
+          <b>{tr('newSession.picker.title')}</b>
+          <button ref={firstAction} type="button" className="icon-btn" aria-label={tr('newSession.picker.close')} onClick={onClose}>
             ×
           </button>
         </header>
         <div className="modal-body">
-          <nav className="folder-crumbs" aria-label="Путь">
+          <nav className="folder-crumbs" aria-label={tr('newSession.picker.path')}>
             {listing &&
               directoryBreadcrumbs(listing.path).map(({ label, target }, i) => {
                 return (
@@ -83,16 +85,16 @@ export function FolderPicker({ runnerId, initialPath, onChoose, onClose }: { run
                 void load(path || undefined, e.target.checked);
               }}
             />{' '}
-            Показывать скрытые папки
+            {tr('newSession.picker.hidden')}
           </label>
           {error && (
             <div className="banner" role="alert">
-              {error}. Можно ввести путь вручную.
+              {tr('newSession.picker.manual', { error })}
             </div>
           )}
           <div className="folder-list" aria-busy={busy}>
             {busy ? (
-              <span>Загрузка…</span>
+              <span>{tr('newSession.picker.loading')}</span>
             ) : listing?.directories.length ? (
               listing.directories.map(dir => (
                 <button type="button" className="folder-entry" key={dir.path} title={dir.path} onClick={() => void load(dir.path)}>
@@ -101,19 +103,19 @@ export function FolderPicker({ runnerId, initialPath, onChoose, onClose }: { run
                 </button>
               ))
             ) : !error ? (
-              <span>Подпапок нет</span>
+              <span>{tr('newSession.picker.empty')}</span>
             ) : null}
           </div>
           <div className="folder-current">
-            <span title={listing?.path ?? path}>{(listing?.path ?? path) || 'Домашняя папка'}</span>
+            <span title={listing?.path ?? path}>{(listing?.path ?? path) || tr('newSession.picker.home')}</span>
             <button type="button" className="btn" disabled={!listing?.parent} onClick={() => listing?.parent && void load(listing.parent)}>
-              ↑ Вверх
+              {tr('newSession.picker.up')}
             </button>
           </div>
         </div>
         <footer className="modal-foot">
           <button type="button" className="btn" onClick={onClose}>
-            Отмена
+            {tr('newSession.picker.cancel')}
           </button>
           <button
             type="button"
@@ -124,7 +126,7 @@ export function FolderPicker({ runnerId, initialPath, onChoose, onClose }: { run
               onClose();
             }}
           >
-            Выбрать эту папку
+            {tr('newSession.picker.chooseThis')}
           </button>
         </footer>
       </section>

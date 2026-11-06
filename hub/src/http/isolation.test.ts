@@ -229,6 +229,7 @@ describe('isolation of users (integration)', () => {
     'GET /install.ps1': { url: '/install.ps1' },
     'GET /api/sidebar': { url: '/api/sidebar?cron=1', list: true },
     'GET /api/preferences/launch': { url: '/api/preferences/launch', list: true },
+    'PUT /api/preferences/locale': { url: '/api/preferences/locale', body: { locale: 'de' }, list: true },
     'GET /api/catalog/projects': { url: '/api/catalog/projects', list: true },
     'POST /api/catalog/projects': { url: '/api/catalog/projects', body: { name: 'Isolation probe' }, list: true },
     'DELETE /api/catalog/projects/:id': { url: `/api/catalog/projects/${o.catalogProject}` },

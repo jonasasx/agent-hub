@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react';
 import { ApiError, api } from '../../api/client';
 import { PROVIDER_LABELS, type ExtraProvider, type ProviderLoginStartView, type RunnerView } from '../../api/types';
+import { t, useT } from '../../i18n';
 import { useStore } from '../../store';
 import { loadSubscriptions } from '../subscriptions/actions';
 
@@ -28,13 +29,13 @@ export function codexRunners(runners: RunnerView[]): RunnerView[] {
 
 export function loginError(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.code === 'name_taken') return 'Подписка с таким именем уже есть';
-    if (err.code === 'runner_offline') return 'Машина не в сети';
-    if (err.code === 'agent_outdated') return 'Агент на машине устарел — обновите его';
-    if (err.code === 'subscriptions_disabled') return 'Хранение токенов не настроено: задайте SUBSCRIPTION_TOKEN_KEY';
+    if (err.code === 'name_taken') return t('machines.login.nameTaken');
+    if (err.code === 'runner_offline') return t('machines.login.runnerOffline');
+    if (err.code === 'agent_outdated') return t('machines.login.agentOutdated');
+    if (err.code === 'subscriptions_disabled') return t('machines.login.storageOff');
     if (err.serverMessage) return err.serverMessage;
   }
-  return 'Вход не начат. Проверьте, что машина в сети.';
+  return t('machines.login.notStarted');
 }
 
 /**
@@ -42,6 +43,7 @@ export function loginError(err: unknown): string {
  * existing one. `onStart` lets the caller check the name before anything leaves.
  */
 export function CodexLoginFlow({ name, subscriptionId, label, onStart, onEnd }: { name?: string; subscriptionId?: string; label: string; onStart?: () => boolean; onEnd?: (ok: boolean) => void }) {
+  const tr = useT();
   const runners = codexRunners(useStore(s => s.runners));
   const [runnerId, setRunnerId] = useState('');
   const [flow, setFlow] = useState<{ view: ProviderLoginStartView; runnerId: string } | null>(null);
@@ -54,7 +56,7 @@ export function CodexLoginFlow({ name, subscriptionId, label, onStart, onEnd }: 
     const l = (e: LoginEnd) => {
       if (e.loginId !== flow?.view.loginId) return;
       setFlow(null);
-      setMsg(e.ok ? { ok: true, text: 'Вход выполнен' } : { ok: false, text: `Вход не выполнен${e.error ? `: ${e.error}` : ''}` });
+      setMsg(e.ok ? { ok: true, text: t('machines.login.done') } : { ok: false, text: e.error ? t('machines.login.failedWith', { error: e.error }) : t('machines.login.failed') });
       onEnd?.(e.ok);
     };
     listeners.add(l);
@@ -81,13 +83,13 @@ export function CodexLoginFlow({ name, subscriptionId, label, onStart, onEnd }: 
     if (f) await api.providerLoginCancel(f.runnerId, 'codex', f.view.loginId).catch(() => undefined);
   };
 
-  if (runners.length === 0) return <p className="hint">Нет машины в сети с установленным Codex — войти в ChatGPT не получится.</p>;
+  if (runners.length === 0) return <p className="hint">{tr('machines.login.noRunner')}</p>;
   return (
     <div className="prov-login">
       {!flow && (
         <div className="subs-edit-row">
           {runners.length > 1 && (
-            <select className="input" aria-label="Машина для входа" value={machine?.id ?? ''} onChange={e => setRunnerId(e.target.value)}>
+            <select className="input" aria-label={tr('machines.login.machineLabel')} value={machine?.id ?? ''} onChange={e => setRunnerId(e.target.value)}>
               {runners.map(r => (
                 <option key={r.id} value={r.id}>
                   {r.name}
@@ -96,18 +98,18 @@ export function CodexLoginFlow({ name, subscriptionId, label, onStart, onEnd }: 
             </select>
           )}
           <button type="button" className="btn primary" disabled={busy} onClick={() => void start()}>
-            {busy ? 'Запрашиваем код…' : label}
+            {busy ? tr('machines.login.requesting') : label}
           </button>
         </div>
       )}
       {flow && (
         <div className="prov-flow" role="status">
           <span>
-            Откройте{' '}
+            {tr('machines.login.flowBefore')}{' '}
             <a href={flow.view.verificationUrl} target="_blank" rel="noreferrer">
               {flow.view.verificationUrl}
             </a>{' '}
-            на любом устройстве, войдите в ChatGPT и введите код:
+            {tr('machines.login.flowAfter')}
           </span>
           <span className="prov-code">
             <code>{flow.view.userCode}</code>
@@ -118,15 +120,19 @@ export function CodexLoginFlow({ name, subscriptionId, label, onStart, onEnd }: 
                 void navigator.clipboard?.writeText(flow.view.userCode).then(() => setCopied(true));
               }}
             >
-              {copied ? 'Скопировано' : 'Копировать'}
+              {copied ? tr('machines.login.copied') : tr('machines.login.copy')}
             </button>
           </span>
           <span className="hint">
-            <span className="spinner" aria-hidden="true" /> Ждём подтверждения на {runners.find(r => r.id === flow.runnerId)?.name ?? 'машине'}…
+            <span className="spinner" aria-hidden="true" />{' '}
+            {(() => {
+              const waitingOn = runners.find(r => r.id === flow.runnerId)?.name;
+              return waitingOn ? tr('machines.login.waiting', { name: waitingOn }) : tr('machines.login.waitingFallback');
+            })()}
           </span>
           <span>
             <button type="button" className="btn ghost" onClick={() => void cancel()}>
-              Отмена
+              {tr('machines.login.cancel')}
             </button>
           </span>
         </div>
@@ -142,6 +148,7 @@ export function CodexLoginFlow({ name, subscriptionId, label, onStart, onEnd }: 
 
 /** The CLI of a provider on «Машины»: its version; the sign-in is a subscription now («Настройки → Подписки»). */
 export function ProviderStatusRow({ r, provider }: { r: RunnerView; provider: ExtraProvider }) {
+  const tr = useT();
   const st = r.providers?.find(p => p.id === provider);
   if (!st) return null;
   return (
@@ -149,7 +156,7 @@ export function ProviderStatusRow({ r, provider }: { r: RunnerView; provider: Ex
       <dt>{PROVIDER_LABELS[provider]}</dt>
       <dd className="ag">
         <span className="mc-ver">{st.version ? <span className="num">{st.version}</span> : '—'}</span>
-        <span className="hint">вход — в «Подписки»</span>
+        <span className="hint">{tr('machines.login.statusRow')}</span>
       </dd>
     </div>
   );

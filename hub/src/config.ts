@@ -106,12 +106,6 @@ const schema = z.object({
   ALERT_HOST_LABEL: z.string().default('hub'),
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
-  /** The vault as mounted into the hub (D9 p. 1: INDEX.md, 40-automation/repos.txt); unset — built-in projects only. */
-  VAULT_DIR: z.string().optional(),
-  /** mapping.csv of the 2026-10-04 restructuring (old vault paths → new, D9 p. 3); unset or missing — no translation. */
-  LEGACY_PATHS_FILE: z.string().optional(),
-  /** Remotes of the vault itself (comma-separated): no project by remote. */
-  VAULT_REMOTES: z.string().default(''),
   /** The model of handoff.generate (D14; brief Q48: Sonnet until measured). */
   HANDOFF_MODEL: z.string().min(1).default('sonnet'),
   /** import:drive (task 3.12, D16): Google OAuth token file (read-only) and the Drive folder of session exports. */

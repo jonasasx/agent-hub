@@ -8,14 +8,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../api/client';
 import { SECURITY_LOG_DAYS, type SecurityEventView, type SecurityResponse } from '../../api/types';
+import { t, useT } from '../../i18n';
 import { useStore } from '../../store';
-import { dateTime, plural } from '../machines/machines';
+import { dateTime } from '../machines/machines';
 import { PROVIDER_LABEL } from './UsersPage';
 
 /** «Chrome · Windows» from a user agent; the raw string when nothing is recognised. */
 export function browserLabel(ua: string | null): string {
-  if (!ua) return 'неизвестный браузер';
-  if (/AgentHub|Electron/i.test(ua)) return 'приложение Agent Hub';
+  if (!ua) return t('settings.security.browserUnknown');
+  if (/AgentHub|Electron/i.test(ua)) return t('settings.security.browserApp');
   const b = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : null;
   const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows' : /Mac OS X|Macintosh/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : null;
   if (!b && !os) return ua.slice(0, 60);
@@ -23,29 +24,30 @@ export function browserLabel(ua: string | null): string {
 }
 
 export function eventText(e: SecurityEventView): string {
-  const m = e.runner?.name ?? 'машина';
-  const from = e.ip ? ` с адреса ${e.ip}` : '';
+  const machine = e.runner?.name ?? t('settings.security.machineFallback');
+  const from = e.ip ? ` ${t('settings.security.from', { ip: e.ip })}` : '';
   switch (e.kind) {
     case 'login':
-      return `Вход${e.provider ? ` через ${PROVIDER_LABEL[e.provider]}` : ''}${from}`;
+      return `${e.provider ? t('settings.security.event.loginVia', { provider: PROVIDER_LABEL[e.provider] }) : t('settings.security.event.login')}${from}`;
     case 'login_denied':
-      return `Отказ во входе${from}`;
+      return `${t('settings.security.event.loginDenied')}${from}`;
     case 'logout_all':
-      return 'Выход на всех устройствах';
+      return t('settings.security.event.logoutAll');
     case 'runner_connected':
-      return `Подключена машина ${m}${from}`;
+      return `${t('settings.security.event.runnerConnected', { machine })}${from}`;
     case 'runner_disconnected':
-      return `Отключилась машина ${m}`;
+      return t('settings.security.event.runnerDisconnected', { machine });
     case 'enroll_code_issued':
-      return `Выдан код подключения для ${m}`;
+      return t('settings.security.event.codeIssued', { machine });
     case 'enroll_code_used':
-      return `Код подключения ${m} использован${from}`;
+      return `${t('settings.security.event.codeUsed', { machine })}${from}`;
   }
 }
 
 type Load = { kind: 'loading' } | { kind: 'error' } | { kind: 'ok'; data: SecurityResponse };
 
 export function SecurityPage() {
+  const tr = useT();
   const [load, setLoad] = useState<Load>({ kind: 'loading' });
   const [busy, setBusy] = useState(false);
   const pushToast = useStore(s => s.pushToast);
@@ -62,13 +64,13 @@ export function SecurityPage() {
     try {
       const r = await api.logoutAll();
       pushToast({
-        title: 'Выход выполнен',
-        text: r.ended ? `Завершено ${r.ended} ${plural(r.ended, ['сеанс', 'сеанса', 'сеансов'])} на других устройствах` : 'Других активных сеансов не было',
+        title: tr('settings.security.loggedOut'),
+        text: r.ended ? tr('settings.security.ended', { count: r.ended }) : tr('settings.security.noOthers'),
         color: 'var(--ok)',
       });
       fetchAll();
     } catch {
-      pushToast({ title: 'Не получилось', text: 'Хаб не ответил. Проверьте связь и попробуйте ещё раз.', color: 'var(--bad)' });
+      pushToast({ title: tr('settings.security.failed'), text: tr('settings.common.hubNoAnswer'), color: 'var(--bad)' });
     } finally {
       setBusy(false);
     }
@@ -78,40 +80,40 @@ export function SecurityPage() {
   return (
     <section aria-labelledby="set-security">
       <div className="set-head">
-        <h2 id="set-security">Безопасность</h2>
+        <h2 id="set-security">{tr('settings.security.title')}</h2>
       </div>
       {load.kind === 'loading' && (
         <p className="hint" role="status">
-          <span className="spinner" aria-hidden="true" /> Загрузка…
+          <span className="spinner" aria-hidden="true" /> {tr('settings.common.loading')}
         </p>
       )}
       {load.kind === 'error' && (
         <div className="err-box" role="alert">
-          Журнал не загружен.{' '}
+          {tr('settings.security.loadError')}{' '}
           <button type="button" className="btn" onClick={fetchAll}>
-            Повторить
+            {tr('settings.common.retry')}
           </button>
         </div>
       )}
       {load.kind === 'ok' && (
         <>
-          <h3 className="set-sub">Активные сеансы</h3>
+          <h3 className="set-sub">{tr('settings.security.sessions')}</h3>
           <ul className="slist">
             {load.data.sessions.map(s => (
               <li key={s.id} className="srow-sec">
                 <span className="s-br">{browserLabel(s.userAgent)}</span>
-                {s.current && <span className="tag ok">это устройство</span>}
-                <span className="s-at">вход {dateTime(s.createdAt)}</span>
+                {s.current && <span className="tag ok">{tr('settings.security.thisDevice')}</span>}
+                <span className="s-at">{tr('settings.security.signedInAt', { at: dateTime(s.createdAt) })}</span>
               </li>
             ))}
           </ul>
           <div className="set-actions">
             <button type="button" className="btn" disabled={busy || !others} onClick={() => void logoutAll()}>
-              {busy ? 'Выходим…' : 'Выйти на всех устройствах'}
+              {busy ? tr('settings.security.logoutBusy') : tr('settings.security.logoutAll')}
             </button>
-            <span className="hint">{others ? 'Это устройство останется в системе.' : 'Других активных сеансов нет.'}</span>
+            <span className="hint">{others ? tr('settings.security.logoutKept') : tr('settings.security.logoutNone')}</span>
           </div>
-          <h3 className="set-sub">Журнал за {SECURITY_LOG_DAYS} дней</h3>
+          <h3 className="set-sub">{tr('settings.security.log', { count: SECURITY_LOG_DAYS })}</h3>
           {load.data.events.length ? (
             <ul className="elist">
               {load.data.events.map(e => (
@@ -125,7 +127,7 @@ export function SecurityPage() {
               ))}
             </ul>
           ) : (
-            <p className="empty-note">Записей пока нет.</p>
+            <p className="empty-note">{tr('settings.security.logEmpty')}</p>
           )}
         </>
       )}

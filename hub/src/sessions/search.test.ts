@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { SearchResponse } from '@agent-hub/shared';
 import { FIXTURE_VAULT, PUBLIC_URL, agentSend, connectFakeAgent, startTestHub, waitFor, type FakeAgent, type TestHub } from '../test/harness.js';
+import { seedFixtureVault } from '../test/legacyCatalog.js';
 import * as F from '../test/transcriptFixtures.js';
 import { splitHeadline } from './search.js';
 
@@ -32,9 +33,10 @@ describe('search (integration)', () => {
   }
 
   beforeAll(async () => {
-    t = await startTestHub({ env: { VAULT_DIR: FIXTURE_VAULT } });
+    t = await startTestHub();
     const token = await t.addRunner('hp', 'HP');
     cookie = await t.login();
+    await seedFixtureVault(t.tdb.db, t.hub.projects.catalog, FIXTURE_VAULT);
     agent = connectFakeAgent(t.wsBase, token);
     agent.ws.on('message', d => got.push(JSON.parse(d.toString()) as { type: string; payload: Record<string, unknown> }));
     await agent.next('welcome');

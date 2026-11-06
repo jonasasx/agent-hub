@@ -3,6 +3,7 @@ import { Menu, Tray, nativeImage, type MenuItemConstructorOptions } from 'electr
 import { join } from 'node:path';
 import { HOTKEY_CHOICES, hotkeyMenuLabel } from '../core/hotkey.js';
 import { menuStateKey, type TrayMenuState, type TrayView } from '../core/trayView.js';
+import { dt } from '../core/i18n.js';
 
 export type { TrayMenuState };
 
@@ -58,24 +59,24 @@ export class AppTray {
     const a = this.actions;
     const hotkeys: MenuItemConstructorOptions[] = [
       ...HOTKEY_CHOICES.map((accel): MenuItemConstructorOptions => ({ label: accel, type: 'radio', checked: m.hotkey === accel, click: () => a.setHotkey(accel) })),
-      { label: 'Отключить', type: 'radio', checked: m.hotkey === null, click: () => a.setHotkey(null) },
+      { label: dt('desktop.tray.hotkeyOff'), type: 'radio', checked: m.hotkey === null, click: () => a.setHotkey(null) },
     ];
     if (m.hotkey !== null && !HOTKEY_CHOICES.includes(m.hotkey)) {
-      hotkeys.unshift({ label: `${m.hotkey} (из config.json)`, type: 'radio', checked: true, click: () => a.setHotkey(m.hotkey) });
+      hotkeys.unshift({ label: dt('desktop.tray.hotkeyFromConfig', { hotkey: m.hotkey }), type: 'radio', checked: true, click: () => a.setHotkey(m.hotkey) });
     }
     const items: MenuItemConstructorOptions[] = [
       { label: `Agent Hub ${m.version}`, enabled: false },
       { type: 'separator' },
-      m.windowVisible ? { label: 'Скрыть окно', click: () => a.hideWindow() } : { label: 'Показать окно', click: () => a.showWindow() },
+      m.windowVisible ? { label: dt('desktop.tray.hideWindow'), click: () => a.hideWindow() } : { label: dt('desktop.tray.showWindow'), click: () => a.showWindow() },
     ];
-    if (m.signedOut) items.push({ label: 'Войти', click: () => a.signIn() });
+    if (m.signedOut) items.push({ label: dt('desktop.tray.signIn'), click: () => a.signIn() });
     items.push(
       { type: 'separator' },
       { label: hotkeyMenuLabel(m.hotkey, m.hotkeyRegistered), submenu: hotkeys },
-      { label: 'Запускать при входе в Windows', type: 'checkbox', checked: m.autostart, click: item => a.setAutostart(item.checked) },
-      m.updateReady ? { label: 'Перезапустить и обновить', click: () => a.installUpdate() } : { label: 'Проверить обновления', click: () => a.checkUpdates() },
+      { label: dt('desktop.tray.autostart'), type: 'checkbox', checked: m.autostart, click: item => a.setAutostart(item.checked) },
+      m.updateReady ? { label: dt('desktop.tray.restartUpdate'), click: () => a.installUpdate() } : { label: dt('desktop.tray.checkUpdates'), click: () => a.checkUpdates() },
       { type: 'separator' },
-      { label: 'Выход', click: () => a.quit() },
+      { label: dt('desktop.tray.quit'), click: () => a.quit() },
     );
     return items;
   }

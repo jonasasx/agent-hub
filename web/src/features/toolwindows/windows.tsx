@@ -12,6 +12,7 @@ import { SessionsWindow } from '../sidebar/SessionsWindow';
 import type { WinId } from './dock';
 import { WIN_TITLE } from './dock';
 import { IconPlus, IconRefresh, IconSearch } from './icons';
+import { t } from '../../i18n';
 
 export interface HeaderAction {
   icon: ReactNode;
@@ -37,27 +38,41 @@ function limitsRefresh(): void {
 export const WINDOWS: Record<WinId, WinDef> = {
   sessions: {
     id: 'sessions',
-    title: WIN_TITLE.sessions,
+    get title() {
+      return WIN_TITLE.sessions;
+    },
     fit: false,
     Body: SessionsWindow,
     actions: () => [
-      { icon: IconPlus, title: 'Новая сессия', run: () => useStore.setState({ modal: { type: 'new' } }) },
-      { icon: IconSearch, title: 'Поиск', run: () => useStore.setState({ modal: { type: 'search' } }) },
+      { icon: IconPlus, title: t('workspace.toolwindows.newSession'), run: () => useStore.setState({ modal: { type: 'new' } }) },
+      { icon: IconSearch, title: t('workspace.toolwindows.search'), run: () => useStore.setState({ modal: { type: 'search' } }) },
     ],
   },
-  files: { id: 'files', title: WIN_TITLE.files, fit: false, Body: FilesWindow, actions: () => [] },
+  files: {
+    id: 'files',
+    get title() {
+      return WIN_TITLE.files;
+    },
+    fit: false,
+    Body: FilesWindow,
+    actions: () => [],
+  },
   machines: {
     id: 'machines',
-    title: WIN_TITLE.machines,
+    get title() {
+      return WIN_TITLE.machines;
+    },
     fit: true,
     Body: MachinesWindow,
     actions: () => [],
   },
   subs: {
     id: 'subs',
-    title: WIN_TITLE.subs,
+    get title() {
+      return WIN_TITLE.subs;
+    },
     fit: true,
     Body: SubscriptionsWindow,
-    actions: () => [{ icon: IconRefresh, title: 'Обновить лимиты (короткий запрос к Haiku)', run: limitsRefresh }],
+    actions: () => [{ icon: IconRefresh, title: t('workspace.toolwindows.refreshLimits'), run: limitsRefresh }],
   },
 };

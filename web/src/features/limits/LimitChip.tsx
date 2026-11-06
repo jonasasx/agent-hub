@@ -6,12 +6,14 @@
  */
 import type { SessionView } from '../../api/types';
 import { useStore } from '../../store';
+import { useT } from '../../i18n';
 import { headState } from '../subscriptions/model';
 import { runnerIndex } from '../sessions/status';
 import { openLimitCard } from './actions';
 import { LevelBadge, useHubNow, useLimitRows } from './parts';
 
 export function LimitChip({ s, phone }: { s: SessionView; phone?: boolean }) {
+  const t = useT();
   const now = useHubNow();
   const rows = useLimitRows(now);
   const subs = useStore(st => st.subs);
@@ -21,7 +23,7 @@ export function LimitChip({ s, phone }: { s: SessionView; phone?: boolean }) {
   const d = rows.find(r => r.sub.id === st.value);
   if (!d) return null;
   const { sub, row } = d;
-  const label = `Лимиты ${sub.name}: ${row.aria}`;
+  const label = t('limits.chip.label', { name: sub.name, aria: row.aria });
   return (
     <button
       type="button"

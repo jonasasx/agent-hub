@@ -1,12 +1,10 @@
 // M4a (tasks 4.4–4.7, Ivan's «идёт вне хаба»): signals from replicated lines, decisions with the toast, the API of
 // moving and pinning, the sidebar by projects, projects:reclassify, a session written outside the hub right now.
 import { randomUUID } from 'node:crypto';
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ProjectListItem, SessionView, SidebarResponse } from '@agent-hub/shared';
-import { FIXTURE_MAPPING, FIXTURE_VAULT, PUBLIC_URL, agentSend, connectFakeAgent, connectUi, startTestHub, waitFor, type FakeAgent, type TestHub } from '../test/harness.js';
+import { FIXTURE_VAULT, PUBLIC_URL, agentSend, connectFakeAgent, connectUi, startTestHub, waitFor, type FakeAgent, type TestHub } from '../test/harness.js';
+import { seedFixtureVault } from '../test/legacyCatalog.js';
 import * as F from '../test/transcriptFixtures.js';
 import { runCli } from '../cliCommands.js';
 import { ProjectService, withDbRetry } from './service.js';
@@ -49,15 +47,12 @@ describe('projects (integration)', () => {
     return (await t.tdb.pool.query<{ id: string }>(`SELECT id FROM sessions WHERE claude_session_id = $1`, [sid])).rows[0]!.id;
   }
 
-  // A copy of the fixture vault: the last test changes its INDEX.md.
-  const vaultDir = mkdtempSync(join(tmpdir(), 'agenthub-int-vault-'));
-  cpSync(FIXTURE_VAULT, vaultDir, { recursive: true });
-
   beforeAll(async () => {
-    t = await startTestHub({ env: { VAULT_DIR: vaultDir, LEGACY_PATHS_FILE: FIXTURE_MAPPING }, sessions: { now: () => new Date(clock), idleCheckMs: 0 } });
+    t = await startTestHub({ sessions: { now: () => new Date(clock), idleCheckMs: 0 } });
     const hpToken = await t.addRunner('hp', 'HP');
     const vmToken = await t.addRunner('vm', 'ВМ .3');
     cookie = await t.login();
+    await seedFixtureVault(t.tdb.db, t.hub.projects.catalog, FIXTURE_VAULT);
     hp = connectFakeAgent(t.wsBase, hpToken);
     vm = connectFakeAgent(t.wsBase, vmToken, { hostname: 'vault', os: 'Ubuntu 24.04', homeDir: '/home/ubuntu', vaultRoot: '/home/ubuntu/vault' });
     for (const a of [hp, vm]) a.ws.on('message', d => got.push(JSON.parse(d.toString()) as { type: string; payload: Record<string, unknown> }));
@@ -66,7 +61,6 @@ describe('projects (integration)', () => {
   });
   afterAll(async () => {
     await t.close();
-    rmSync(vaultDir, { recursive: true, force: true });
   });
 
   it('a session in the vault root with 2 edits in 05-agent-hub: the project, the evidence and the toast; a re-sent chunk adds no touches', async () => {
@@ -83,10 +77,15 @@ describe('projects (integration)', () => {
     expect(await view(id)).toMatchObject({
       project: { title: '05-agent-hub', colorKey: expect.any(String), kind: 'system', path: '20-personal/05-pos/systems/05-agent-hub' },
       projectSource: 'auto',
-      projectEvidence: '2 правки в 05-agent-hub',
+      projectEvidence: '2 edits in 05-agent-hub',
     });
     await waitFor(() => ui.received.some(m => m.type === 'toast' && m.kind === 'project_auto'));
-    expect(ui.received.find(m => m.type === 'toast')).toMatchObject({ kind: 'project_auto', sessionId: id, text: 'Проект определён: правки agent-hub → 05-agent-hub' });
+    expect(ui.received.find(m => m.type === 'toast')).toMatchObject({
+      kind: 'project_auto',
+      sessionId: id,
+      text: 'Project detected: правки agent-hub → 05-agent-hub',
+      i18n: { key: 'hub.app.toastProjectAuto', params: { title: 'правки agent-hub', project: '05-agent-hub' } },
+    });
     const touches = async () => Number((await t.tdb.pool.query(`SELECT count(*) AS n FROM path_touches WHERE session_id = $1`, [id])).rows[0].n);
     expect(await touches()).toBe(2);
     agentSend(hp, 'repl.chunk', { relPath: `c--x/${sid}.jsonl`, kind: 'main', sessionId: sid, generation: 0, fromLine: 0, fromByte: 0, lines: lines.map(l => JSON.stringify(l)), endByte: 300 });
@@ -113,26 +112,9 @@ describe('projects (integration)', () => {
     expect((await view(id2)).project.id).toBeNull();
   });
 
-  it('an imported session of an unknown machine with old-structure paths: 04-systems/16-scanner-fleet → 02-scanner-fleet', async () => {
-    const uid = (await t.tdb.pool.query(`SELECT user_id FROM runners WHERE id = 'hp'`)).rows[0].user_id;
-    await t.tdb.pool.query(`INSERT INTO runners (id, user_id, name) VALUES ('unknown-old-laptop', $1, 'old-laptop (машина неизвестна)')`, [uid]);
-    const sid = randomUUID();
-    const o = { sessionId: sid, cwd: 'C:\\Users\\old\\vault', entrypoint: 'cli' as const, ts: '2026-09-20T10:00:00.000Z' };
-    const lines = [F.userText(o, 'правлю карточку флота'), edit(o, 'C:\\Users\\old\\vault\\04-systems\\16-scanner-fleet\\CLAUDE.md')].map(l => JSON.stringify(l));
-    await t.hub.sessions.replication!.onChunk(
-      'unknown-old-laptop',
-      { relPath: `drive-import/${sid}.jsonl`, kind: 'main', sessionId: sid, generation: 0, fromLine: 0, fromByte: 0, lines, endByte: 500 },
-      { driveImport: true, readOnly: 'unknown_runner' },
-    );
-    await t.hub.projects.flush();
-    const id = (await t.tdb.pool.query(`SELECT id FROM sessions WHERE claude_session_id = $1`, [sid])).rows[0].id;
-    expect(await view(id)).toMatchObject({ project: { title: '02-scanner-fleet' }, projectEvidence: '1 правка в 02-scanner-fleet' });
-    expect((await t.tdb.pool.query(`SELECT path_norm FROM path_touches WHERE session_id = $1`, [id])).rows.map(r => r.path_norm)).toEqual(['10-work/01-scanner/repos/scanner-fleet/CLAUDE.md']);
-  });
-
   it('move = pin: holds after 5 edits in 01-ledger; unpin gives the classifier decision; pin; 422 unknown_project; the catalogue and the sidebar', async () => {
     const list = (await api('GET', '/api/projects')).json() as ProjectListItem[];
-    expect(list.at(-1)).toEqual({ id: 'none', kind: 'none', title: 'Без проекта', path: '', areaPath: null, colorKey: 'none', archived: false });
+    expect(list.at(-1)).toEqual({ id: 'none', kind: 'none', title: 'No project', i18n: { key: 'hub.api.noProject' }, path: '', areaPath: null, colorKey: 'none', archived: false });
     const bridge = list.find(p => p.title === '03-mm-sms-bridge')!;
     expect(list.find(p => p.title === 'Vault')).toMatchObject({ kind: 'builtin', path: '00-meta · 40-automation · .claude' });
     const sid = randomUUID();
@@ -142,14 +124,14 @@ describe('projects (integration)', () => {
     await ui.open;
     const moved = await api('PUT', `/api/sessions/${id}/project`, { projectId: bridge.id });
     expect(moved.statusCode).toBe(200);
-    expect(moved.json()).toMatchObject({ project: { title: '03-mm-sms-bridge' }, projectSource: 'manual', projectEvidence: 'закреплено вручную' });
+    expect(moved.json()).toMatchObject({ project: { title: '03-mm-sms-bridge' }, projectSource: 'manual', projectEvidence: 'pinned manually' });
     await waitFor(() => ui.received.some(m => m.type === 'toast' && m.kind === 'project_pinned'));
     const ledger = Array.from({ length: 5 }, (_, i) => edit(o, `${VAULT}\\20-personal\\01-finance\\systems\\01-ledger\\f${i}.py`));
     await chunk(hp, sid, `c--pin/${sid}.jsonl`, ledger, 1);
     expect(await view(id)).toMatchObject({ project: { title: '03-mm-sms-bridge' }, projectSource: 'manual' });
     expect((await t.tdb.pool.query(`SELECT project_id FROM classification_labels WHERE session_id = $1`, [id])).rows[0].project_id).toBe(bridge.id);
     const un = await api('DELETE', `/api/sessions/${id}/pin`);
-    expect(un.json()).toMatchObject({ project: { title: '01-ledger' }, projectSource: 'auto', projectEvidence: '5 правок в 01-ledger' });
+    expect(un.json()).toMatchObject({ project: { title: '01-ledger' }, projectSource: 'auto', projectEvidence: '5 edits in 01-ledger' });
     expect((await t.tdb.pool.query(`SELECT count(*)::int AS n FROM classification_labels WHERE session_id = $1`, [id])).rows[0].n).toBe(0);
     const twice = await api('DELETE', `/api/sessions/${id}/pin`);
     expect(twice.statusCode).toBe(409);
@@ -158,7 +140,7 @@ describe('projects (integration)', () => {
     const bad = await api('PUT', `/api/sessions/${id}/project`, { projectId: randomUUID() });
     expect(bad.statusCode).toBe(422);
     expect(bad.json()).toMatchObject({ error: 'unknown_project' });
-    expect((await api('PUT', `/api/sessions/${id}/project`, { projectId: 'none' })).json()).toMatchObject({ project: { id: null, title: 'Без проекта' }, projectSource: 'manual' });
+    expect((await api('PUT', `/api/sessions/${id}/project`, { projectId: 'none' })).json()).toMatchObject({ project: { id: null, title: 'No project' }, projectSource: 'manual' });
     // the sidebar: projects with sessions, «Без проекта» last; «ещё N» of a project
     const sb = (await api('GET', '/api/sidebar')).json() as SidebarResponse;
     expect(sb.projects.at(-1)!.project.id).toBeNull();
@@ -176,10 +158,10 @@ describe('projects (integration)', () => {
   it('projects:reclassify: --dry-run writes nothing, without it the touches and projects are rebuilt, pinned untouched', async () => {
     await t.tdb.pool.query(`UPDATE sessions SET project_id = NULL, project_source = 'none', project_evidence = NULL WHERE project_source = 'auto'`);
     await t.tdb.pool.query(`DELETE FROM path_touches`);
-    const env = { VAULT_DIR: FIXTURE_VAULT, LEGACY_PATHS_FILE: FIXTURE_MAPPING };
+    const env = {};
     const out: string[] = [];
     expect(await runCli(['projects:reclassify', '--dry-run'], t.tdb.db, s => out.push(s), env)).toBe(0);
-    expect(out.join('\n')).toMatch(/dry run: sessions \d+: with a project 3, without \d+, pinned 1/);
+    expect(out.join('\n')).toMatch(/dry run: sessions \d+: with a project 2, without \d+, pinned 1/);
     expect(out.join('\n')).toContain('05-agent-hub');
     const freshOut: string[] = [];
     expect(await runCli(['projects:reclassify', '--dry-run', '--fresh'], t.tdb.db, x => freshOut.push(x), env)).toBe(0);
@@ -190,14 +172,13 @@ describe('projects (integration)', () => {
     const ui = connectUi(t.wsBase, cookie);
     await ui.open;
     expect(await runCli(['projects:reclassify'], t.tdb.db, s => out.push(s), env)).toBe(0);
-    expect(out[out.findIndex(l => l.startsWith('sessions'))]).toMatch(/with a project 3, without \d+, pinned 1, errors 0/);
+    expect(out[out.findIndex(l => l.startsWith('sessions'))]).toMatch(/with a project 2, without \d+, pinned 1, errors 0/);
     // The CLI is another process: NOTIFY → the hub's LISTEN → projects.changed to the windows (no F5).
     await waitFor(() => ui.received.some(m => m.type === 'projects.changed'));
     ui.ws.close();
     const rows = (await t.tdb.pool.query(`SELECT p.title, s.project_source FROM sessions s LEFT JOIN projects p ON p.id = s.project_id WHERE s.project_source <> 'none' ORDER BY p.title NULLS LAST`))
       .rows;
     expect(rows).toEqual([
-      { title: '02-scanner-fleet', project_source: 'auto' },
       { title: '02-scanner-fleet', project_source: 'auto' },
       { title: '05-agent-hub', project_source: 'auto' },
       { title: null, project_source: 'manual' },
@@ -270,9 +251,9 @@ describe('projects (integration)', () => {
     });
     try {
       const out: string[] = [];
-      expect(await runCli(['projects:reclassify', '--dry-run'], t.tdb.db, s => out.push(s), { VAULT_DIR: FIXTURE_VAULT, LEGACY_PATHS_FILE: FIXTURE_MAPPING })).toBe(1);
+      expect(await runCli(['projects:reclassify', '--dry-run'], t.tdb.db, s => out.push(s), {})).toBe(1);
       expect(out.join('\n')).toContain(`error: session ${bad}: boom`);
-      expect(out.join('\n')).toMatch(/with a project 2, without \d+, pinned 1, errors 1/);
+      expect(out.join('\n')).toMatch(/with a project 1, without \d+, pinned 1, errors 1/);
     } finally {
       spy.mockRestore();
     }
@@ -322,38 +303,12 @@ describe('projects (integration)', () => {
     }
   });
 
-  it('catalog refresh preserves stored legacy group colors', async () => {
+  it('the catalogue reload reads the stored legacy group colors from the DB', async () => {
     const row = (await t.tdb.pool.query(`SELECT id, color_key FROM projects WHERE slug='05-agent-hub' LIMIT 1`)).rows[0];
     await t.tdb.pool.query(`UPDATE projects SET color_key='rose' WHERE id=$1`, [row.id]);
-    await t.hub.projects.catalog.reload(true);
+    await t.hub.projects.catalog.load();
     expect(t.hub.projects.catalog.row(row.id)?.colorKey).toBe('rose');
-    await t.hub.projects.catalog.reload(true);
-    expect((await t.tdb.pool.query(`SELECT color_key FROM projects WHERE id=$1`, [row.id])).rows[0].color_key).toBe('rose');
     await t.tdb.pool.query(`UPDATE projects SET color_key=$1 WHERE id=$2`, [row.color_key, row.id]);
-    await t.hub.projects.catalog.reload(true);
-  });
-
-  it('review M4a p. 9: a project removed from INDEX.md — one projects.changed, no session.upsert per session; its session decided again', async () => {
-    const ui = connectUi(t.wsBase, cookie);
-    await ui.open;
-    const ah = (
-      await t.tdb.pool.query(`SELECT s.id FROM sessions s JOIN projects p ON p.id = s.project_id WHERE p.slug = '05-agent-hub' AND s.project_source = 'auto' AND s.title = 'правки agent-hub'`)
-    ).rows.map(r => r.id as string);
-    expect(ah).toHaveLength(1);
-    const index = readFileSync(join(vaultDir, 'INDEX.md'), 'utf8');
-    writeFileSync(
-      join(vaultDir, 'INDEX.md'),
-      index
-        .split('\n')
-        .filter(l => !l.startsWith('- [`05-agent-hub`]'))
-        .join('\n'),
-    );
-    expect(await t.hub.projects.catalog.reload(true)).toBe(true);
-    await waitFor(() => ui.received.some(m => m.type === 'projects.changed'));
-    await new Promise(r => setTimeout(r, 200));
-    expect(ui.received.filter(m => m.type === 'projects.changed')).toHaveLength(1);
-    expect(ui.received.filter(m => m.type === 'session.upsert')).toHaveLength(0);
-    expect(await view(ah[0]!)).toMatchObject({ project: { title: 'Personal OS', kind: 'area' }, projectSource: 'auto' });
-    ui.ws.close();
+    await t.hub.projects.catalog.load();
   });
 });

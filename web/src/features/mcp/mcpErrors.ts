@@ -1,3 +1,5 @@
+import { t } from '../../i18n';
+
 export type McpTransport = 'stdio' | 'http' | 'sse';
 
 export interface McpErrorMessage {
@@ -13,11 +15,11 @@ export function mcpErrorMessage(error: unknown, transport: McpTransport): McpErr
   const exitCode = details.match(/(?:process\s+)?exited with code\s+(-?\d+)/i)?.[1];
 
   if (transport !== 'stdio' && status && (status === '404' || Number(status) >= 500)) {
-    return { message: `Адрес не отвечает как MCP-сервер (HTTP ${status}).`, details };
+    return { message: t('mcp.error.httpNotMcp', { status }), details };
   }
 
   if (timeoutSeconds) {
-    const message = `Сервер не ответил за ${timeoutSeconds} с. При первом запуске через npx/uvx пакет может скачиваться — повторите проверку.`;
+    const message = t('mcp.error.timeout', { seconds: timeoutSeconds });
     return {
       message,
       details: details === message ? '' : details,
@@ -25,29 +27,29 @@ export function mcpErrorMessage(error: unknown, transport: McpTransport): McpErr
   }
 
   if (missingCommand) {
-    return { message: `На машине нет команды ${missingCommand}. Установите её или укажите полный путь.`, details };
+    return { message: t('mcp.error.noCommand', { command: missingCommand }), details };
   }
 
-  if (exitCode) return { message: `Процесс сервера завершился с кодом ${exitCode}.`, details };
+  if (exitCode) return { message: t('mcp.error.exitCode', { code: exitCode }), details };
 
-  if (status === '401' || status === '403') return { message: 'Сервер отклонил доступ. Проверьте секрет.', details };
+  if (status === '401' || status === '403') return { message: t('mcp.error.accessDenied'), details };
 
   if (transport === 'stdio' && status) {
-    return { message: 'Процесс MCP-сервера не удалось запустить или он завершился с ошибкой.', details };
+    return { message: t('mcp.error.processFailed'), details };
   }
 
-  const message = details || 'Не выполнено';
+  const message = details || t('mcp.error.failed');
   return { message, details: message === details ? '' : details };
 }
 
 function errorText(error: unknown): string {
   if (error instanceof Error) {
     const serverMessage = 'serverMessage' in error && typeof error.serverMessage === 'string' ? error.serverMessage : '';
-    return serverMessage || error.message || 'Не выполнено';
+    return serverMessage || error.message || t('mcp.error.failed');
   }
 
-  if (typeof error === 'string') return error || 'Не выполнено';
-  return error == null ? 'Не выполнено' : String(error);
+  if (typeof error === 'string') return error || t('mcp.error.failed');
+  return error == null ? t('mcp.error.failed') : String(error);
 }
 
 function getTimeoutSeconds(details: string): string | null {

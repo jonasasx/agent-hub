@@ -306,7 +306,6 @@ export class Replication {
     const runner = await getRunner(this.o.db, runnerId);
     if (!runner) return;
     const key = relKey(runner, p.relPath);
-    await this.o.projects?.catalog.ensureUser(runner.user_id);
     let before = await this.o.db.selectFrom('transcript_files').selectAll().where('runner_id', '=', runnerId).where('rel_key', '=', key).executeTakeFirst();
     // A new main transcript key: decided under a lock of (runner, session) shared by the live path and import:drive
     // (another process), so a session never gets two main transcripts (review M3c).

@@ -64,7 +64,7 @@ describe('metrics and the disk warning (integration)', () => {
     sent.length = 0;
     expect(await check()).toBe('sent');
     expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatch(/^Agent Hub: на 10\.0\.0\.3 свободно 14% диска, БД 0([,.]\d)? ГБ$/);
+    expect(sent[0]).toMatch(/^Agent Hub: 10\.0\.0\.3 has 14% of disk free, DB 0([,.]\d)? GB$/);
     // checks at +10 min … +11 h 50 min (every 10 minutes on prod): nothing more
     for (const i of [1, 6, 18, 36, 54, 71]) {
       now = new Date(Date.parse('2026-10-26T10:00:00Z') + i * 10 * 60_000);

@@ -5,6 +5,7 @@ import {
   MCP_PROTOCOL,
   isAuthErrorText,
   protocolAtLeast,
+  type I18nText,
   type McpAuthFlowView,
   type McpMachineView,
   type McpPendingAction,
@@ -73,6 +74,7 @@ export async function storeMachineServers(db: Db, runnerId: string, snap: McpSna
 export interface ServerState {
   pending?: McpPendingAction;
   lastError?: string;
+  lastErrorI18n?: I18nText;
 }
 
 /** `persistence` of «Выключить» (M8): dynamic and sdk servers live in the process only; others are kept per project. */
@@ -90,6 +92,7 @@ export function toServerView(s: McpServerSnapshot, st?: ServerState): McpServerV
     ...s,
     ...(st?.pending ? { pendingAction: st.pending } : {}),
     ...(st?.lastError ? { lastError: st.lastError } : {}),
+    ...(st?.lastErrorI18n ? { lastErrorI18n: st.lastErrorI18n } : {}),
     persistence: persistenceOf(s),
     canAuth: canAuthOf(s),
     // mcp-auth-controls A1/A2: the agent's yes/no (absent from an agent of 1.7 → false); the auth-error heuristic
@@ -136,7 +139,10 @@ export interface RunnerMcpRow {
 }
 
 /** The machine block (M8): the user servers, their source (probe when the stored snapshot is the probe's), «Проверить». */
-export function toMachineMcpView(row: RunnerMcpRow, o: { online: boolean; probing: boolean; probeAvailableAt: Date | null; probeError: string | null; now: Date }): McpMachineView {
+export function toMachineMcpView(
+  row: RunnerMcpRow,
+  o: { online: boolean; probing: boolean; probeAvailableAt: Date | null; probeError: string | null; probeErrorI18n?: I18nText | null; now: Date },
+): McpMachineView {
   const outdated = !protocolAtLeast(row.protocol_version, MCP_PROTOCOL);
   const has = row.mcp_observed_at !== null;
   const reason = outdated ? 'agent_outdated' : !has ? 'no_snapshot' : undefined;
@@ -151,6 +157,7 @@ export function toMachineMcpView(row: RunnerMcpRow, o: { online: boolean; probin
     probeAvailableAt: o.probeAvailableAt && o.probeAvailableAt > o.now ? o.probeAvailableAt.toISOString() : null,
     probing: o.probing,
     probeError: o.probeError,
+    ...(o.probeErrorI18n ? { probeErrorI18n: o.probeErrorI18n } : {}),
     online: o.online,
     authControls: protocolAtLeast(row.protocol_version, MCP_AUTH_CONTROLS_PROTOCOL),
   };

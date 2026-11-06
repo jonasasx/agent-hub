@@ -4,36 +4,37 @@
  * Routes: GET /api/runners/:runnerId/fs/list and GET /api/runners/:runnerId/fs/file. The browser never sends a root:
  * the hub takes the cwd of `sessionId` or the home folder of the machine.
  */
-import { FS_ERROR_STATUS, FS_FILE_HEADERS, FS_MEDIA_MAX, FS_TEXT_MAX, type FsErrorCode, type FsFileKind, type FsListResponse } from '@agent-hub/shared';
+import { FS_ERROR_STATUS, FS_FILE_HEADERS, FS_MEDIA_MAX, FS_TEXT_MAX, type FsErrorCode, type FsFileKind, type FsListResponse, type MessageKey } from '@agent-hub/shared';
+import { t } from '../../i18n';
 
 /** A client-side failure that has no hub code: the network is down, the answer is not what the contract says. */
 export type FsClientCode = 'network' | 'bad_response' | 'aborted';
 export type FsFailCode = FsErrorCode | FsClientCode;
 
 /** The text for the user of each code of the hub (Requirement: Машина не в сети и ошибки). */
-export const FS_MESSAGES: Record<FsFailCode, string> = {
-  invalid_request: 'Некорректный запрос',
-  invalid_path: 'Недопустимый путь',
-  forbidden_origin: 'Запрос отклонён',
-  restricted: 'Закрытый путь',
-  outside_root: 'Вне разрешённой папки',
-  runner_not_found: 'Машина не найдена',
-  not_found: 'Не найдено',
-  runner_offline: 'Машина не в сети',
-  root_unknown: 'Папка машины неизвестна: обновите агента или переподключите машину',
-  capability_unavailable: 'Обновите агента',
-  too_large: 'Файл слишком большой',
-  not_directory: 'Это не папка',
-  not_file: 'Это не файл',
-  too_many_requests: 'Слишком много запросов, повторите позже',
-  io_error: 'Не удалось прочитать на машине',
-  agent_timeout: 'Машина не отвечает',
-  permission_denied: 'Нет доступа',
-  unsupported: 'Нельзя показать',
-  network: 'Нет связи с хабом',
-  bad_response: 'Неожиданный ответ хаба',
-  aborted: 'Запрос отменён',
-};
+export const FS_MESSAGES = {
+  invalid_request: 'files.error.invalid_request',
+  invalid_path: 'files.error.invalid_path',
+  forbidden_origin: 'files.error.forbidden_origin',
+  restricted: 'files.error.restricted',
+  outside_root: 'files.error.outside_root',
+  runner_not_found: 'files.error.runner_not_found',
+  not_found: 'files.error.not_found',
+  runner_offline: 'files.error.runner_offline',
+  root_unknown: 'files.error.root_unknown',
+  capability_unavailable: 'files.error.capability_unavailable',
+  too_large: 'files.error.too_large',
+  not_directory: 'files.error.not_directory',
+  not_file: 'files.error.not_file',
+  too_many_requests: 'files.error.too_many_requests',
+  io_error: 'files.error.io_error',
+  agent_timeout: 'files.error.agent_timeout',
+  permission_denied: 'files.error.permission_denied',
+  unsupported: 'files.error.unsupported',
+  network: 'files.error.network',
+  bad_response: 'files.error.bad_response',
+  aborted: 'files.error.aborted',
+} as const satisfies Record<FsFailCode, MessageKey>;
 
 export class FsError extends Error {
   constructor(
@@ -42,13 +43,13 @@ export class FsError extends Error {
     /** Text from the hub, when it sent one. */
     readonly serverMessage?: string,
   ) {
-    super(FS_MESSAGES[code]);
+    super(code);
   }
 
   /** What to show: «Файл не найден» for a file, the plain text otherwise. */
   text(subject: 'file' | 'dir' = 'dir'): string {
-    if (this.code === 'not_found' && subject === 'file') return 'Файл не найден';
-    return FS_MESSAGES[this.code];
+    if (this.code === 'not_found' && subject === 'file') return t('files.error.fileNotFound');
+    return t(FS_MESSAGES[this.code]);
   }
 }
 

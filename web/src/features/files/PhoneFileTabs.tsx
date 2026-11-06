@@ -4,6 +4,7 @@
  * The «Сессии» window mounts it under its own groups; it renders nothing when no file is open.
  * Requirements: tool-windows «Узкое окно и телефон»; file-explorer «Файлы на телефоне».
  */
+import { useT } from '../../i18n';
 import { useStore } from '../../store';
 import { isFileTab, parseFileTabId } from '../layout/layout';
 import { activateTab, closeTab } from '../workspace/actions';
@@ -12,6 +13,7 @@ import { useFiles } from './filesStore';
 import { baseName, parentOf } from './paths';
 
 export function PhoneFileTabs() {
+  const t = useT();
   const ws = useStore(s => s.ws);
   const runners = useStore(s => s.runners);
   const pinned = useFiles(s => s.pinned);
@@ -24,9 +26,9 @@ export function PhoneFileTabs() {
   }
   if (!rows.length) return null;
   return (
-    <section className="fx-ph-files" aria-label="Файлы">
+    <section className="fx-ph-files" aria-label={t('files.title')}>
       <h4>
-        <span>Файлы</span>
+        <span>{t('files.title')}</span>
         <span className="cnt">{rows.length}</span>
       </h4>
       {rows.map(r => {
@@ -41,7 +43,7 @@ export function PhoneFileTabs() {
                 <small>{folder ? `${machine} · ${folder}` : machine}</small>
               </span>
             </button>
-            <button type="button" className="fx-ph-x" aria-label={`Закрыть ${baseName(r.path)}`} onClick={() => closeTab(r.id)}>
+            <button type="button" className="fx-ph-x" aria-label={t('files.phone.close', { name: baseName(r.path) })} onClick={() => closeTab(r.id)}>
               ×
             </button>
           </div>

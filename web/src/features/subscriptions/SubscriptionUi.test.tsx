@@ -11,7 +11,7 @@ import { Chat } from '../chat/Chat';
 import { SwitchConfirm } from './SwitchConfirm';
 import { Settings } from '../settings/Settings';
 import { SUB_A, SUB_B, SUB_C, subView, subsResponse } from './fixtures';
-import { CONNECTORS_HINT } from './model';
+import { connectorsHint } from './model';
 
 const R14 = [
   runner({ protocolVersion: '1.4' }),
@@ -58,7 +58,7 @@ describe('«Подписка» in «Новая сессия»', () => {
         .getAllByRole('option')
         .map(o => o.textContent),
     ).toEqual([expect.stringMatching(/^Max личная \(лимит до \d\d:\d\d\)$/), 'Pro рабочая']);
-    expect(screen.getByText(CONNECTORS_HINT)).toBeInTheDocument();
+    expect(screen.getByText(connectorsHint())).toBeInTheDocument();
     // another window changed the last choice: the untouched form follows it
     act(() => useStore.setState({ subs: subsResponse({ lastChoiceId: SUB_A, defaultId: SUB_A }) }));
     expect(field).toHaveValue(SUB_A);

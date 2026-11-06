@@ -2,7 +2,7 @@
 // folder `vault-sessions` (`<session_id>__<host>.jsonl`) go into the hub by the path of live replication (repl.chunk:
 // events, raw segments in S3, blobs), so a re-run adds nothing and a session already replicated live only gets the
 // lines it lacks. The runner comes from the host name (runners.hostname); an unknown host gets the read-only runner
-// «<host> (машина неизвестна)» of the importing user (multi-user: generated id, design M3). The report goes to import_runs.
+// «<host> (unknown machine)» of the importing user (multi-user: generated id, design M3). The report goes to import_runs.
 import { readFile } from 'node:fs/promises';
 import type { FastifyBaseLogger } from 'fastify';
 import { LINE_HARD_LIMIT, SKIPPED_LINE_TYPE } from '@agent-hub/shared';
@@ -103,7 +103,7 @@ export interface ImportReport {
 
 /** Name of the runner of an unknown host; unique per owner, so a second run finds the same runner (design M3). */
 export function unknownRunnerName(host: string): string {
-  return `${host} (машина неизвестна)`;
+  return `${host} (unknown machine)`;
 }
 
 /**
@@ -378,13 +378,13 @@ export function formatReport(r: ImportReport, dryRun = false): string[] {
       .map(([k, v]) => `${k} ${v}`)
       .join(', ') || '0';
   return [
-    `${dryRun ? 'dry run: ' : ''}Drive «${r.folder}»: файлов ${r.files}, сессий ${r.driveSessions}`,
-    `новых ${r.sessionsNew}, дополнено ${r.sessionsExtended}, строк ${r.linesNew}; пропущено: ${skipped}; ошибок ${r.errors.length}`,
+    `${dryRun ? 'dry run: ' : ''}Drive «${r.folder}»: files ${r.files}, sessions ${r.driveSessions}`,
+    `new ${r.sessionsNew}, extended ${r.sessionsExtended}, lines ${r.linesNew}; skipped: ${skipped}; errors ${r.errors.length}`,
     ...Object.entries(r.byRunner)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([id, v]) => `  ${id}: новых ${v.sessionsNew}, дополнено ${v.sessionsExtended}, строк ${v.linesNew}`),
-    ...(r.unknownHosts.length ? [`машины неизвестны (только чтение): ${r.unknownHosts.join(', ')}`] : []),
-    `сверка: session_id в Drive ${r.driveSessions}, в хабе ${r.hubSessions}, расхождение ${r.missingInHub}`,
-    ...r.errors.slice(0, 20).map(e => `ошибка: ${e}`),
+      .map(([id, v]) => `  ${id}: new ${v.sessionsNew}, extended ${v.sessionsExtended}, lines ${v.linesNew}`),
+    ...(r.unknownHosts.length ? [`unknown machines (read only): ${r.unknownHosts.join(', ')}`] : []),
+    `check: session_id in Drive ${r.driveSessions}, in the hub ${r.hubSessions}, missing ${r.missingInHub}`,
+    ...r.errors.slice(0, 20).map(e => `error: ${e}`),
   ];
 }

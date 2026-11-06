@@ -6,6 +6,7 @@
  */
 import { clock, protocolAtLeast } from '../subscriptions/model';
 import { LIMITS_PROTOCOL, type LimitWindowView, type LimitsReason, type SubscriptionLimitsView, type RunnerView, type SubscriptionView } from '../../api/types';
+import { t } from '../../i18n';
 import { reasonText, windowText } from './limitTexts';
 
 export const LIMIT_WARN = 80;
@@ -15,8 +16,8 @@ export type Level = 'ok' | 'warn' | 'crit' | 'full';
 export type Badge = Level | 'nodata' | 'quiet' | 'neutral';
 
 /** Short words next to the percent in the row; long ones in the card. */
-export const LEVEL_WORD: Record<Level, string> = { ok: 'норма', warn: 'близко', crit: 'почти', full: 'исчерпано' };
-export const LEVEL_LONG: Record<Level, string> = { ok: 'норма', warn: 'близко к лимиту', crit: 'почти исчерпано', full: 'исчерпано' };
+export const levelWord = (level: Level): string => t(`limits.level.${level}`);
+export const levelLong = (level: Level): string => t(`limits.levelLong.${level}`);
 
 const ms = (iso: string | null | undefined) => (iso ? Date.parse(iso) : NaN);
 
@@ -90,10 +91,10 @@ export function limitedUntil(sub: Pick<SubscriptionView, 'limitResetsAt'>, now: 
 /** «через 2 ч 10 мин», «через 3 дн 4 ч», «через 5 мин». */
 export function relIn(iso: string, now: number): string {
   const m = Math.max(1, Math.round((ms(iso) - now) / 60_000));
-  if (m < 60) return `через ${m} мин`;
-  if (m < 1440) return `через ${Math.floor(m / 60)} ч${m % 60 ? ` ${m % 60} мин` : ''}`;
+  if (m < 60) return t('limits.rel.minutes', { n: m });
+  if (m < 1440) return m % 60 ? t('limits.rel.hoursMinutes', { h: Math.floor(m / 60), m: m % 60 }) : t('limits.rel.hours', { h: Math.floor(m / 60) });
   const h = Math.round(m / 60);
-  return `через ${Math.floor(h / 24)} дн${h % 24 ? ` ${h % 24} ч` : ''}`;
+  return h % 24 ? t('limits.rel.daysHours', { d: Math.floor(h / 24), h: h % 24 }) : t('limits.rel.days', { d: Math.floor(h / 24) });
 }
 
 const at = (iso: string, now: number) => clock(iso, new Date(now));
@@ -128,15 +129,16 @@ export interface RowModel {
 export function rowModel(sub: SubscriptionView, lim: SubscriptionLimitsView | undefined, now: number, outdated: string[] = []): RowModel {
   const nodata = (reason: LimitsReason | null): RowModel => {
     // the row shows the short form; the machine names go to the accessible name and the card (QA 8.1)
-    const t = `нет данных: ${reasonText(reason)}`;
-    return { kind: 'nodata', badge: 'nodata', pct: null, window: null, word: null, text: t, boldPct: null, chip: null, aria: `нет данных: ${reasonText(reason, outdated)}`, reason };
+    const text = t('limits.row.noData', { reason: reasonText(reason) });
+    const aria = t('limits.row.noData', { reason: reasonText(reason, outdated) });
+    return { kind: 'nodata', badge: 'nodata', pct: null, window: null, word: null, text, boldPct: null, chip: null, aria, reason };
   };
   // the rejected token outranks everything (Requirement: Состояния «нет данных»)
   if (sub.tokenRejected || lim?.reason === 'token_rejected') return nodata('token_rejected');
   const until = limitedUntil(sub, now);
   if (until) {
     const kind = sub.limitKind ?? lim?.windows.find(w => w.status === 'rejected')?.type ?? null;
-    const text = `исчерпана до ${at(until, now)}`;
+    const text = t('limits.row.exhaustedUntil', { time: at(until, now) });
     return {
       kind: 'full',
       badge: 'full',
@@ -146,7 +148,7 @@ export function rowModel(sub: SubscriptionView, lim: SubscriptionLimitsView | un
       text,
       boldPct: null,
       chip: kind ? `100% · ${windowText(kind).short}` : '100%',
-      aria: `исчерпано до ${at(until, now)}`,
+      aria: t('limits.row.exhaustedUntilAria', { time: at(until, now) }),
       reason: null,
     };
   }
@@ -156,7 +158,7 @@ export function rowModel(sub: SubscriptionView, lim: SubscriptionLimitsView | un
     const pcts = lim.windows.map(w => w.utilization).filter((x): x is number => x != null);
     const pct = pcts.length ? Math.max(...pcts) : null;
     const since = lim.lastOkAt ?? lim.staleAt;
-    const text = since ? `данные от ${at(since, now)}` : 'данные устарели';
+    const text = since ? t('limits.row.dataFrom', { time: at(since, now) }) : t('limits.row.dataStale');
     return { kind: 'stale', badge: 'neutral', pct, window: null, word: null, text, boldPct: null, chip: text, aria: pct != null ? `${pct}%, ${text}` : text, reason: null };
   }
   const w = topWindow(lim, now);
@@ -164,12 +166,12 @@ export function rowModel(sub: SubscriptionView, lim: SubscriptionLimitsView | un
     const level = windowLevel(w)!;
     const pct = effectivePct(w)!;
     const name = windowText(w.type);
-    const pctText = w.utilization != null ? `${fmtPct(w.utilization)}%` : level === 'full' ? 'исчерпано' : '≥80%';
+    const pctText = w.utilization != null ? `${fmtPct(w.utilization)}%` : level === 'full' ? t('limits.row.exhaustedPct') : '≥80%';
     const reset = w.resetsAt ? at(w.resetsAt, now) : null;
     // a window held over a quiet check: the time of the data instead of the reset (the reset stays in aria and the card)
-    const data = beforeQuiet(w, lim) ? `данные от ${at(w.observedAt, now)}` : null;
+    const data = beforeQuiet(w, lim) ? t('limits.row.dataFrom', { time: at(w.observedAt, now) }) : null;
     const text = [name.short, pctText, data ?? reset].filter(Boolean).join(' · ');
-    const word = level === 'warn' || level === 'crit' ? LEVEL_WORD[level] : null;
+    const word = level === 'warn' || level === 'crit' ? levelWord(level) : null;
     return {
       kind: 'win',
       badge: level,
@@ -179,30 +181,30 @@ export function rowModel(sub: SubscriptionView, lim: SubscriptionLimitsView | un
       text,
       boldPct: pctText,
       chip: `${pctText} · ${name.short}`,
-      aria: [name.name, pctText, LEVEL_LONG[level], reset ? `сброс ${reset}` : null, data].filter(Boolean).join(', '),
+      aria: [name.name, pctText, levelLong(level), reset ? t('limits.row.resetAria', { time: reset }) : null, data].filter(Boolean).join(', '),
       reason: null,
     };
   }
   if (lim.quietAt) {
-    const t = at(lim.quietAt, now);
+    const time = at(lim.quietAt, now);
     return {
       kind: 'quiet',
       badge: 'quiet',
       pct: null,
       window: null,
       word: null,
-      text: `ниже порога · проверено ${t}`,
+      text: t('limits.row.belowThresholdChecked', { time }),
       boldPct: null,
-      chip: 'ниже порога',
-      aria: `ниже порога предупреждения, проверено в ${t}`,
+      chip: t('limits.row.belowThreshold'),
+      aria: t('limits.row.belowThresholdAria', { time }),
       reason: null,
     };
   }
   const resets = lim.windows.filter(x => isReset(x, now)).map(x => ms(x.resetsAt));
   if (resets.length) {
-    const t = at(new Date(Math.max(...resets)).toISOString(), now);
-    const text = `окно сброшено в ${t}`;
-    return { kind: 'reset', badge: 'neutral', pct: null, window: null, word: null, text, boldPct: null, chip: text, aria: `${text}, данные обновятся`, reason: null };
+    const time = at(new Date(Math.max(...resets)).toISOString(), now);
+    const text = t('limits.row.windowReset', { time });
+    return { kind: 'reset', badge: 'neutral', pct: null, window: null, word: null, text, boldPct: null, chip: text, aria: t('limits.row.windowResetAria', { text }), reason: null };
   }
   return nodata('not_polled');
 }
@@ -217,7 +219,7 @@ export function refreshLeft(lim: Pick<SubscriptionLimitsView, 'refreshableAt'> |
 }
 
 /** The card's line about where the data came from. */
-export const SOURCE_LABEL: Record<LimitWindowView['source'], string> = { session: 'ход сессии', probe: 'пробный ход' };
+export const sourceLabel = (source: LimitWindowView['source']): string => t(`limits.source.${source}`);
 
 /** The newest window's source, for «Данные в HH:MM · ход сессии». */
 export function lastSource(lim: SubscriptionLimitsView): LimitWindowView['source'] | null {

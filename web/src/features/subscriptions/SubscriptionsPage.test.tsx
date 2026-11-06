@@ -7,7 +7,7 @@ import type { SubscriptionsResponse } from '../../api/types';
 import { useStore } from '../../store';
 import { mockFetch, resetStore } from '../../test/factories';
 import { SUB_A, SUB_B, subView, subsResponse } from './fixtures';
-import { DISABLED_TEXT, SubscriptionsPage, UsagePage, nameError, rangeText } from './SubscriptionsPage';
+import { disabledText, SubscriptionsPage, UsagePage, nameError, rangeText } from './SubscriptionsPage';
 
 const TOKEN = 'sk-ant-oat01-SECRETSECRETSECRET-9z8y';
 
@@ -246,7 +246,7 @@ describe('SubscriptionsPage / UsagePage («Настройки»)', () => {
 
   it('Ключ шифрования не задан: the banner, adding is unavailable', () => {
     show(subsResponse({ enabled: false }));
-    expect(screen.getByRole('alert')).toHaveTextContent(DISABLED_TEXT);
+    expect(screen.getByRole('alert')).toHaveTextContent(disabledText());
     expect(screen.getByRole('button', { name: 'Добавить' })).toBeDisabled();
   });
 

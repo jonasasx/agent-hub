@@ -5,6 +5,7 @@
  */
 import { ApiError, api } from '../../api/client';
 import { useStore } from '../../store';
+import { t } from '../../i18n';
 import { subscriptionLimitsResponseSchema, type SubscriptionLimitsView } from '../../api/types';
 import { refreshErrorText } from './limitTexts';
 
@@ -57,7 +58,7 @@ export async function refreshLimits(id: string): Promise<RefreshResult> {
       const cur = useStore.getState().limits?.limits.find(l => l.subscriptionId === id);
       const wait = Number.isFinite(sec) && sec > 0 ? sec : 30;
       if (cur) putView({ ...cur, refreshableAt: new Date(hubNow() + wait * 1000).toISOString() });
-      return { ok: false, message: `Слишком часто: повторить можно через ${Math.ceil(wait)} с.` };
+      return { ok: false, message: t('limits.refreshTooOften', { n: Math.ceil(wait) }) };
     }
     if (err instanceof ApiError && err.status === 404) void loadLimits();
     return { ok: false, message: refreshErrorText(err instanceof ApiError ? err.code : null, err instanceof ApiError ? err.status : 0) };

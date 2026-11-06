@@ -224,7 +224,7 @@ describe('replication of all transcripts (integration)', () => {
     const fr = got.slice(before).find(x => x.type === 'file.restore')!.payload;
     expect(fr).toMatchObject({ sessionId: sid, cwd: VAULT });
     const page = (await api('GET', `/api/sessions/${s.id}/events`)).json() as EventsPage;
-    expect(page.events.some(e => e.kind === 'note' && e.text.startsWith('Транскрипт восстановлен'))).toBe(true);
+    expect(page.events.some(e => e.kind === 'note' && e.text.startsWith('The transcript was restored'))).toBe(true);
   });
 
   it('3.6: source by D5 on fixtures; Remote Control is a flag', async () => {

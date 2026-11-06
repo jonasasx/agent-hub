@@ -96,6 +96,7 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
       '040_mcp_registry_server_drafts',
       '041_project_management',
       '042_project_suggestions',
+      '043_user_locale',
     ]);
     const second = await migrate(t.pool);
     expect(second).toEqual([]);
@@ -311,6 +312,7 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
         '040_mcp_registry_server_drafts',
         '041_project_management',
         '042_project_suggestions',
+        '043_user_locale',
       ]);
       expect((await q(`SELECT count(*)::int AS n FROM events`)).rows[0].n).toBe(3);
       expect((await q(`SELECT rel_key, runner_id, claude_session_id, acked_line::int AS l FROM transcript_files`)).rows[0]).toEqual({
@@ -379,6 +381,7 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
         '040_mcp_registry_server_drafts',
         '041_project_management',
         '042_project_suggestions',
+        '043_user_locale',
       ]);
       expect((await q(`SELECT git_remote FROM sessions ORDER BY git_remote`)).rows.map(r => r.git_remote)).toEqual([
         'git@git.example.com:a/b.git',

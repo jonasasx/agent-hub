@@ -5,6 +5,7 @@
 import type { KeyboardEvent, PointerEvent } from 'react';
 import { SLOT_MIN, clampPair, type Side } from './dock';
 import { useDock } from './useDock';
+import { useT } from '../../i18n';
 
 const STEP = 16;
 
@@ -20,6 +21,7 @@ interface Props {
 const panel = (from: HTMLElement, id: string): HTMLElement | null => from.closest('.tw-col')?.querySelector<HTMLElement>(`.tw-pnl[data-id="${id}"]`) ?? null;
 
 export function SlotSplitter({ side, a, b, idA, idB }: Props) {
+  const t = useT();
   const resize = useDock(s => s.resize);
 
   const measure = (el: HTMLElement) => {
@@ -74,10 +76,10 @@ export function SlotSplitter({ side, a, b, idA, idB }: Props) {
       className="tw-vs"
       role="separator"
       aria-orientation="horizontal"
-      aria-label="Высота окон"
+      aria-label={t('workspace.toolwindows.windowHeight')}
       aria-valuemin={SLOT_MIN}
       tabIndex={0}
-      title="Потяните, чтобы поменять высоту"
+      title={t('workspace.toolwindows.windowHeightHint')}
       onPointerDown={onPointerDown}
       onKeyDown={onKeyDown}
     />

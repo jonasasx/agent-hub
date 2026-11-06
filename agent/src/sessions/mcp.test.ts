@@ -349,7 +349,7 @@ describe('SessionManager: sign-in (task 2.4)', () => {
     const { sessionId } = await t.start();
     await expect(t.mgr.handle(cmd('mcp.auth.start', { sessionId, server: 'notion', redirectUri: HUB_URI }))).rejects.toMatchObject({
       code: 'mcp_auth_unsupported',
-      message: expect.stringContaining('/mcp в терминале'),
+      message: expect.stringContaining('run /mcp in a terminal'),
     });
     const t2 = setup({ prepare: f => ((f.servers = [vw(), { name: 'c', status: 'needs-auth', config: { type: 'claudeai-proxy', url: 'https://x', id: 'i' } }]), hubAuth(f)) });
     const s2 = await t2.start();
@@ -548,7 +548,7 @@ describe('SessionManager: sign-out (mcp-auth-controls A3, task 2.2)', () => {
     const err = (await t.mgr.handle(cmd('mcp.auth.logout', { sessionId: a.sessionId, server: 'notion' })).catch((e: unknown) => e)) as CmdError;
     expect(err).toBeInstanceOf(CmdError);
     expect(err.code).toBe('mcp_auth_unsupported');
-    expect(err.message).toBe('Выход из хаба не поддерживается этой версией Claude Code на машине — выполните claude mcp logout notion в терминале');
+    expect(err.message).toBe('Sign-out from the hub is not supported by this Claude Code version on the machine: run claude mcp logout notion in a terminal');
     expect(a.f.calls).toEqual([]);
 
     const t2 = setup({ prepare: cli });

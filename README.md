@@ -18,7 +18,7 @@ Fork it, search it, hand it off to another machine or another vendor, and never 
 
 ![Agent Hub: live sessions from three machines in one window, a Claude session messaging a Codex session, and a permission request approved from a phone](.github/assets/hero.png)
 
-<sub>Mockup of the English UI. The current interface is in Russian; English is the next milestone (see [Roadmap](#roadmap)).</sub>
+<sub>The interface speaks English, 中文, Español, Português, Deutsch, Français, 日本語, 한국어, ไทย and Русский.</sub>
 
 ---
 
@@ -42,6 +42,8 @@ Agent Hub is a small self-hosted server plus a lightweight agent on each machine
 - **Automatic project grouping**: sessions land in a project based on which files and git remotes they actually touched — no manual tagging. A classifier suggests a project (or a new one) for sessions it is unsure about; you can pin a session by hand and give projects colors.
 - **Rename sessions** inline, or regenerate the title from the whole transcript.
 - **Start new sessions from the UI** on any machine, in any folder, with any model and permission mode.
+- **Agents know your projects.** The project catalogue (names, descriptions, git remotes, folders on this machine) is added to the instructions of every Claude and Codex session, so an agent can find the right repo without asking.
+- **Ten interface languages** — picked from the browser by default, switchable in Settings and saved to your profile across devices. Prompts and tool texts for the model stay in English.
 
 ### Tool windows
 - **File explorer** next to the chat: browse the session's folder, the project or the whole machine, open text, images and PDFs in the workspace as tabs. Read-only, with credential files hidden and size limits; it works through the agent, so nothing is exposed on the machine.
@@ -101,7 +103,7 @@ cp .env.example .env && chmod 600 .env   # fill in PUBLIC_URL, OIDC, S3, secrets
 docker compose --env-file .env -f deploy/compose.selfhost.yml up -d --build
 ```
 
-The hub listens on `127.0.0.1:8080`. Point your reverse proxy at it (WebSocket upgrade on `/ws/*` must pass through), open `PUBLIC_URL`, sign in with an email from `OIDC_ALLOWED_EMAILS`, then open **Machines → Connect a machine** («Машины» → «Подключить машину» until the English UI lands) and run the one-liner on each computer.
+The hub listens on `127.0.0.1:8080`. Point your reverse proxy at it (WebSocket upgrade on `/ws/*` must pass through), open `PUBLIC_URL`, sign in with an email from `OIDC_ALLOWED_EMAILS`, then open **Machines → Connect a machine** and run the one-liner on each computer.
 
 Every option is documented inline in [`.env.example`](.env.example).
 
@@ -120,8 +122,8 @@ Node.js ≥ 22. Integration tests (`*.int.test.ts`) need a Postgres instance.
 
 Agent Hub is used daily on three machines by its author and is under active development. Honest status:
 
-- [ ] **English UI.** The interface is currently in Russian; localization is the next milestone.
-- [ ] Project grouping without an Obsidian-style vault (by git remote and folder only).
+- [x] **Localized UI** — ten languages, English by default.
+- [x] Project catalogue kept in the hub database; grouping by folder, git remote and touched files, no vault needed.
 - [ ] S3-compatible storage (MinIO) and a fully local mode without S3.
 - [ ] macOS and Linux desktop builds.
 - [ ] More agent vendors (Gemini CLI, OpenCode).

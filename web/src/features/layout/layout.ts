@@ -5,6 +5,8 @@
  * Разделитель и закрытие панели; Одно окно и Вернуть разделение.
  */
 
+import { t } from '../../i18n';
+
 export const TAB_LIMIT = 8;
 export const PANE_LIMIT = 4;
 export const RATIO_MIN = 0.2;
@@ -382,9 +384,10 @@ export function zoneBox(zone: Zone): [number, number, number, number] {
 }
 
 export function zoneHint(zone: Zone, paneCount: number): string {
-  if (zone === 'center') return 'Переместить в эту панель';
-  if (paneCount >= PANE_LIMIT) return 'Не больше четырёх панелей';
-  return `Разделить: ${{ left: 'слева', right: 'справа', top: 'сверху', bottom: 'снизу' }[zone]}`;
+  if (zone === 'center') return t('workspace.layout.zoneMove');
+  if (paneCount >= PANE_LIMIT) return t('workspace.layout.zoneLimit');
+  const where = { left: 'workspace.layout.splitLeft', right: 'workspace.layout.splitRight', top: 'workspace.layout.splitTop', bottom: 'workspace.layout.splitBottom' } as const;
+  return t('workspace.layout.zoneSplit', { where: t(where[zone]) });
 }
 
 export type InsertSlot = { kind: 'before'; sessionId: SessionId } | { kind: 'after'; sessionId: SessionId } | { kind: 'empty' };

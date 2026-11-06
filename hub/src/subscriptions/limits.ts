@@ -397,21 +397,21 @@ export class LimitsService {
    */
   async refresh(userId: string, id: string): Promise<SubscriptionLimitsView> {
     const sub = await this.o.subscriptions.ownMeta(userId, id);
-    if (!this.o.subscriptions.enabled) throw new HttpError(503, 'subscriptions_disabled', 'Хранение токенов не настроено: задайте SUBSCRIPTION_TOKEN_KEY');
-    if (sub.retired_at) throw new HttpError(409, 'subscription_retired', 'Подписка выведена из реестра');
-    if (sub.token_rejected_at) throw new HttpError(409, 'token_rejected', 'Токен подписки отклонён — замените его в реестре');
-    if (!this.o.config.enabled) throw new HttpError(409, 'probes_disabled', 'Пробные ходы выключены настройкой хаба');
+    if (!this.o.subscriptions.enabled) throw new HttpError(503, 'subscriptions_disabled', { key: 'hub.subscriptions.disabled' });
+    if (sub.retired_at) throw new HttpError(409, 'subscription_retired', { key: 'hub.limits.retired' });
+    if (sub.token_rejected_at) throw new HttpError(409, 'token_rejected', { key: 'hub.limits.tokenRejected' });
+    if (!this.o.config.enabled) throw new HttpError(409, 'probes_disabled', { key: 'hub.limits.probesDisabled' });
     const nowMs = this.now().getTime();
     const last = this.refreshedAt.get(sub.id);
     const minMs = this.o.config.refreshMinSec * 1000;
     if (last !== undefined && nowMs - last < minMs) {
       const retryAfterSec = Math.max(1, Math.ceil((last + minMs - nowMs) / 1000));
       // `retryAfter` (seconds) in the body; the route also sets the Retry-After header from it
-      throw new HttpError(429, 'refresh_too_soon', `Обновить можно через ${retryAfterSec} с`, { retryAfter: String(retryAfterSec) });
+      throw new HttpError(429, 'refresh_too_soon', { key: 'hub.limits.refreshTooSoon', params: { sec: retryAfterSec } }, { retryAfter: String(retryAfterSec) });
     }
     const { online, capable } = await this.candidates(sub);
-    if (!online.length) throw new HttpError(409, 'runner_offline', 'Нет машины в сети для пробного хода');
-    if (!capable.length) throw new HttpError(409, 'agent_outdated', 'Агенты в сети не поддерживают лимиты — обновите агента');
+    if (!online.length) throw new HttpError(409, 'runner_offline', { key: 'hub.limits.noOnlineMachine' });
+    if (!capable.length) throw new HttpError(409, 'agent_outdated', { key: 'hub.limits.agentOutdated' });
     this.refreshedAt.set(sub.id, nowMs);
     if (!this.inFlight.has(sub.id)) this.schedule(sub, true);
     return this.view(sub, await getLimits(this.o.db, userId, sub.id));

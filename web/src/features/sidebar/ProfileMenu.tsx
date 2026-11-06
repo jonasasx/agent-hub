@@ -12,24 +12,26 @@ import { formatBuild } from '../update/buildInfo';
 import { desktopVersion } from '../update/desktopVersion';
 import { useDock } from '../toolwindows/useDock';
 import { IconDots } from '../toolwindows/icons';
+import { useT } from '../../i18n';
 
 /**
  * Versions at the bottom of the profile menu (change client-versions, spec «Версии в меню профиля»): the client, the hub
  * («—» until it answers) and, in the desktop app, the app's version from the user-agent.
  */
 function Versions() {
+  const t = useT();
   const client = useUpdate(s => s.client);
   const hub = useUpdate(s => s.hub);
   const app = desktopVersion();
   return (
-    <dl className="m-ver" aria-label="Версии">
-      <dt>Клиент</dt>
+    <dl className="m-ver" aria-label={t('workspace.sidebar.versions')}>
+      <dt>{t('workspace.sidebar.versionClient')}</dt>
       <dd>{formatBuild(client)}</dd>
-      <dt>Хаб</dt>
+      <dt>{t('workspace.sidebar.versionHub')}</dt>
       <dd>{hub ? formatBuild(hub) : '—'}</dd>
       {app && (
         <>
-          <dt>Приложение</dt>
+          <dt>{t('workspace.sidebar.versionApp')}</dt>
           <dd>{app}</dd>
         </>
       )}
@@ -39,6 +41,7 @@ function Versions() {
 
 /** «⋯»: `rail` — the button of the left rail (a tool-window rail icon), otherwise the button of the panel header. */
 export function ProfileMenu({ onLogout, variant = 'top' }: { onLogout: () => void; variant?: 'top' | 'rail' }) {
+  const t = useT();
   const [hiddenProjects, setHiddenProjects] = useState(false);
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -61,9 +64,9 @@ export function ProfileMenu({ onLogout, variant = 'top' }: { onLogout: () => voi
         className={variant === 'rail' ? 'tw-ri' : 'icon-btn'}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="Профиль"
-        title="Профиль"
-        data-tip={variant === 'rail' ? 'Профиль' : undefined}
+        aria-label={t('workspace.sidebar.profile')}
+        title={t('workspace.sidebar.profile')}
+        data-tip={variant === 'rail' ? t('workspace.sidebar.profile') : undefined}
         onClick={() => setOpen(!open)}
       >
         {variant === 'rail' ? IconDots : '⋯'}
@@ -72,7 +75,7 @@ export function ProfileMenu({ onLogout, variant = 'top' }: { onLogout: () => voi
       {/* phone: a bottom sheet over a scrim that stays under the toast stack (the banner keeps working) */}
       {open && <div className="pm-scrim" aria-hidden="true" onClick={() => setOpen(false)} />}
       {open && (
-        <div className="menu" role="menu" aria-label="Профиль">
+        <div className="menu" role="menu" aria-label={t('workspace.sidebar.profile')}>
           {email && <div className="m-title">{email}</div>}
           {updatable && (
             <button
@@ -84,7 +87,7 @@ export function ProfileMenu({ onLogout, variant = 'top' }: { onLogout: () => voi
               }}
             >
               <span className="u-dot" aria-hidden="true" />
-              Обновить до новой версии
+              {t('workspace.sidebar.updateNow')}
             </button>
           )}
           <button
@@ -96,28 +99,28 @@ export function ProfileMenu({ onLogout, variant = 'top' }: { onLogout: () => voi
               setHiddenProjects(true);
             }}
           >
-            Показать скрытые
+            {t('workspace.sidebar.showHidden')}
           </button>
           <button type="button" role="menuitem" onClick={() => go('machines')}>
-            Машины
+            {t('workspace.sidebar.machines')}
           </button>
           {hasSubs && (
             <>
               <button type="button" role="menuitem" onClick={() => go('subscriptions')}>
-                Подписки
+                {t('workspace.sidebar.subscriptions')}
               </button>
               <button type="button" role="menuitem" onClick={() => go('usage')}>
-                Расход
+                {t('workspace.sidebar.usage')}
               </button>
             </>
           )}
           {isAdmin && (
             <button type="button" role="menuitem" onClick={() => go('users')}>
-              Пользователи
+              {t('workspace.sidebar.users')}
             </button>
           )}
           <button type="button" role="menuitem" onClick={() => go('security')}>
-            Безопасность
+            {t('workspace.sidebar.security')}
           </button>
           <button
             type="button"
@@ -127,7 +130,7 @@ export function ProfileMenu({ onLogout, variant = 'top' }: { onLogout: () => voi
               onLogout();
             }}
           >
-            Выйти
+            {t('workspace.sidebar.signOut')}
           </button>
           <button
             type="button"
@@ -137,7 +140,7 @@ export function ProfileMenu({ onLogout, variant = 'top' }: { onLogout: () => voi
               useDock.getState().reset();
             }}
           >
-            Сбросить раскладку окон
+            {t('workspace.sidebar.resetLayout')}
           </button>
           <div className="m-sep" role="separator" />
           <Versions />

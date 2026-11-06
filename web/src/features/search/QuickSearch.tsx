@@ -16,6 +16,7 @@ import { Glyph } from '../sessions/Glyph';
 import { agoLabel, colorVar, displayStatus, runnerIndex } from '../sessions/status';
 import { openSession } from '../workspace/actions';
 import { hitsOf, snippetParts, type SearchHit } from './snippet';
+import { hubText, useT } from '../../i18n';
 
 export const SEARCH_LIMIT = 12;
 const DEBOUNCE_MS = 150;
@@ -24,7 +25,7 @@ const DEBOUNCE_MS = 150;
 export function searchSessions(all: SessionView[], q: string, showCron: boolean, limit = SEARCH_LIMIT): SessionView[] {
   const needle = q.trim().toLowerCase();
   return all
-    .filter(s => (showCron || !s.isCron) && (!needle || s.title.toLowerCase().includes(needle) || s.project.title.toLowerCase().includes(needle)))
+    .filter(s => (showCron || !s.isCron) && (!needle || s.title.toLowerCase().includes(needle) || hubText(s.project.title, s.project.i18n).toLowerCase().includes(needle)))
     .sort((a, b) => Date.parse(b.lastEventAt ?? b.createdAt) - Date.parse(a.lastEventAt ?? a.createdAt))
     .slice(0, limit);
 }
@@ -38,6 +39,7 @@ function Fragment({ hit }: { hit: SearchHit }) {
 }
 
 export function QuickSearch({ onClose }: { onClose: () => void }) {
+  const t = useT();
   const sessions = useStore(s => s.sessions);
   const showCron = useStore(s => s.showCron);
   const runners = useStore(s => s.runners);
@@ -81,16 +83,16 @@ export function QuickSearch({ onClose }: { onClose: () => void }) {
     onClose();
     void openSession(hit.session.id);
   };
-  const status = state.kind === 'error' ? 'Поиск по истории недоступен — показаны сессии из списка слева, без текста реплик' : state.kind === 'loading' && q.trim() ? 'Поиск…' : null;
+  const status = state.kind === 'error' ? t('workspace.search.unavailable') : state.kind === 'loading' && q.trim() ? t('workspace.search.loading') : null;
 
   return createPortal(
     <div className="scrim top" onMouseDown={e => e.target === e.currentTarget && onClose()}>
-      <div className="qs" role="dialog" aria-modal="true" aria-label="Быстрый переход" ref={dialog}>
+      <div className="qs" role="dialog" aria-modal="true" aria-label={t('workspace.search.dialog')} ref={dialog}>
         <span className="qs-field">
           <input
             autoFocus
-            placeholder="Название, проект или текст реплики…"
-            aria-label="Сессия или проект"
+            placeholder={t('workspace.search.placeholder')}
+            aria-label={t('workspace.search.field')}
             value={q}
             role="combobox"
             aria-expanded
@@ -122,7 +124,7 @@ export function QuickSearch({ onClose }: { onClose: () => void }) {
             {status}
           </div>
         )}
-        <div className="qs-list" id="qs-list" role="listbox" aria-label="Результаты поиска">
+        <div className="qs-list" id="qs-list" role="listbox" aria-label={t('workspace.search.results')}>
           {hits.length ? (
             hits.map((h, i) => {
               const s = useStore.getState().sessions[h.session.id] ?? h.session;
@@ -145,7 +147,7 @@ export function QuickSearch({ onClose }: { onClose: () => void }) {
                     <span className="qs-line">
                       {s.title}
                       {/* UI review L6: the project after the title */}
-                      <span className="now-sub proj">{s.project.title}</span>
+                      <span className="now-sub proj">{hubText(s.project.title, s.project.i18n)}</span>
                     </span>
                     <Fragment hit={h} />
                   </span>
@@ -156,15 +158,15 @@ export function QuickSearch({ onClose }: { onClose: () => void }) {
             })
           ) : (
             <div className="hint" style={{ padding: 10 }}>
-              {state.kind === 'loading' ? 'Поиск…' : q.trim() ? 'Ничего не найдено' : 'Сессий пока нет'}
+              {state.kind === 'loading' ? t('workspace.search.loading') : q.trim() ? t('workspace.search.nothing') : t('workspace.sidebar.noSessions')}
             </div>
           )}
         </div>
         <div className="qs-foot">
-          <span>↑↓ выбор</span>
-          <span>Enter — открыть в активной панели</span>
-          <span>Esc — закрыть</span>
-          <span>{showCron ? 'cron показан' : 'cron скрыт — «показать cron» слева'}</span>
+          <span>{t('workspace.search.footSelect')}</span>
+          <span>{t('workspace.search.footOpen')}</span>
+          <span>{t('workspace.search.footClose')}</span>
+          <span>{showCron ? t('workspace.search.cronShown') : t('workspace.search.cronHidden')}</span>
         </div>
       </div>
     </div>,

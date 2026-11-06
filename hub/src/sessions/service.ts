@@ -4,9 +4,13 @@
 // начатых вне хаба; Офлайн-машина.
 import type { ProjectService } from '../projects/service.js';
 import { expireMonitors } from '../subagents/background.js';
+import { loadProjectCatalog } from '../projects/context.js';
 import { EXTERNAL_ACTIVE_MS } from '../replication/ingest.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
+import type { I18nText } from '@agent-hub/shared';
+import { render } from '../i18n.js';
+import { failText, jsonNote, tx } from '../texts.js';
 import { sql } from 'kysely';
 import type {
   AgentMessage,
@@ -22,9 +26,11 @@ import type {
   StatResponse,
   UiPermissionMode,
   UiServerMessage,
+  ProjectCatalogEntry,
 } from '@agent-hub/shared';
 import {
   IMAGES_PROTOCOL,
+  PROJECT_CATALOG_PROTOCOL,
   protocolAtLeast,
   PROVIDER_LABELS,
   UI_PERMISSION_MODES,
@@ -67,16 +73,22 @@ import type { ObjectStore } from '../storage/objectStore.js';
 import type { SubscriptionCredFull, SubscriptionService } from '../subscriptions/service.js';
 import { supportsCodexSubscriptions, supportsSubscriptions, tokenNewer, type SubscriptionMeta } from '../subscriptions/repo.js';
 
-/** An API error with the D10 status and code. */
+/**
+ * An API error with the D10 status and code. A keyed message (change i18n D5) is translated by the error handler into
+ * the language of the request; `message` keeps its English text for logs.
+ */
 export class HttpError extends Error {
+  readonly i18n?: I18nText;
+
   constructor(
     readonly status: number,
     readonly code: string,
-    message = code,
+    message: string | I18nText = code,
     /** More fields of the error body (copy_unavailable: `reason`). */
     readonly details?: Record<string, string>,
   ) {
-    super(message);
+    super(typeof message === 'string' ? message : render(message));
+    if (typeof message !== 'string') this.i18n = message;
   }
 }
 
@@ -86,7 +98,7 @@ export class HttpError extends Error {
  */
 export function assertModeAllowed(runner: Pick<RunnerRow, 'name' | 'runs_as_root'> | undefined, mode: string | undefined): void {
   if (mode === 'bypassPermissions' && runner?.runs_as_root === true) {
-    throw new HttpError(422, 'bypass_root', `Агент на ${runner.name} работает под root — режим bypassPermissions недоступен. Выберите другой режим.`);
+    throw new HttpError(422, 'bypass_root', { key: 'hub.sessions.bypassRoot', params: { name: runner.name } });
   }
 }
 
@@ -98,9 +110,9 @@ export function assertProviderReady(runner: Pick<RunnerRow, 'name' | 'providers'
   if (provider === 'claude') return;
   const p = runner.providers?.find(x => x.id === provider);
   const label = PROVIDER_LABELS[provider];
-  if (!p) throw new HttpError(422, 'provider_unavailable', `${label} недоступен на ${runner.name}: обновите агента`);
+  if (!p) throw new HttpError(422, 'provider_unavailable', { key: 'hub.sessions.providerUnavailable', params: { label, name: runner.name } });
   // provider-parity: under a subscription of the registry the machine's own sign-in is not needed
-  if (!underSubscription && p.login !== 'ok') throw new HttpError(422, 'provider_login_required', `${label}: нет подписки — добавьте её на экране «Подписки»`);
+  if (!underSubscription && p.login !== 'ok') throw new HttpError(422, 'provider_login_required', { key: 'hub.sessions.providerNoSubscription', params: { label } });
 }
 
 /** The key of a model list: the runner, and the provider when it is not Claude. */
@@ -113,7 +125,7 @@ export function providerOfModelsKey(key: string): Provider {
 }
 
 /** A copy or handoff of a bypassPermissions session onto a root machine gets acceptEdits; the chat says so. */
-export const ROOT_MODE_NOTE = 'Агент на этой машине работает под root — режим bypassPermissions недоступен, сессия в режиме acceptEdits';
+export const ROOT_MODE_NOTE: I18nText = { key: 'hub.sessions.rootModeNote' };
 
 /** bypassPermissions of a source → acceptEdits on a machine whose agent runs as root (copy, handoff). */
 export function inheritMode(mode: string, runner: Pick<RunnerRow, 'runs_as_root'> | undefined): { mode: string; downgraded: boolean } {
@@ -122,18 +134,18 @@ export function inheritMode(mode: string, runner: Pick<RunnerRow, 'runs_as_root'
 
 /** The stderr of Claude Code started with bypassPermissions under root (an agent without hello.root). */
 const ROOT_BYPASS_STDERR = /cannot be used with root\/sudo privileges/;
-export const ROOT_BYPASS_NOTE = 'Claude Code не запускает режим bypassPermissions под root. Смените режим сессии (например, на acceptEdits) или переустановите агента под обычным пользователем.';
+export const ROOT_BYPASS_NOTE: I18nText = { key: 'hub.sessions.rootBypassNote' };
 
 /** A raw process error as a note: the root refusal becomes advice, anything else is kept. */
-export function readableProcessError(raw: string): string | null {
+export function readableProcessError(raw: string): I18nText | null {
   return ROOT_BYPASS_STDERR.test(raw) ? ROOT_BYPASS_NOTE : null;
 }
 
 /** Why a full copy is not possible (D14 p. 1); null — possible. */
-export function copyUnavailable(s: Pick<SessionRow, 'source' | 'read_only_reason' | 'cwd'>): { reason: CopyUnavailableReason; text: string } | null {
-  if (s.source === 'cron' || s.read_only_reason === 'cron') return { reason: 'cron', text: 'Недоступно: cron-сессия' };
-  if (s.read_only_reason === 'unknown_runner') return { reason: 'unknown_runner', text: 'Недоступно: нет каталога на машине' };
-  if (s.read_only_reason === 'cwd_missing' || !s.cwd) return { reason: 'cwd_missing', text: 'Недоступно: нет каталога на машине' };
+export function copyUnavailable(s: Pick<SessionRow, 'source' | 'read_only_reason' | 'cwd'>): { reason: CopyUnavailableReason; text: I18nText } | null {
+  if (s.source === 'cron' || s.read_only_reason === 'cron') return { reason: 'cron', text: { key: 'hub.sessions.copyCron' } };
+  if (s.read_only_reason === 'unknown_runner') return { reason: 'unknown_runner', text: { key: 'hub.sessions.copyNoCwd' } };
+  if (s.read_only_reason === 'cwd_missing' || !s.cwd) return { reason: 'cwd_missing', text: { key: 'hub.sessions.copyNoCwd' } };
   return null;
 }
 
@@ -240,8 +252,8 @@ function sessionKey(runnerId: string, claudeSessionId: string): string {
 function quote(text: string, images: number): string {
   const t = text.replace(/\s+/g, ' ').trim();
   const body = t ? `«${t.length > 200 ? `${t.slice(0, 200)}…` : t}»` : '';
-  const pics = images ? `${body ? ' ' : ''}(изображений: ${images})` : '';
-  return body + pics || '(пустое сообщение)';
+  const pics = images ? `${body ? ' ' : ''}(${images} img)` : '';
+  return body + pics || '(empty)';
 }
 
 /** Text of the first user prompt for a title: 40 characters (spec «Название сессии»). */
@@ -444,7 +456,7 @@ export class SessionService {
     const rows = own ? [] : await this.o.db.selectFrom('runners').select('providers').where('user_id', '=', userId).orderBy('created_at').execute();
     const reported = rows.flatMap(r => r.providers ?? []).find(p => p.id === provider && p.login === 'ok' && p.models?.length)?.models?.[0]?.value;
     const first = own ?? reported ?? (await this.listModels(userId, provider))[0]?.value;
-    if (!first) throw new HttpError(422, 'provider_login_required', `${PROVIDER_LABELS[provider]}: машина ещё не сообщила модели, войдите на экране «Машины»`);
+    if (!first) throw new HttpError(422, 'provider_login_required', { key: 'hub.sessions.noModels', params: { label: PROVIDER_LABELS[provider] } });
     return first;
   }
 
@@ -453,11 +465,12 @@ export class SessionService {
   /** POST /api/runners/:id/providers/:provider/login: a device-code sign-in on the machine; the end comes as WS provider.login. */
   async providerLoginStart(userId: string, runnerId: string, provider: ExtraProvider): Promise<ProviderLoginStart> {
     const { runner, conn } = await this.onlineRunner(userId, runnerId);
-    if (!runner.providers?.some(p => p.id === provider)) throw new HttpError(422, 'provider_unavailable', `${PROVIDER_LABELS[provider]} недоступен на ${runner.name}: обновите агента`);
+    if (!runner.providers?.some(p => p.id === provider))
+      throw new HttpError(422, 'provider_unavailable', { key: 'hub.sessions.providerUnavailable', params: { label: PROVIDER_LABELS[provider], name: runner.name } });
     try {
       const r = await conn.request('provider.login.start', { provider }, 90_000);
       const parsed = providerLoginStartResultSchema.safeParse(r);
-      if (!parsed.success) throw new HttpError(502, 'agent_bad_reply', 'Агент не вернул код входа');
+      if (!parsed.success) throw new HttpError(502, 'agent_bad_reply', { key: 'hub.sessions.agentNoLoginCode' });
       return parsed.data;
     } catch (err) {
       if (err instanceof HttpError) throw err;
@@ -472,21 +485,21 @@ export class SessionService {
    */
   async codexSubscriptionLoginStart(userId: string, b: { runnerId: string; name?: string | undefined; subscriptionId?: string | undefined }): Promise<ProviderLoginStart> {
     const subs = this.o.subscriptions;
-    if (!subs?.enabled) throw new HttpError(503, 'subscriptions_disabled', 'Хранение токенов не настроено: задайте SUBSCRIPTION_TOKEN_KEY');
+    if (!subs?.enabled) throw new HttpError(503, 'subscriptions_disabled', { key: 'hub.sessions.tokenStorageOff' });
     const { runner, conn } = await this.onlineRunner(userId, b.runnerId);
     if (!supportsCodexSubscriptions(runner.protocol_version) || !runner.providers?.some(p => p.id === 'codex')) {
-      throw new HttpError(409, 'agent_outdated', `Агент на ${runner.name} не умеет входить в Codex под подписку — обновите агента`);
+      throw new HttpError(409, 'agent_outdated', { key: 'hub.sessions.agentNoCodexSub', params: { name: runner.name } });
     }
     if (b.subscriptionId) {
       const s = await subs.ownMeta(userId, b.subscriptionId);
-      if (s.provider !== 'codex') throw new HttpError(422, 'subscription_unavailable', 'Это не подписка Codex');
+      if (s.provider !== 'codex') throw new HttpError(422, 'subscription_unavailable', { key: 'hub.sessions.notCodexSub' });
     } else {
       await subs.assertNameFree(userId, 'codex', (b.name ?? 'Codex').trim());
     }
     try {
       const r = await conn.request('provider.login.start', { provider: 'codex', forSubscription: true }, 90_000);
       const parsed = providerLoginStartResultSchema.safeParse(r);
-      if (!parsed.success) throw new HttpError(502, 'agent_bad_reply', 'Агент не вернул код входа');
+      if (!parsed.success) throw new HttpError(502, 'agent_bad_reply', { key: 'hub.sessions.agentNoLoginCode' });
       this.pendingSubscriptionLogins.set(parsed.data.loginId, {
         userId,
         ...(b.name !== undefined ? { name: b.name } : {}),
@@ -500,12 +513,15 @@ export class SessionService {
   }
 
   /** The end of a sign-in for a subscription: the credential is stored, the client is told with the subscription id. */
-  private async onSubscriptionLoginDone(runnerUserId: string, p: PayloadOf<AgentMessage, 'provider.login.done'>): Promise<{ ok: boolean; error?: string; subscriptionId?: string }> {
+  private async onSubscriptionLoginDone(
+    runnerUserId: string,
+    p: PayloadOf<AgentMessage, 'provider.login.done'>,
+  ): Promise<{ ok: boolean; error?: string; errorI18n?: I18nText; subscriptionId?: string }> {
     const pending = this.pendingSubscriptionLogins.get(p.loginId);
     if (!pending) return { ok: p.ok, ...(p.error ? { error: p.error } : {}) };
     this.pendingSubscriptionLogins.delete(p.loginId);
     const subs = this.o.subscriptions;
-    if (!p.ok || !p.credential || !subs || pending.userId !== runnerUserId) return { ok: false, error: p.error ?? 'Вход не завершён' };
+    if (!p.ok || !p.credential || !subs || pending.userId !== runnerUserId) return p.error ? { ok: false, error: p.error } : { ok: false, ...failText({ key: 'hub.sessions.loginIncomplete' }) };
     try {
       if (pending.subscriptionId) {
         await subs.replaceToken(pending.userId, pending.subscriptionId, p.credential);
@@ -515,7 +531,7 @@ export class SessionService {
       return { ok: true, subscriptionId: v.id };
     } catch (err) {
       this.o.log.warn({ err: (err as Error).message }, 'codex subscription sign-in could not be stored');
-      return { ok: false, error: err instanceof HttpError ? err.message : 'Не удалось сохранить вход' };
+      return err instanceof HttpError ? { ok: false, error: err.message, ...(err.i18n ? { errorI18n: err.i18n } : {}) } : { ok: false, ...failText({ key: 'hub.sessions.loginNotStored' }) };
     }
   }
 
@@ -547,7 +563,7 @@ export class SessionService {
 
   async get(userId: string, id: string): Promise<SessionRow> {
     const s = await getSession(this.o.db, id, userId);
-    if (!s) throw new HttpError(404, 'not_found', 'Сессия не найдена');
+    if (!s) throw new HttpError(404, 'not_found', { key: 'hub.sessions.notFound' });
     return s;
   }
 
@@ -591,7 +607,7 @@ export class SessionService {
     assertProviderReady(runner, provider, !!cred);
     const attachments = await this.attachments(userId, runner, b.attachments);
     const st = await this.fsStat(conn, b.cwd, runner);
-    if (!st.exists || !st.isDir) throw new HttpError(422, 'cwd_not_found', `Каталог не найден на ${runner.name}`);
+    if (!st.exists || !st.isDir) throw new HttpError(422, 'cwd_not_found', { key: 'hub.sessions.cwdNotFound', params: { name: runner.name } });
     // D19: the images are on the machine before the session exists; a failure is 502 and nothing is created.
     await this.prefetch(conn, runner, attachments);
     // hub-subagents D9: a spawned session belongs to the project of its parent, as a fork does
@@ -609,7 +625,7 @@ export class SessionService {
       origin_source: 'hub',
       is_hub_managed: true,
       // hub-subagents D4: the title of a spawned session is the given one or the task, not the peer envelope
-      title: spawn ? spawn.title?.trim() || titleFromPrompt(spawn.task) : titleFromPrompt(b.prompt) || (attachments.length ? 'Изображение' : ''),
+      title: spawn ? spawn.title?.trim() || titleFromPrompt(spawn.task) : titleFromPrompt(b.prompt) || (attachments.length ? 'Image' : ''),
       title_source: 'prompt',
       status: 'working',
       process_alive: true,
@@ -638,10 +654,12 @@ export class SessionService {
     this.rememberMessage(id, b.prompt, b.attachments);
     this.o.projects?.detectCatalog(id, b.prompt);
     const view = await this.upsert(id);
+    const projectCatalog = await this.projectCatalogFor(userId, runner, id);
     this.launch(conn, id, 'session.start', {
       sessionId: id,
       cwd: b.cwd,
       ...(b.catalogProjectId && protocolAtLeast(runner.protocol_version, '1.13') ? { projectId: b.catalogProjectId } : {}),
+      ...(projectCatalog ? { projectCatalog } : {}),
       permissionMode: b.permissionMode,
       model: b.model,
       prompt: b.prompt,
@@ -656,6 +674,13 @@ export class SessionService {
   }
 
   // ---------- fork (D14, M4b) ----------
+
+  /** catalog-db-session-context D2: the user's catalogue for an agent ≥1.15, the session's catalogue project marked; undefined for older agents. */
+  private async projectCatalogFor(userId: string, runner: RunnerRow | null | undefined, sessionId: string): Promise<ProjectCatalogEntry[] | undefined> {
+    if (!runner || !protocolAtLeast(runner.protocol_version, PROJECT_CATALOG_PROTOCOL)) return undefined;
+    const link = await this.o.db.selectFrom('session_projects').select('project_id').where('user_id', '=', userId).where('session_id', '=', sessionId).executeTakeFirst();
+    return loadProjectCatalog(this.o.db, userId, runner.id, link?.project_id ?? null);
+  }
 
   /** fork_of, fork_mode and the inherited project of a fork row. */
   private forkFields(src: SessionRow, mode: 'copy' | 'handoff') {
@@ -674,10 +699,10 @@ export class SessionService {
   }
 
   /**
-   * POST /api/sessions/:id/fork {mode:'copy'} (D14 «Полная копия»): forkSession on the source's machine into a new
+   * POST /api/sessions/:id/fork {mode:'copy'} (D14 «Полная \u043a\u043e\u043f\u0438\u044f»): forkSession on the source's machine into a new
    * session of the same directory, mode and model; nothing starts (the copy is resumed on its first message), the
    * source is not touched. A transcript missing on the machine is restored from the hub's copy first.
-   * Requirement (session-fork): Полная копия.
+   * Requirement (session-fork): Полная \u043a\u043e\u043f\u0438\u044f.
    */
   async forkCopy(userId: string, id: string): Promise<SessionView> {
     return this.withSession(userId, id, async s => {
@@ -685,16 +710,16 @@ export class SessionService {
       if (no) throw new HttpError(409, 'copy_unavailable', no.text, { reason: no.reason });
       const { runner, conn } = await this.onlineRunner(userId, s.runner_id);
       const cwd = s.cwd!;
-      if (!pathFitsPlatform(cwd, platformOfHome(runner.home_dir))) throw new HttpError(409, 'copy_unavailable', 'Недоступно: нет каталога на машине', { reason: 'cwd_missing' });
+      if (!pathFitsPlatform(cwd, platformOfHome(runner.home_dir))) throw new HttpError(409, 'copy_unavailable', { key: 'hub.sessions.copyNoCwd' }, { reason: 'cwd_missing' });
       const st = await this.fsStat(conn, cwd, runner);
       if (!st.exists || !st.isDir) {
         await this.o.db.updateTable('sessions').set({ read_only_reason: 'cwd_missing' }).where('id', '=', s.id).execute();
         await this.upsert(s.id);
-        throw new HttpError(409, 'copy_unavailable', 'Недоступно: нет каталога на машине', { reason: 'cwd_missing' });
+        throw new HttpError(409, 'copy_unavailable', { key: 'hub.sessions.copyNoCwd' }, { reason: 'cwd_missing' });
       }
       // agent-providers D3: a Codex mirror does not restore the Codex thread; the agent checks the mirror itself
       if (s.provider === 'claude') await this.restoreIfMissing(conn, s, runner);
-      const title = await this.copyTitle(userId, s.title || 'Сессия');
+      const title = await this.copyTitle(userId, s.title || 'Session');
       try {
         return await this.forkCopyAs(userId, s, runner, conn, cwd, title);
       } finally {
@@ -709,10 +734,10 @@ export class SessionService {
     try {
       const r = (await conn.request('session.fork', { sourceSessionId: s.claude_session_id, cwd, title, ...(s.provider !== 'claude' ? { provider: s.provider } : {}) }, 60_000)) as
         { newSessionId?: unknown } | undefined;
-      if (typeof r?.newSessionId !== 'string' || !/^[0-9a-f-]{36}$/i.test(r.newSessionId)) throw new HttpError(502, 'agent_bad_reply', 'Агент не вернул идентификатор копии');
+      if (typeof r?.newSessionId !== 'string' || !/^[0-9a-f-]{36}$/i.test(r.newSessionId)) throw new HttpError(502, 'agent_bad_reply', { key: 'hub.sessions.agentNoCopyId' });
       newSid = r.newSessionId.toLowerCase();
     } catch (err) {
-      if (err instanceof CommandError && err.code === 'not_implemented') throw new HttpError(409, 'agent_outdated', `Агент на ${runner.name} устарел и не умеет копировать сессии — обновите агента`);
+      if (err instanceof CommandError && err.code === 'not_implemented') throw new HttpError(409, 'agent_outdated', { key: 'hub.sessions.agentOutdatedCopy', params: { name: runner.name } });
       throw this.agentError(err, runner);
     }
     const now = this.now();
@@ -745,22 +770,27 @@ export class SessionService {
   }
 
   /**
-   * The name of a copy (change `subagents` S10.4): the base without «(копия)»/«(копия N)» and the next free number among
-   * the user's sessions of that base — «X (копия)», then «X (копия 2)», «X (копия 3)».
+   * The name of a copy (change `subagents` S10.4): the base without «(copy)»/«(copy N)» (and the older «(\u043a\u043e\u043f\u0438\u044f)») and the next free number among
+   * the user's sessions of that base — «X (copy)», then «X (copy 2)», «X (copy 3)».
    */
   private async copyTitle(userId: string, title: string): Promise<string> {
-    const base = title.replace(/\s*\(копия(?: \d+)?\)$/u, '').slice(0, 180) || 'Сессия';
+    const base = title.replace(/\s*\((?:copy|\u043a\u043e\u043f\u0438\u044f)(?: \d+)?\)$/u, '').slice(0, 180) || 'Session';
     // LIKE escapes: \ % _ of the base are literal
-    const like = `${base.replace(/[\\%_]/g, c => `\\${c}`)} (копия%`;
-    const rows = await this.o.db.selectFrom('sessions').select('title').where('user_id', '=', userId).where('title', 'like', like).execute();
+    const escaped = base.replace(/[\\%_]/g, c => `\\${c}`);
+    const rows = await this.o.db
+      .selectFrom('sessions')
+      .select('title')
+      .where('user_id', '=', userId)
+      .where(eb => eb.or([eb('title', 'like', `${escaped} (copy%`), eb('title', 'like', `${escaped} (\u043a\u043e\u043f\u0438\u044f%`)]))
+      .execute();
     let max = 0;
     // names given to copies still being made (the agent forks, the row comes after): two copies at once differ
     const pending = [...this.copyTitles].filter(k => k.startsWith(`${userId}:`)).map(k => ({ title: k.slice(userId.length + 1) }));
     for (const r of [...rows, ...pending]) {
-      const m = /\(копия(?: (\d+))?\)$/u.exec(r.title.slice(base.length));
+      const m = /\((?:copy|\u043a\u043e\u043f\u0438\u044f)(?: (\d+))?\)$/u.exec(r.title.slice(base.length));
       if (m && r.title.slice(0, base.length) === base) max = Math.max(max, m[1] ? Number(m[1]) : 1);
     }
-    const name = max === 0 ? `${base} (копия)` : `${base} (копия ${max + 1})`;
+    const name = max === 0 ? `${base} (copy)` : `${base} (copy ${max + 1})`;
     this.copyTitles.add(`${userId}:${name}`);
     return name;
   }
@@ -916,7 +946,7 @@ export class SessionService {
   }
 
   private async doInterrupt(s: SessionRow, userId: string): Promise<SessionView> {
-    if (!s.process_alive || !isLiveStatus(s.status)) throw new HttpError(409, 'not_running', 'Сессия не выполняет ход');
+    if (!s.process_alive || !isLiveStatus(s.status)) throw new HttpError(409, 'not_running', { key: 'hub.sessions.notRunning' });
     const { conn } = await this.onlineRunner(userId, s.runner_id);
     try {
       this.interrupted.add(s.id);
@@ -925,9 +955,9 @@ export class SessionService {
       this.interrupted.delete(s.id);
       throw this.agentError(err);
     }
-    await this.closeOpenPermissions(s, 'Ход прерван');
+    await this.closeOpenPermissions(s, 'Turn interrupted');
     await this.o.db.updateTable('sessions').set({ status: 'waiting', last_turn_end_at: this.now() }).where('id', '=', s.id).execute();
-    await this.emitEvents(s, [await addNote(this.o.db, s.id, 'interrupt', 'Ход прерван')]);
+    await this.emitEvents(s, [await addNote(this.o.db, s.id, 'interrupt', { key: 'hub.sessions.noteInterrupted' })]);
     return this.upsert(s.id);
   }
 
@@ -971,10 +1001,10 @@ export class SessionService {
       .where('id', '=', s.id)
       .execute();
     if (b.permissionMode !== undefined && b.permissionMode !== s.permission_mode) {
-      notes.push(await addNote(this.o.db, s.id, 'mode', `Режим прав: ${b.permissionMode}`));
-      if (live) this.o.ui.broadcast(userId, { type: 'toast', kind: 'mode_changed', sessionId: s.id, text: 'Режим прав изменён — со следующего хода' });
+      notes.push(await addNote(this.o.db, s.id, 'mode', { key: 'hub.sessions.noteMode', params: { mode: b.permissionMode } }));
+      if (live) this.o.ui.broadcast(userId, { type: 'toast', kind: 'mode_changed', sessionId: s.id, ...tx('hub.sessions.toastModeChanged') });
     }
-    if (b.model !== undefined && b.model !== s.model) notes.push(await addNote(this.o.db, s.id, 'model', `Модель: ${b.model}`));
+    if (b.model !== undefined && b.model !== s.model) notes.push(await addNote(this.o.db, s.id, 'model', { key: 'hub.sessions.noteModel', params: { model: b.model } }));
     if (notes.length) await this.emitEvents(s, notes);
     return this.upsert(s.id);
   }
@@ -1000,13 +1030,13 @@ export class SessionService {
     const req = /^[0-9a-f-]{36}$/i.test(requestId)
       ? await this.o.db.selectFrom('permission_requests').selectAll().where('request_id', '=', requestId).where('session_id', '=', s.id).executeTakeFirst()
       : undefined;
-    if (!req) throw new HttpError(404, 'not_found', 'Запрос разрешения не найден');
-    if (req.resolved_at) throw new HttpError(409, 'already_resolved', 'Запрос уже решён');
+    if (!req) throw new HttpError(404, 'not_found', { key: 'hub.sessions.permNotFound' });
+    if (req.resolved_at) throw new HttpError(409, 'already_resolved', { key: 'hub.sessions.alreadyResolved' });
     // M4b: questions and plans have their own answers (D3 «Вопросы и план»)
     const kind = permissionKind(req.tool_name);
     let answers: Record<string, string> | undefined;
     let message = extra.message?.trim() || undefined;
-    if (kind !== 'tool' && decision === 'allow_session') throw new HttpError(422, 'bad_decision', 'Для вопроса и плана нет решения «в этой сессии»');
+    if (kind !== 'tool' && decision === 'allow_session') throw new HttpError(422, 'bad_decision', { key: 'hub.sessions.badDecision' });
     if (kind === 'question' && decision === 'allow') {
       const qs = questionsOf(req.input);
       answers = {};
@@ -1018,14 +1048,14 @@ export class SessionService {
               .filter(Boolean)
               .join(', ')
           : (a ?? '').trim();
-        if (!text) throw new HttpError(422, 'bad_answers', `Нет ответа на вопрос «${q.question}»`);
+        if (!text) throw new HttpError(422, 'bad_answers', { key: 'hub.sessions.badAnswers', params: { question: q.question } });
         answers[q.question] = text;
       }
     }
-    if (kind === 'question' && decision === 'deny') message = message ?? 'Пользователь отказался отвечать';
-    if (kind === 'plan' && decision === 'deny') message = message ?? 'Пользователь не утвердил план — продолжи планирование';
+    if (kind === 'question' && decision === 'deny') message = message ?? 'The user declined to answer';
+    if (kind === 'plan' && decision === 'deny') message = message ?? 'The user did not approve the plan: continue planning';
     const conn = this.o.agents.get(s.runner_id);
-    if (!conn) throw new HttpError(409, 'runner_offline', 'Машина не в сети');
+    if (!conn) throw new HttpError(409, 'runner_offline', { key: 'hub.sessions.runnerOffline' });
     // Mark first: a concurrent answer from another device gets 409.
     const upd = await this.o.db
       .updateTable('permission_requests')
@@ -1034,7 +1064,7 @@ export class SessionService {
       .where('resolved_at', 'is', null)
       .returningAll()
       .executeTakeFirst();
-    if (!upd) throw new HttpError(409, 'already_resolved', 'Запрос уже решён');
+    if (!upd) throw new HttpError(409, 'already_resolved', { key: 'hub.sessions.alreadyResolved' });
     conn.send('permission.response', {
       requestId,
       behavior: decision === 'deny' ? 'deny' : 'allow',
@@ -1083,6 +1113,7 @@ export class SessionService {
             loginId: m.payload.loginId,
             ok: r.ok,
             ...(r.error ? { error: r.error } : {}),
+            ...(r.errorI18n ? { errorI18n: r.errorI18n } : {}),
             ...(r.subscriptionId ? { subscriptionId: r.subscriptionId } : {}),
           });
         }
@@ -1103,7 +1134,7 @@ export class SessionService {
   private async onState(runnerId: string, p: PayloadOf<AgentMessage, 'session.state'>): Promise<void> {
     const s = await findSessionByClaudeId(this.o.db, runnerId, p.sessionId);
     if (!s) return;
-    if (p.state !== 'permission') await this.closeOpenPermissions(s, 'Запрос отменён');
+    if (p.state !== 'permission') await this.closeOpenPermissions(s, 'Request cancelled');
     // M4b: the mode the process actually runs in — taken only when it cannot undo the user's choice: the mode being
     // set by the user (until set_mode is confirmed), or leaving plan mode by an approved plan. Any other report (a
     // stale state from before a change in the header) is ignored: «bypass» must never come back by itself.
@@ -1159,7 +1190,8 @@ export class SessionService {
     if (!p.isError && s.subscription_id && this.o.subscriptions) await this.o.subscriptions.clearRejected(s.subscription_id, s.user_id, s.subscription_token_at);
     const failure = p.failure && !wasInterrupted ? p.failure : null;
     const switched = failure ? await this.onFailure(s, failure) : false;
-    if (!failure && p.isError && !wasInterrupted) await this.emitEvents(s, [await addNote(this.o.db, s.id, 'error', `Ход завершился с ошибкой: ${p.errorText ?? p.subtype}`)]);
+    if (!failure && p.isError && !wasInterrupted)
+      await this.emitEvents(s, [await addNote(this.o.db, s.id, 'error', { key: 'hub.sessions.noteTurnError', params: { error: p.errorText ?? p.subtype } })]);
     await this.upsert(s.id);
     // hub-subagents D5: the turn the parent started reports back; an auto switch repeats the turn, the report waits for it
     if (s.report_to_session_id && !switched) {
@@ -1185,23 +1217,27 @@ export class SessionService {
     if (s.provider !== 'claude' && !sub) {
       // agent-providers D10: the machine's sign-in of the provider (ChatGPT for Codex)
       const label = PROVIDER_LABELS[s.provider];
-      const text =
+      const text: I18nText =
         f.kind === 'subscription_limit'
-          ? `${label}: лимит подписки исчерпан${f.resetsAt ? `, сброс в ${hhmm(new Date(f.resetsAt))}` : ''}`
+          ? f.resetsAt
+            ? { key: 'hub.sessions.failProviderLimitReset', params: { label, time: hhmm(new Date(f.resetsAt)) } }
+            : { key: 'hub.sessions.failProviderLimit', params: { label } }
           : f.kind === 'auth_rejected'
-            ? `${label}: вход на машине отклонён, войдите заново на экране «Машины»${why}`
-            : `${label}: аккаунт недоступен${why}`;
+            ? { key: 'hub.sessions.failProviderAuth', params: { label, why } }
+            : { key: 'hub.sessions.failProviderAccount', params: { label, why } };
       await this.emitEvents(s, [await addNote(this.o.db, s.id, 'error', text)]);
       return false;
     }
     if (!subs || !sub) {
       // the machine login (or no registry): the reason in plain text, no switch offered from here
-      const text =
+      const text: I18nText =
         f.kind === 'subscription_limit'
-          ? `Лимит входа машины исчерпан${f.resetsAt ? `, сброс в ${hhmm(new Date(f.resetsAt))}` : ''}`
+          ? f.resetsAt
+            ? { key: 'hub.sessions.failMachineLimitReset', params: { time: hhmm(new Date(f.resetsAt)) } }
+            : { key: 'hub.sessions.failMachineLimit' }
           : f.kind === 'auth_rejected'
-            ? `Вход машины отклонён${why}`
-            : `Аккаунт входа машины недоступен${why}`;
+            ? { key: 'hub.sessions.failMachineAuth', params: { why } }
+            : { key: 'hub.sessions.failMachineAccount', params: { why } };
       await this.emitEvents(s, [await addNote(this.o.db, s.id, 'error', text)]);
       return false;
     }
@@ -1220,28 +1256,25 @@ export class SessionService {
         }
       }
       const alternatives = await this.alternativesAfter(s, sub.id);
-      const display = `Лимит подписки ${sub.name} исчерпан${resetsAt ? `, сброс в ${hhmm(resetsAt)}` : ''}`;
+      const i18n: I18nText = resetsAt ? { key: 'hub.sessions.subLimitReset', params: { name: sub.name, time: hhmm(resetsAt) } } : { key: 'hub.sessions.subLimit', params: { name: sub.name } };
       const note = { kind: 'limit' as const, subscriptionId: sub.id, ...(resetsAt ? { resetsAt: resetsAt.toISOString() } : {}), alternatives };
-      await this.emitEvents(s, [await addNote(this.o.db, s.id, 'subscription_limit', JSON.stringify({ display, subscription: note }))]);
+      await this.emitEvents(s, [await addNote(this.o.db, s.id, 'subscription_limit', jsonNote(i18n, { subscription: note }))]);
       return false;
     }
     if (f.kind === 'auth_rejected') {
       // QA B2: the mark only when the process got the current token; a process launched with a replaced token says so
       if (await subs.markRejected(sub.id, s.user_id, s.subscription_token_at)) {
         const alternatives = await this.alternativesAfter(s, sub.id);
-        const display =
-          s.provider === 'codex'
-            ? `Подписка ${sub.name}: вход ChatGPT отклонён — войдите заново на экране «Подписки»`
-            : `Подписка ${sub.name}: токен отклонён — выпустите новый \`claude setup-token\` и замените токен в настройках`;
-        await this.emitEvents(s, [await addNote(this.o.db, s.id, 'subscription_auth', JSON.stringify({ display, subscription: { kind: 'auth', subscriptionId: sub.id, alternatives } }))]);
+        const i18n: I18nText = { key: s.provider === 'codex' ? 'hub.sessions.subAuthCodex' : 'hub.sessions.subAuthClaude', params: { name: sub.name } };
+        await this.emitEvents(s, [await addNote(this.o.db, s.id, 'subscription_auth', jsonNote(i18n, { subscription: { kind: 'auth', subscriptionId: sub.id, alternatives } }))]);
       } else {
-        await this.emitEvents(s, [await addNote(this.o.db, s.id, 'error', `Подписка ${sub.name}: отклонён прежний токен процесса, токен уже заменён — следующее сообщение поднимет сессию с новым`)]);
+        await this.emitEvents(s, [await addNote(this.o.db, s.id, 'error', { key: 'hub.sessions.subTokenReplaced', params: { name: sub.name } })]);
       }
       // the process keeps the token it was launched with: it stops, the next message resumes with the current one
       await this.stopRejected(s);
       return false;
     }
-    await this.emitEvents(s, [await addNote(this.o.db, s.id, 'error', `Подписка ${sub.name} недоступна (биллинг, блокировка или организация)${why}`)]);
+    await this.emitEvents(s, [await addNote(this.o.db, s.id, 'error', { key: 'hub.sessions.subUnavailableNote', params: { name: sub.name, why } })]);
     return false;
   }
 
@@ -1275,7 +1308,7 @@ export class SessionService {
       .run(sessionKey(s.runner_id, s.claude_session_id), async () => {
         const cur = await getSession(this.o.db, s.id);
         if (!cur || cur.subscription_id !== from.id) return;
-        if (!this.o.agents.get(cur.runner_id)) return this.autoSwitchFailed(cur, from, 'машина не в сети');
+        if (!this.o.agents.get(cur.runner_id)) return this.autoSwitchFailed(cur, from, 'the machine is offline');
         try {
           await this.switchStep1(cur, cur.user_id, to, { interrupt: false, repeatLast: true, auto: true, from });
         } catch (err) {
@@ -1291,7 +1324,7 @@ export class SessionService {
 
   private async autoSwitchFailed(s: SessionBase, from: SubscriptionMeta, why: string): Promise<void> {
     this.o.log.warn({ sessionId: s.id, why }, 'auto switch did not happen');
-    await this.emitEvents(s, [await addNote(this.o.db, s.id, 'error', `Автопереключение с подписки ${from.name} не выполнено: ${why}`)]).catch(() => undefined);
+    await this.emitEvents(s, [await addNote(this.o.db, s.id, 'error', { key: 'hub.sessions.autoSwitchFailed', params: { name: from.name, why } })]).catch(() => undefined);
   }
 
   // ---------- subscription switch (claude-subscriptions P6) ----------
@@ -1303,19 +1336,19 @@ export class SessionService {
    */
   async switchSubscription(userId: string, id: string, b: { subscriptionId: string; interrupt?: boolean | undefined; repeatLast?: boolean | undefined }): Promise<SessionView> {
     const subs = this.o.subscriptions;
-    if (!subs) throw new HttpError(422, 'subscription_unavailable', 'Подписка недоступна — выберите другую');
+    if (!subs) throw new HttpError(422, 'subscription_unavailable', { key: 'hub.sessions.subUnavailable' });
     const plan = await this.withSession(userId, id, async s => {
       this.assertWritable(s);
       const { runner } = await this.onlineRunner(userId, s.runner_id);
       if (!(s.provider === 'codex' ? supportsCodexSubscriptions(runner.protocol_version) : supportsSubscriptions(runner.protocol_version))) {
-        throw new HttpError(409, 'agent_outdated', `Агент на ${runner.name} устарел и не запускает сессии под подпиской — обновите агента`);
+        throw new HttpError(409, 'agent_outdated', { key: 'hub.sessions.agentOutdatedSub', params: { name: runner.name } });
       }
       const to = await subs.requireActive(userId, b.subscriptionId, s.provider);
       // the token must decrypt before anything stops
       await subs.cred(to);
       const live = s.process_alive && isLiveStatus(s.status);
       // a turn waiting for a permission answer is mid-turn too, and so is work in the background (subagents, commands)
-      if (live && busyForSwitch(s) && !b.interrupt) throw new HttpError(409, 'turn_in_progress', 'Идёт ход: прервать и переключить?');
+      if (live && busyForSwitch(s) && !b.interrupt) throw new HttpError(409, 'turn_in_progress', { key: 'hub.sessions.turnInProgress' });
       await subs.setLastChoice(userId, to.id);
       if (!live && !b.repeatLast) return null;
       if (live && s.subscription_id === to.id && !b.repeatLast) return null;
@@ -1340,7 +1373,7 @@ export class SessionService {
     } catch (err) {
       throw this.agentError(err);
     }
-    await this.closeOpenPermissions(s, 'Подписка переключается');
+    await this.closeOpenPermissions(s, 'The subscription is being switched');
     await this.o.db.updateTable('sessions').set({ process_alive: false, status: 'sleeping', slept_at: this.now() }).where('id', '=', s.id).execute();
   }
 
@@ -1349,11 +1382,11 @@ export class SessionService {
     const s = await this.get(userId, id);
     const { conn, runner } = await this.onlineRunner(userId, s.runner_id);
     const cred = await this.o.subscriptions!.cred(to);
-    const fromName = o.from?.name ?? 'вход машины';
-    const display = o.auto ? `Автопереключение: ${fromName} → ${to.name}` : `Подписка: ${fromName} → ${to.name}. Первый ход пересчитает контекст без кэша`;
+    const switchKey = `hub.sessions.${o.auto ? 'switchAuto' : 'switchManual'}${o.from ? '' : 'Machine'}`;
+    const i18n: I18nText = { key: switchKey, params: o.from ? { from: o.from.name, to: to.name } : { to: to.name } };
     // the note only after the process is up under the new subscription: a failed resume leaves no false «A → B»
     const switched = async () => {
-      await this.emitEvents(s, [await addNote(this.o.db, s.id, 'subscription_switch', JSON.stringify({ display, subscription: { kind: 'switch', subscriptionId: to.id } }))]);
+      await this.emitEvents(s, [await addNote(this.o.db, s.id, 'subscription_switch', jsonNote(i18n, { subscription: { kind: 'switch', subscriptionId: to.id } }))]);
     };
     const last = o.repeatLast ? this.lastMessage.get(s.id) : undefined;
     if (!last) {
@@ -1380,7 +1413,7 @@ export class SessionService {
   private async onExited(runnerId: string, p: PayloadOf<AgentMessage, 'session.exited'>): Promise<void> {
     const s = await findSessionByClaudeId(this.o.db, runnerId, p.sessionId);
     if (!s) return;
-    await this.closeOpenPermissions(s, 'Процесс завершён');
+    await this.closeOpenPermissions(s, 'The process ended');
     if (p.reason === 'crashed') {
       // D8: working → waiting on a crash; the next message resumes.
       await this.o.db
@@ -1388,7 +1421,14 @@ export class SessionService {
         .set({ process_alive: false, status: isLiveStatus(s.status) ? 'waiting' : s.status, last_turn_end_at: this.now() })
         .where('id', '=', s.id)
         .execute();
-      await this.emitEvents(s, [await addNote(this.o.db, s.id, 'crashed', (p.errorText && readableProcessError(p.errorText)) || `Процесс Claude Code упал${p.errorText ? `: ${p.errorText}` : ''}`)]);
+      await this.emitEvents(s, [
+        await addNote(
+          this.o.db,
+          s.id,
+          'crashed',
+          (p.errorText && readableProcessError(p.errorText)) || (p.errorText ? { key: 'hub.sessions.noteCrashedWith', params: { error: p.errorText } } : { key: 'hub.sessions.noteCrashed' }),
+        ),
+      ]);
     } else {
       await this.o.db
         .updateTable('sessions')
@@ -1401,7 +1441,7 @@ export class SessionService {
     // hub-subagents D5: a process that ended inside the turn the parent started has no result; the parent hears of it
     if (s.report_to_session_id) {
       await this.o.db.updateTable('sessions').set({ report_queued: 0 }).where('id', '=', s.id).execute();
-      this.turnReporter?.(s, { isError: true, subtype: 'exited', errorText: p.errorText || 'процесс завершился, не закончив ход' } as PayloadOf<AgentMessage, 'session.result'>);
+      this.turnReporter?.(s, { isError: true, subtype: 'exited', errorText: p.errorText || 'the process ended before the turn finished' } as PayloadOf<AgentMessage, 'session.result'>);
     }
   }
 
@@ -1470,7 +1510,7 @@ export class SessionService {
       }
       return;
     }
-    await this.closeOpenPermissions(s, 'Процесс не найден после переподключения агента');
+    await this.closeOpenPermissions(s, 'The process was not found after the agent reconnected');
     await this.o.db
       .updateTable('sessions')
       .set({ process_alive: false, ...(isLiveStatus(s.status) ? { status: 'sleeping' as const, slept_at: this.now() } : {}) })
@@ -1547,7 +1587,6 @@ export class SessionService {
       // Already reported (two checks of the same loss): one note per message.
       if (this.reportedLost.has(u)) continue;
       this.reportedLost.set(u, { sessionId, text: msg.text, at: Date.now() });
-      const why = online ? 'процесс Claude Code на машине завершился' : 'машина отключилась';
       this.o.log.warn({ sessionId, clientUuid: u, online }, 'acknowledged message did not reach the transcript');
       // Structured for «Повторить» (the web puts the text and the images back into the composer).
       const dims = msg.attachments.length
@@ -1566,8 +1605,8 @@ export class SessionService {
         const d = bySha.get(a.sha256);
         return { ...a, ...(d?.width ? { width: d.width } : {}), ...(d?.height ? { height: d.height } : {}) };
       });
-      const display = `Сообщение не доставлено — ${why}, отправьте ещё раз: ${quote(msg.text, msg.images)}`;
-      notes.push(await addNote(this.o.db, sessionId, 'undelivered', JSON.stringify({ display, undelivered: { text: msg.text, attachments, clientUuid: u } })));
+      const i18n: I18nText = { key: online ? 'hub.sessions.undeliveredProcess' : 'hub.sessions.undeliveredMachine', params: { quote: quote(msg.text, msg.images) } };
+      notes.push(await addNote(this.o.db, sessionId, 'undelivered', jsonNote(i18n, { undelivered: { text: msg.text, attachments, clientUuid: u } })));
     }
     if (notes.length) await this.emitEvents(s, notes);
   }
@@ -1592,7 +1631,7 @@ export class SessionService {
             continue;
           }
           msg.pendingNoted = true;
-          notes.push(await addNote(this.o.db, sessionId, 'pending', `${name} не в сети — сообщение ожидает доставки: ${quote(msg.text, msg.images)}`));
+          notes.push(await addNote(this.o.db, sessionId, 'pending', { key: 'hub.sessions.notePending', params: { name, quote: quote(msg.text, msg.images) } }));
         }
         if (notes.length) await this.emitEvents(s, notes);
       });
@@ -1606,7 +1645,7 @@ export class SessionService {
       this.forgetUnconfirmed(sessionId, u);
       if (waited?.pendingNoted) {
         const s = await getSession(this.o.db, sessionId);
-        if (s) await this.emitEvents(s, [await addNote(this.o.db, sessionId, 'delivered_late', `Сообщение дошло до сессии: ${quote(waited.text, waited.images)}`)]);
+        if (s) await this.emitEvents(s, [await addNote(this.o.db, sessionId, 'delivered_late', { key: 'hub.sessions.noteDeliveredLate', params: { quote: quote(waited.text, waited.images) } })]);
       }
       const lost = this.reportedLost.get(u);
       if (!lost || lost.sessionId !== sessionId) continue;
@@ -1614,7 +1653,7 @@ export class SessionService {
       this.reportedLost.delete(u);
       this.markDelivered(u);
       const s = await getSession(this.o.db, sessionId);
-      if (s) await this.emitEvents(s, [await addNote(this.o.db, sessionId, 'delivered_late', `Сообщение всё же дошло до сессии: ${quote(lost.text, 0)}`)]);
+      if (s) await this.emitEvents(s, [await addNote(this.o.db, sessionId, 'delivered_late', { key: 'hub.sessions.noteDeliveredAfterAll', params: { quote: quote(lost.text, 0) } })]);
     }
     const now = Date.now();
     for (const [k, v] of this.reportedLost) if (now - v.at > 60 * 60_000) this.reportedLost.delete(k);
@@ -1676,10 +1715,10 @@ export class SessionService {
   private async sleep(s: SessionRow): Promise<void> {
     const conn = this.o.agents.get(s.runner_id);
     if (s.status === 'permission') {
-      const reason = 'уснула, не дождавшись разрешения';
+      const reason = 'The session fell asleep without waiting for permission';
       const open = await this.closeOpenPermissions(s, reason);
-      for (const id of open) conn?.send('permission.response', { requestId: id, behavior: 'deny', scope: 'once', message: 'Сессия уснула, не дождавшись разрешения' });
-      await this.emitEvents(s, [await addNote(this.o.db, s.id, 'sleep', 'Сессия уснула, не дождавшись разрешения')]);
+      for (const id of open) conn?.send('permission.response', { requestId: id, behavior: 'deny', scope: 'once', message: 'The session fell asleep without waiting for permission' });
+      await this.emitEvents(s, [await addNote(this.o.db, s.id, 'sleep', { key: 'hub.sessions.noteSleptPermission' })]);
     }
     try {
       await conn?.request('session.stop', { sessionId: s.claude_session_id, reason: 'sleep' }, 30_000);
@@ -1705,15 +1744,15 @@ export class SessionService {
 
   async ownedRunner(userId: string, runnerId: string): Promise<RunnerRow> {
     const runner = await getRunner(this.o.db, runnerId);
-    if (!runner || runner.user_id !== userId) throw new HttpError(404, 'runner_not_found', 'Машина не найдена');
+    if (!runner || runner.user_id !== userId) throw new HttpError(404, 'runner_not_found', { key: 'hub.sessions.runnerNotFound' });
     // Change multi-user: a disabled machine is gone from the launch form, its sessions are read-only.
-    if (runner.state === 'disabled') throw new HttpError(423, 'read_only', `${runner.name} отключена — только чтение`);
+    if (runner.state === 'disabled') throw new HttpError(423, 'read_only', { key: 'hub.sessions.runnerDisabled', params: { name: runner.name } });
     return runner;
   }
 
   /**
    * The path must be an absolute local path of the runner's OS (platform from runners.home_dir; either kind while it
-   * is unknown), otherwise 422 bad_path with the Russian text of D10. Requirement: Запуск сессии из UI.
+   * is unknown), otherwise 422 bad_path with the text of D10. Requirement: Запуск сессии из UI.
    */
   checkPath(runner: RunnerRow, path: string): void {
     const platform = platformOfHome(runner.home_dir);
@@ -1723,7 +1762,7 @@ export class SessionService {
   private async onlineRunner(userId: string, runnerId: string): Promise<{ runner: RunnerRow; conn: AgentConnection }> {
     const runner = await this.ownedRunner(userId, runnerId);
     const conn = this.o.agents.get(runner.id);
-    if (!conn) throw new HttpError(409, 'runner_offline', `${runner.name} не в сети`);
+    if (!conn) throw new HttpError(409, 'runner_offline', { key: 'hub.sessions.runnerNamedOffline', params: { name: runner.name } });
     return { runner, conn };
   }
 
@@ -1747,17 +1786,17 @@ export class SessionService {
       // The agent refused the kind of path: the same 422 as the hub's own check, not 502 with its English text.
       if (err.code === 'bad_path') return new HttpError(422, 'bad_path', badPathMessage(platformOfHome(runner?.home_dir)));
       // An attachment did not reach the agent (D19): the message is not queued, the client offers «Повторить».
-      if (err.code === 'attachment_fetch_failed') return new HttpError(502, 'attachment_delivery_failed', 'Изображения не дошли до машины — попробуйте ещё раз');
-      if (err.code === 'disconnected') return new HttpError(409, 'runner_offline', 'Машина отключилась');
-      if (err.code === 'timeout') return new HttpError(504, 'agent_timeout', 'Агент не ответил вовремя');
+      if (err.code === 'attachment_fetch_failed') return new HttpError(502, 'attachment_delivery_failed', { key: 'hub.sessions.imagesNotDelivered' });
+      if (err.code === 'disconnected') return new HttpError(409, 'runner_offline', { key: 'hub.sessions.runnerDisconnected' });
+      if (err.code === 'timeout') return new HttpError(504, 'agent_timeout', { key: 'hub.sessions.agentTimeout' });
       return new HttpError(502, `agent_${err.code}`, err.message);
     }
     return new HttpError(500, 'internal', (err as Error).message);
   }
 
   private assertWritable(s: SessionRow): void {
-    if (s.read_only_reason === 'cwd_missing') throw new HttpError(423, 'read_only', 'Каталог проекта на машине удалён — только чтение');
-    if (s.read_only_reason || s.source === 'cron') throw new HttpError(423, 'read_only', 'Cron-сессия, только чтение');
+    if (s.read_only_reason === 'cwd_missing') throw new HttpError(423, 'read_only', { key: 'hub.sessions.readOnlyCwdGone' });
+    if (s.read_only_reason || s.source === 'cron') throw new HttpError(423, 'read_only', { key: 'hub.sessions.readOnlyCron' });
   }
 
   private isDelivered(u: string): boolean {
@@ -1779,18 +1818,18 @@ export class SessionService {
     const guardMs = this.o.externalWriteGuardMin * 60_000;
     if (!o.force && s.last_external_write_at && this.now().getTime() - s.last_external_write_at.getTime() < guardMs) {
       const runner = await getRunner(this.o.db, s.runner_id);
-      throw new HttpError(409, 'concurrent_external', `Сессия, возможно, открыта в терминале на ${runner?.name ?? s.runner_id}`);
+      throw new HttpError(409, 'concurrent_external', { key: 'hub.sessions.concurrentExternal', params: { name: runner?.name ?? s.runner_id } });
     }
-    if (!s.cwd) throw new HttpError(423, 'read_only', 'Каталог сессии неизвестен');
+    if (!s.cwd) throw new HttpError(423, 'read_only', { key: 'hub.sessions.readOnlyNoCwd' });
     // The directory comes from the transcript: only an absolute local path of the runner's OS goes to the agent.
     const runner = await getRunner(this.o.db, s.runner_id);
-    if (!pathFitsPlatform(s.cwd, platformOfHome(runner?.home_dir))) throw new HttpError(423, 'read_only', 'Каталог сессии — не локальный путь этой машины, только чтение');
+    if (!pathFitsPlatform(s.cwd, platformOfHome(runner?.home_dir))) throw new HttpError(423, 'read_only', { key: 'hub.sessions.readOnlyForeignPath' });
     assertModeAllowed(runner, s.permission_mode);
     const st = await this.fsStat(conn, s.cwd, runner);
     if (!st.exists || !st.isDir) {
       await this.o.db.updateTable('sessions').set({ read_only_reason: 'cwd_missing' }).where('id', '=', s.id).execute();
       await this.upsert(s.id);
-      throw new HttpError(423, 'read_only', 'Каталог проекта на машине удалён — только чтение');
+      throw new HttpError(423, 'read_only', { key: 'hub.sessions.readOnlyCwdGone' });
     }
     // agent-providers D3: a Codex session resumes from the Codex thread on its machine; the mirror is not restored
     if (s.provider === 'claude') await this.restoreIfMissing(conn, s, runner);
@@ -1816,8 +1855,10 @@ export class SessionService {
       .where('id', '=', s.id)
       .execute();
     // a switch passes its subscription and writes its own note «Подписка: A → B» (switchStep2): no second one here
-    if (o.subscription === undefined) await this.emitEvents(s, [await addNote(this.o.db, s.id, 'resume', cred ? `Поднята через resume · подписка ${cred.name}` : 'Поднята через resume')]);
+    if (o.subscription === undefined)
+      await this.emitEvents(s, [await addNote(this.o.db, s.id, 'resume', cred ? { key: 'hub.sessions.noteResumedSub', params: { name: cred.name } } : { key: 'hub.sessions.noteResumed' })]);
     const project = await this.o.db.selectFrom('session_projects').select('project_id').where('user_id', '=', s.user_id).where('session_id', '=', s.id).executeTakeFirst();
+    const projectCatalog = await this.projectCatalogFor(s.user_id, runner, s.id);
     this.launch(
       conn,
       s.id,
@@ -1826,6 +1867,7 @@ export class SessionService {
         sessionId: s.claude_session_id,
         cwd: s.cwd,
         ...(project?.project_id && protocolAtLeast(runner?.protocol_version, '1.13') ? { projectId: project.project_id } : {}),
+        ...(projectCatalog ? { projectCatalog } : {}),
         permissionMode: s.permission_mode as UiPermissionMode,
         // A session started outside the hub has no model here: the user's default on that machine applies.
         ...(s.model ? { model: s.model } : {}),
@@ -1857,7 +1899,7 @@ export class SessionService {
       .execute();
     const bySha = new Map(rows.map(r => [r.sha256, r]));
     const missing = refs.filter(r => !bySha.has(r.sha256));
-    if (missing.length) throw new HttpError(422, 'attachment_not_found', 'Изображение не найдено — загрузите его снова');
+    if (missing.length) throw new HttpError(422, 'attachment_not_found', { key: 'hub.sessions.attachmentNotFound' });
     return refs.map(r => {
       const b = bySha.get(r.sha256)!;
       return { sha256: b.sha256, mime: b.mime as Attachment['mime'], size: Number(b.size), url: `/agent-api/blobs/${this.blobLinks.issue(runner.id, b.sha256)}` };
@@ -1869,7 +1911,7 @@ export class SessionService {
     const v = /^(\d+)\.(\d+)$/.exec(runner.protocol_version ?? '');
     const [maj, min] = IMAGES_PROTOCOL.split('.').map(Number) as [number, number];
     if (!v || Number(v[1]) < maj || (Number(v[1]) === maj && Number(v[2]) < min)) {
-      throw new HttpError(409, 'agent_outdated', `Агент на ${runner.name} устарел и не передаёт изображения — обновите агента`);
+      throw new HttpError(409, 'agent_outdated', { key: 'hub.sessions.agentOutdatedImages', params: { name: runner.name } });
     }
   }
 
@@ -1881,10 +1923,10 @@ export class SessionService {
     } catch (err) {
       if (err instanceof CommandError && (err.code === 'timeout' || err.code === 'attachment_fetch_failed')) {
         this.o.log.warn({ err: err.message, runnerId: runner.id }, 'attachments did not reach the agent');
-        throw new HttpError(502, 'attachment_delivery_failed', 'Изображения не дошли до машины — попробуйте ещё раз');
+        throw new HttpError(502, 'attachment_delivery_failed', { key: 'hub.sessions.imagesNotDelivered' });
       }
       if (err instanceof CommandError && err.code === 'not_implemented') {
-        throw new HttpError(409, 'agent_outdated', `Агент на ${runner.name} устарел и не передаёт изображения — обновите агента`);
+        throw new HttpError(409, 'agent_outdated', { key: 'hub.sessions.agentOutdatedImages', params: { name: runner.name } });
       }
       throw this.agentError(err, runner);
     }
@@ -1928,8 +1970,8 @@ export class SessionService {
     const conn = this.o.agents.get(s.runner_id);
     // The machine is offline: the stored copy is all there is.
     if (knownEvent && !conn) return knownEvent;
-    if (!this.o.store) throw new HttpError(503, 'storage_unavailable', 'Хранилище изображений не настроено');
-    if (!conn) throw new HttpError(409, 'runner_offline', `${runner.name} не в сети`);
+    if (!this.o.store) throw new HttpError(503, 'storage_unavailable', { key: 'hub.sessions.imageStorageOff' });
+    if (!conn) throw new HttpError(409, 'runner_offline', { key: 'hub.sessions.runnerNamedOffline', params: { name: runner.name } });
     this.requireImages(runner);
     if (knownEvent && known!.meta.mtimeMs !== undefined) {
       const st = await this.fsStat(conn, path, runner);
@@ -1939,12 +1981,12 @@ export class SessionService {
     try {
       r = (await conn.request('fs.read_image', { path }, 60_000)) as { sha256?: string; data?: Buffer; mtimeMs?: number };
     } catch (err) {
-      if (err instanceof CommandError && err.code === 'not_found') throw new HttpError(404, 'file_not_found', `Файл не найден на ${runner.name}`);
-      if (err instanceof CommandError && err.code === 'not_image') throw new HttpError(415, 'not_image', 'Файл не изображение PNG, JPEG, GIF или WebP');
-      if (err instanceof CommandError && err.code === 'too_large') throw new HttpError(413, 'image_too_large', 'Файл больше 20 МБ');
+      if (err instanceof CommandError && err.code === 'not_found') throw new HttpError(404, 'file_not_found', { key: 'hub.sessions.fileNotFoundOn', params: { name: runner.name } });
+      if (err instanceof CommandError && err.code === 'not_image') throw new HttpError(415, 'not_image', { key: 'hub.sessions.notImage' });
+      if (err instanceof CommandError && err.code === 'too_large') throw new HttpError(413, 'image_too_large', { key: 'hub.sessions.imageTooLarge' });
       throw this.agentError(err, runner);
     }
-    if (!r.data || createHash('sha256').update(r.data).digest('hex') !== r.sha256) throw new HttpError(502, 'agent_bad_image', 'Агент передал повреждённый файл');
+    if (!r.data || createHash('sha256').update(r.data).digest('hex') !== r.sha256) throw new HttpError(502, 'agent_bad_image', { key: 'hub.sessions.agentBadImage' });
     // Same bytes as the stored copy (only the mtime moved, or a copy from before 1.2): keep that note, refresh its mtime.
     if (known && knownEvent && (known.meta as { sha256?: string }).sha256 === r.sha256) {
       if (typeof r.mtimeMs === 'number' && r.mtimeMs !== known.meta.mtimeMs) {
@@ -1960,7 +2002,7 @@ export class SessionService {
     try {
       img = await storeImage(this.o.db, this.o.store, userId, r.data);
     } catch (err) {
-      if (err instanceof ImageError) throw new HttpError(err.status, err.code, err.message);
+      if (err instanceof ImageError) throw new HttpError(err.status, err.code, err.i18n);
       throw err;
     }
     const ev = await addNote(
@@ -1980,8 +2022,8 @@ export class SessionService {
    */
   async sideFile(userId: string, id: string, sid: string, name: string): Promise<Buffer> {
     const s = await this.get(userId, id);
-    if (!/^[A-Za-z0-9._-]{1,200}$/.test(name) || name.includes('..') || !/^[0-9a-f-]{36}$/i.test(sid)) throw new HttpError(404, 'not_found', 'Файл не найден');
-    if (!this.o.store) throw new HttpError(503, 'storage_unavailable', 'Хранилище не настроено');
+    if (!/^[A-Za-z0-9._-]{1,200}$/.test(name) || name.includes('..') || !/^[0-9a-f-]{36}$/i.test(sid)) throw new HttpError(404, 'not_found', { key: 'hub.sessions.fileNotFound' });
+    if (!this.o.store) throw new HttpError(503, 'storage_unavailable', { key: 'hub.sessions.storageOff' });
     const folder = sid.toLowerCase();
     // The session's own machine first (itself, a full copy of a session of this machine); a `sid` of another
     // machine (a handoff session or a fork of a fork whose history has a path of the source, D14 «Handoff» p. 5)
@@ -1995,7 +2037,7 @@ export class SessionService {
       const body = await this.o.store.get(`side/${r}/${folder}/tool-results/${name}`);
       if (body) return body;
     }
-    throw new HttpError(404, 'not_found', 'Полный вывод ещё не дошёл до хаба — попробуйте позже');
+    throw new HttpError(404, 'not_found', { key: 'hub.sessions.outputPending' });
   }
 
   /** GET /agent-api/blobs/<token> → the sha256 the token was issued for (runner-bound), or null. */
@@ -2024,11 +2066,11 @@ export class SessionService {
       // A raw copy with a gap (a file replicated before raw segments existed and not yet re-sent, D4): no restore.
       if (err instanceof RawGapError) {
         this.o.log.warn({ err: err.message, sessionId: s.id }, 'restore impossible: raw copy incomplete');
-        throw new HttpError(423, 'read_only', 'История в хабе неполная — продолжить можно только на машине, где лежит файл');
+        throw new HttpError(423, 'read_only', { key: 'hub.sessions.historyIncomplete' });
       }
       // S3 or the network: try again later.
       this.o.log.warn({ err: (err as Error).message, sessionId: s.id }, 'restore failed: raw copy unavailable');
-      throw new HttpError(503, 'restore_unavailable', 'Копия в хабе временно недоступна, попробуйте позже');
+      throw new HttpError(503, 'restore_unavailable', { key: 'hub.sessions.restoreUnavailable' });
     }
     try {
       await conn.request('file.restore', { sessionId: s.claude_session_id, cwd: s.cwd, url: r.url, sha256: r.sha256 }, 120_000);
@@ -2036,7 +2078,7 @@ export class SessionService {
       throw this.agentError(err, runner);
     }
     rep.markPresent(s.runner_id, file.rel_key);
-    await this.emitEvents(s, [await addNote(this.o.db, s.id, 'restore', `Транскрипт восстановлен из копии в хабе (${r.lines} строк)`)]);
+    await this.emitEvents(s, [await addNote(this.o.db, s.id, 'restore', { key: 'hub.sessions.noteRestored', params: { count: r.lines } })]);
   }
 
   /** Sends start/resume and waits for init in the background (up to 180 s); a failure puts the session to sleep. */
@@ -2081,10 +2123,10 @@ export class SessionService {
     const s = await getSession(this.o.db, id);
     if (!s) return;
     await this.o.db.updateTable('sessions').set({ status: 'sleeping', process_alive: false, slept_at: this.now() }).where('id', '=', id).execute();
-    const text =
+    const text: I18nText =
       err instanceof CommandError && err.code === 'timeout'
-        ? 'Сессия не поднялась за 180 с'
-        : (readableProcessError(msg) ?? `Не удалось ${type === 'session.start' ? 'запустить' : 'поднять'} сессию: ${msg}`);
+        ? { key: 'hub.sessions.launchTimeout' }
+        : (readableProcessError(msg) ?? { key: type === 'session.start' ? 'hub.sessions.launchFailedStart' : 'hub.sessions.launchFailedResume', params: { error: msg } });
     await this.emitEvents(s, [await addNote(this.o.db, id, 'launch_failed', text)]);
     await this.upsert(id);
   }

@@ -63,7 +63,7 @@ describe('agent-hub enroll (Requirement: Код подключения; Уста
     ['code_used', 410, 2],
     ['code_invalid', 410, 2],
     ['too_many_requests', 429, 2],
-  ])('«Истёкший код» and others: %s → the Russian message, exit %s', async (error, status, exit) => {
+  ])('«Истёкший код» and others: %s → the English message, exit %s', async (error, status, exit) => {
     const { c, stateDir, err } = ctx({ fetchImpl: answer(status, { error }) });
     expect(await runCli(['enroll', '--hub', 'https://h', '--code', CODE, '--os', 'macos'], c)).toBe(exit);
     expect(err.join('')).toContain(ENROLL_MESSAGES[error]);
@@ -71,7 +71,7 @@ describe('agent-hub enroll (Requirement: Код подключения; Уста
   });
 
   it('the expired-code message is the one of the spec', () => {
-    expect(ENROLL_MESSAGES.code_expired).toBe('Код истёк — нажмите «Новый код» в браузере и запустите команду снова');
+    expect(ENROLL_MESSAGES.code_expired).toBe('The code has expired: click "New code" in the browser and run the command again');
   });
 
   it('«Машина не достаёт хаб»: a network error → «Нет связи с host:443 …», exit 3', async () => {
@@ -80,7 +80,7 @@ describe('agent-hub enroll (Requirement: Код подключения; Уста
     }) as unknown as typeof fetch;
     const { c, err } = ctx({ fetchImpl });
     expect(await runCli(['enroll', '--hub', 'https://hub.example.com', '--code', CODE, '--os', 'linux'], c)).toBe(3);
-    expect(err.join('')).toContain('Нет связи с hub.example.com:443 — проверьте выход машины в интернет');
+    expect(err.join('')).toContain('Cannot reach hub.example.com:443: check that the machine has internet access');
   });
 
   it('a malformed code is refused locally', async () => {
@@ -156,7 +156,7 @@ describe('agent-hub login (Requirement: Экран «Машины» — «Нет
   it('restart without an autostart entry tells what to do', async () => {
     const { c, err } = ctx();
     expect(await runCli(['restart'], c)).toBe(1);
-    expect(err.join('')).toContain('Автозапуск не настроен');
+    expect(err.join('')).toContain('Autostart is not set up');
   });
 
   it('restart of a task: /End, then kill the supervisor of the app dir except itself, then /Run (one supervisor)', async () => {
@@ -169,8 +169,8 @@ describe('agent-hub login (Requirement: Экран «Машины» — «Нет
     expect(calls[1]!.args).toContain(STOP_APP_NODES_PS);
     expect(calls[1]!.env?.AGENT_HUB_APP).toBe(join(stateDir, 'app'));
     expect(calls[1]!.env?.AGENT_HUB_SELF).toBe(String(process.pid));
-    expect(out.join('')).toContain('Агент перезапущен');
-    expect(err.join('')).toContain('может продолжать работать'); // the kill step failed: warned, /Run still ran
+    expect(out.join('')).toContain('The agent has been restarted');
+    expect(err.join('')).toContain('may keep running'); // the kill step failed: warned, /Run still ran
   });
 
   it.skipIf(process.platform !== 'win32')(

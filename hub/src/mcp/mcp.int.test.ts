@@ -4,9 +4,20 @@
 // MCP-сервера; Вход в удалённый MCP с любого устройства; Защита потока входа MCP; MCP спящей сессии; MCP машины;
 // Совместимость управления MCP с агентом; Секреты в снимке MCP.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { MCP_TEXTS, envelope, type McpMachineView, type McpServerSnapshot, type McpSessionView, type McpSnapshot, type SessionView } from '@agent-hub/shared';
+import { envelope, type McpMachineView, type McpServerSnapshot, type McpSessionView, type McpSnapshot, type SessionView } from '@agent-hub/shared';
 import { PUBLIC_URL, agentSend, connectFakeAgent, connectUi, startTestHub, waitFor, type FakeAgent, type TestHub } from '../test/harness.js';
+import { render } from '../i18n.js';
 import { MCP_AUTH_URL_REFUSED } from './service.js';
+
+/** The Russian texts the hub sends on a `ru` request (the dictionaries hold the same). */
+const MCP_TEXTS = {
+  agentOutdated: 'Управление MCP требует обновления агента',
+  notHubManaged: 'MCP видны только у сессий, запущенных или продолженных хабом',
+  stateMismatch: 'Адрес не от этой попытки входа или без кода — вставьте адрес со страницы этой попытки',
+} as const;
+
+/** The English text of a hub.mcp key: what the WS events and `lastError` carry next to the key. */
+const en = (key: string, params?: Record<string, string | number>) => render({ key: `hub.mcp.${key}`, ...(params ? { params } : {}) }, 'en');
 
 const VAULT = 'C:\\Users\\alice\\vault';
 const CB = `${PUBLIC_URL}/mcp/oauth/callback`;
@@ -281,7 +292,7 @@ describe('MCP management (integration)', () => {
     answers.delete('mcp.status.get');
     const auths = ui.received.slice(wsBefore).filter(m => m.type === 'mcp.auth' && m.sessionId === W.id);
     expect(auths).toHaveLength(1);
-    expect(auths[0]).toMatchObject({ server: 'nx', flow: null, result: 'process_exited', error: MCP_TEXTS.processExited });
+    expect(auths[0]).toMatchObject({ server: 'nx', flow: null, result: 'process_exited', error: en('processExited') });
     expect(got.slice(before).some(c => c.type === 'mcp.auth.start')).toBe(false);
     expect((await view(W.id)).servers[0]?.pendingAction).toBeUndefined();
   });
@@ -295,7 +306,7 @@ describe('MCP management (integration)', () => {
     const before = got.length;
     expect((await api('POST', `/api/sessions/${W.id}/mcp/auth`, { server: 'gone' })).statusCode).toBe(202);
     const m = await waitFor(() => wsOf('mcp.auth').find(x => x.sessionId === W.id && x.result === 'failed'));
-    expect(m.error).toBe('Сервер gone не найден в сессии');
+    expect(m.error).toBe(en('unknownServer', { server: 'gone' }));
     expect(got.slice(before).filter(c => c.type === 'mcp.status.get')).toHaveLength(1);
     expect(got.slice(before).some(c => c.type === 'mcp.auth.start')).toBe(false);
   });
@@ -422,8 +433,8 @@ describe('MCP management (integration)', () => {
     await api('POST', `/api/sessions/${S.id}/mcp/auth`, { server: 'notion' });
     await waitFor(async () => (await view(S.id)).authFlows.length === 1);
     agentSend(agents.get('hp')!, 'mcp.auth.done', { sessionId: S.sid, server: 'notion', ok: false, error: 'server did not connect after the sign-in' });
-    const m = await waitFor(() => wsOf('mcp.auth').find(x => x.sessionId === S.id && x.result === 'failed' && x.error === MCP_TEXTS.notConnectedAfterSignIn));
-    expect(m.error).toBe('Сервер не подключился после входа');
+    const m = await waitFor(() => wsOf('mcp.auth').find(x => x.sessionId === S.id && x.result === 'failed' && x.error === en('notConnectedAfterSignIn')));
+    expect(m.error).toBe('The server did not connect after sign-in');
   });
 
   it('QA fix 4: the CLI took the localhost callback itself — a connected snapshot ends the attempt with ok', async () => {
@@ -436,7 +447,7 @@ describe('MCP management (integration)', () => {
     // a pasted address of another attempt: the server keeps the error, the attempt goes on
     answer('mcp.auth.callback', { error: { code: 'mcp_auth_state_mismatch', message: 'state mismatch' } });
     expect((await api('POST', `/api/sessions/${S.id}/mcp/auth/callback`, { server: 'notion', callbackUrl: 'http://localhost:8087/callback?code=x&state=st-local' })).statusCode).toBe(202);
-    await waitFor(async () => (await view(S.id)).servers.find(x => x.name === 'notion')?.lastError === MCP_TEXTS.stateMismatch);
+    await waitFor(async () => (await view(S.id)).servers.find(x => x.name === 'notion')?.lastError === en('stateMismatch'));
     const okOf = () => wsOf('mcp.auth').filter(m => m.sessionId === S.id && m.server === 'notion' && m.flow === null && m.result === 'ok').length;
     const before = okOf();
     agentSend(agents.get('hp')!, 'mcp.status', { sessionId: S.sid, snapshot: snap([srv('notion', 'connected', { transport: 'http' })]) });
@@ -486,14 +497,14 @@ describe('MCP management (integration)', () => {
 
     answer('mcp.auth.start', { error: { code: 'mcp_auth_unsupported', message: 'Server type "stdio" does not support OAuth authentication' } });
     await api('POST', `/api/sessions/${S.id}/mcp/auth`, { server: 'notion' });
-    await waitFor(() => wsOf('mcp.auth').some(m => m.result === 'failed' && m.error === MCP_TEXTS.authUnsupported));
+    await waitFor(() => wsOf('mcp.auth').some(m => m.result === 'failed' && m.error === en('authUnsupported')));
   });
 
   it('an unsafe authUrl of the agent: the refusal in Russian, no attempt', async () => {
     answer('mcp.auth.start', { result: { authUrl: 'http://evil.example/authorize', redirect: 'hub', state: 'st-http' } });
     await api('POST', `/api/sessions/${S.id}/mcp/auth`, { server: 'notion' });
-    const m = await waitFor(() => wsOf('mcp.auth').find(x => x.sessionId === S.id && x.result === 'failed' && x.error === MCP_AUTH_URL_REFUSED));
-    expect(m.error).toBe('Адрес входа от агента отклонён: нужен https (http — только для localhost)');
+    const m = await waitFor(() => wsOf('mcp.auth').find(x => x.sessionId === S.id && x.result === 'failed' && x.error === render(MCP_AUTH_URL_REFUSED, 'en')));
+    expect(m.error).toBe('The sign-in address from the agent was refused: https is required (http only for localhost)');
     expect((await view(S.id)).authFlows).toEqual([]);
   });
 
@@ -503,7 +514,7 @@ describe('MCP management (integration)', () => {
     await waitFor(async () => (await view(S.id)).authFlows.length === 1);
     agentSend(agents.get('hp')!, 'session.exited', { sessionId: S.sid, code: 0, reason: 'stopped' });
     const m = await waitFor(() => wsOf('mcp.auth').find(x => x.sessionId === S.id && x.result === 'process_exited'));
-    expect(m).toMatchObject({ sessionId: S.id, server: 'notion', flow: null, error: MCP_TEXTS.processExited });
+    expect(m).toMatchObject({ sessionId: S.id, server: 'notion', flow: null, error: en('processExited') });
     expect((await view(S.id)).authFlows).toEqual([]);
     expect((await api('GET', `/mcp/oauth/callback?code=x&state=st-exit`, undefined, {})).statusCode).toBe(403);
   });
@@ -635,7 +646,7 @@ describe('MCP management (integration)', () => {
       const x = await view(A.id);
       return x.servers.find(s => s.name === 'fleet')?.lastError ? x : null;
     });
-    expect(v.servers.find(s => s.name === 'fleet')).toMatchObject({ status: 'connected', lastError: text });
+    expect(v.servers.find(s => s.name === 'fleet')).toMatchObject({ status: 'connected', lastError: en('logoutUnsupported', { server: 'fleet' }) });
     expect((await api('POST', `/api/sessions/${A.id}/mcp/logout`, { server: 'vw' })).json()).toMatchObject({ error: 'mcp_auth_unsupported' });
     expect((await api('POST', `/api/sessions/${A.id}/mcp/logout`, { server: 'nope' })).json()).toMatchObject({ error: 'mcp_unknown_server' });
     expect((await api('POST', `/api/sessions/${A.id}/mcp/logout`, {})).statusCode).toBe(400);

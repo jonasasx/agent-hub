@@ -304,7 +304,7 @@ describe('SessionManager', () => {
     await tick();
     const req2 = sent.filter(m => m.type === 'permission.request')[1]!.payload;
     await mgr.handle({ v: 1, ts: 0, type: 'permission.response', payload: { requestId: req2.requestId as string, behavior: 'deny', scope: 'once' } });
-    expect(await p2).toEqual({ behavior: 'deny', message: 'Пользователь отказался отвечать' });
+    expect(await p2).toEqual({ behavior: 'deny', message: 'The user declined to answer' });
   });
 
   it('set_mode: the new mode goes with session.state at once (the SDK does not always report it); an unknown mode of the SDK is left out', async () => {
@@ -947,9 +947,9 @@ describe('agent-hub tools of a session (session-peers D1, D7)', () => {
     expect(sp.append).toContain(HUB_SYSTEM_PROMPT_APPEND);
     expect(sp.append).toContain(PEERS_SYSTEM_PROMPT_APPEND);
     expect(PEERS_SYSTEM_PROMPT_APPEND).toMatch(/session_send/);
-    expect(PEERS_SYSTEM_PROMPT_APPEND).toMatch(/не пользователь/);
-    expect(PEERS_SYSTEM_PROMPT_APPEND).toMatch(/parent="true".*поручение пользователя/);
-    expect(SPAWN_SYSTEM_PROMPT_APPEND).toMatch(/мог отказаться или задать вопрос/);
+    expect(PEERS_SYSTEM_PROMPT_APPEND).toMatch(/not by the user/);
+    expect(PEERS_SYSTEM_PROMPT_APPEND).toMatch(/parent="true".*as the user.s instruction/);
+    expect(SPAWN_SYSTEM_PROMPT_APPEND).toMatch(/may have refused or asked a question/);
   });
 
   it('a hub of 1.13 uses only registry HTTP MCP plus agent-hub and applies confirmed updates at the turn boundary', async () => {

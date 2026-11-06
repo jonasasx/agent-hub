@@ -16,8 +16,9 @@
  */
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { MCP_TEXTS, type McpAuthFlowView, type McpServerView, type McpSessionView, type SessionView } from '../../api/types';
+import { type McpAuthFlowView, type McpServerView, type McpSessionView, type SessionView } from '../../api/types';
 import { useStore } from '../../store';
+import { hubText, t, useT } from '../../i18n';
 import { clockLabel, runnerIndex } from '../sessions/status';
 import { useDialog, useNow } from '../ui/a11y';
 import { openSettings } from '../settings/Settings';
@@ -68,6 +69,7 @@ function useMcpView(s: SessionView): McpSessionView | null | undefined {
 
 /** «MCP» / «MCP 2» in the head; `compact` — the phone's info line, shown only when something needs attention. */
 export function McpButton({ s, compact }: { s: SessionView; compact?: boolean }) {
+  const t = useT();
   const view = useMcpView(s);
   const open = useStore(st => st.mcpPanel === s.id);
   const count = markCount(view, s.mcpProblems);
@@ -75,7 +77,7 @@ export function McpButton({ s, compact }: { s: SessionView; compact?: boolean })
   if (view === null) return null;
   if (view === undefined && !count) return null;
   if (compact && !count) return null;
-  const label = count ? `MCP: проблемных серверов ${count}` : 'MCP-серверы';
+  const label = count ? t('mcp.panel.buttonProblems', { count }) : t('mcp.panel.buttonServers');
   return (
     <button
       type="button"
@@ -83,7 +85,7 @@ export function McpButton({ s, compact }: { s: SessionView; compact?: boolean })
       aria-haspopup="dialog"
       aria-expanded={open}
       aria-label={label}
-      title={count ? `${label} — открыть панель MCP` : 'MCP-серверы сессии'}
+      title={count ? t('mcp.panel.buttonOpenTitle', { label }) : t('mcp.panel.buttonTitle')}
       onClick={() => (open ? closeMcpPanel() : openMcpPanel(s.id))}
     >
       {compact && PLUG}
@@ -95,6 +97,7 @@ export function McpButton({ s, compact }: { s: SessionView; compact?: boolean })
 
 /** «MCP-серверы…» in the «⋯» menu (the phone, narrow panes). */
 export function McpMenuItem({ s, onPick }: { s: SessionView; onPick: () => void }) {
+  const t = useT();
   const view = useMcpView(s);
   if (view === null) return null;
   const count = markCount(view, s.mcpProblems);
@@ -108,19 +111,21 @@ export function McpMenuItem({ s, onPick }: { s: SessionView; onPick: () => void 
         openMcpPanel(s.id);
       }}
     >
-      {PLUG} MCP-серверы{count > 0 ? ` · проблем ${count}` : ''}
+      {PLUG} {t('mcp.panel.menuItem')}
+      {count > 0 ? t('mcp.panel.menuProblems', { count }) : ''}
     </button>
   );
 }
 
 /** The mark of MCP problems in a tree row. */
 export function McpTreeMark({ s }: { s: SessionView }) {
+  const t = useT();
   const view = useStore(st => st.mcp[s.id]);
   const count = markCount(view, s.mcpProblems);
   const tone = problemTone(view, count);
   if (!count || !tone) return null;
   return (
-    <span className={`mcp-mark ${tone}`} role="img" aria-label={`Проблемы MCP: ${count}`} title={`Проблемы MCP: ${count}`}>
+    <span className={`mcp-mark ${tone}`} role="img" aria-label={t('mcp.panel.markLabel', { count })} title={t('mcp.panel.markLabel', { count })}>
       {PLUG}
       {count > 1 ? count : null}
     </span>
@@ -141,6 +146,7 @@ export function McpPanelHost({ s }: { s: SessionView }) {
 }
 
 export function McpPanel({ s, onClose, paneMark }: { s: SessionView; onClose: () => void; paneMark?: RefObject<HTMLElement | null> }) {
+  const t = useT();
   const view = useStore(st => st.mcp[s.id]);
   const phone = useStore(st => st.device === 'phone');
   const runner = useStore(st => runnerIndex(st.runners)[s.runnerId]);
@@ -182,23 +188,23 @@ export function McpPanel({ s, onClose, paneMark }: { s: SessionView; onClose: ()
         <div className={`sub-list mcp-panel${phone ? ' sheet' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} ref={ref}>
           <div className="sub-head mcp-head">
             <div className="mcp-head-t">
-              <h2 id={titleId}>MCP-серверы</h2>
+              <h2 id={titleId}>{t('mcp.panel.title')}</h2>
               {view && <span className="mcp-when">{snapshotLine(view, iso => clockLabel(iso))}</span>}
             </div>
             {canRefresh && (
-              <button type="button" className="btn ghost mcp-refresh" disabled={refreshing || view.waking} title="Запросить свежий статус у процесса сессии" onClick={() => void refresh()}>
-                {refreshing ? 'Обновляем…' : 'Обновить'}
+              <button type="button" className="btn ghost mcp-refresh" disabled={refreshing || view.waking} title={t('mcp.panel.refreshTitle')} onClick={() => void refresh()}>
+                {refreshing ? t('mcp.panel.refreshing') : t('mcp.panel.refresh')}
               </button>
             )}
             <button type="button" className="btn ghost" onClick={() => setRegistryOpen(true)}>
-              Реестр
+              {t('mcp.panel.registry')}
             </button>
-            <button type="button" className="icon-btn" aria-label="Закрыть" ref={closeRef} onClick={onClose}>
+            <button type="button" className="icon-btn" aria-label={t('mcp.panel.close')} ref={closeRef} onClick={onClose}>
               ×
             </button>
           </div>
           {view === undefined && (
-            <div className="sk-rows" role="status" aria-label="Загрузка списка">
+            <div className="sk-rows" role="status" aria-label={t('mcp.panel.loading')}>
               {[78, 62, 86].map(w => (
                 <span key={w} className="skeleton" style={{ width: `${w}%` }} />
               ))}
@@ -206,7 +212,7 @@ export function McpPanel({ s, onClose, paneMark }: { s: SessionView; onClose: ()
           )}
           {view && view.waking && (
             <p className="mcp-note info" role="status">
-              <span className="spinner" aria-hidden="true" /> Сессия просыпается…
+              <span className="spinner" aria-hidden="true" /> {t('mcp.panel.waking')}
             </p>
           )}
           {sleeping && (
@@ -217,7 +223,7 @@ export function McpPanel({ s, onClose, paneMark }: { s: SessionView; onClose: ()
           {verdict && (
             /* UI review H3: the machine and the versions in the banner itself; «Машины» is a secondary link */
             <div className="mcp-note warn" role="note">
-              <b>{MCP_TEXTS.agentOutdated}</b>
+              <b>{t('mcp.text.agentOutdated')}</b>
               <span>{verdict.line}</span>
               <span className="mcp-note-sub">{verdict.next}</span>
               <button
@@ -228,7 +234,7 @@ export function McpPanel({ s, onClose, paneMark }: { s: SessionView; onClose: ()
                   openSettings('machines');
                 }}
               >
-                Открыть «Машины»
+                {t('mcp.panel.openMachines')}
               </button>
             </div>
           )}
@@ -243,11 +249,11 @@ export function McpPanel({ s, onClose, paneMark }: { s: SessionView; onClose: ()
             </p>
           )}
           {view && (
-            <ul className="mcp-rows" aria-label="Серверы">
+            <ul className="mcp-rows" aria-label={t('mcp.panel.serversLabel')}>
               {problemsFirst(view.servers).map(srv => (
                 <McpServerRow key={srv.name} s={s} view={view} srv={srv} machine={machine} phone={phone} />
               ))}
-              {!view.servers.length && view.observedAt && <li className="mcp-empty">MCP-серверов в этой сессии нет</li>}
+              {!view.servers.length && view.observedAt && <li className="mcp-empty">{t('mcp.panel.noServers')}</li>}
             </ul>
           )}
         </div>
@@ -291,6 +297,7 @@ function useAnchor(on: boolean, paneMark?: RefObject<HTMLElement | null>): CSSPr
 }
 
 function McpServerRow({ s, view, srv, machine, phone }: { s: SessionView; view: McpSessionView; srv: McpServerView; machine: string; phone: boolean }) {
+  const t = useT();
   const authError = useStore(st => st.mcpAuthErrors[authKey(s.id, srv.name)]);
   const [err, setErr] = useState<string | null>(null);
   const [wide, setWide] = useState(false);
@@ -303,17 +310,17 @@ function McpServerRow({ s, view, srv, machine, phone }: { s: SessionView; view: 
   const label = (b: RowButton): string =>
     b === 'signin'
       ? flow
-        ? 'Войти заново'
-        : 'Войти'
+        ? t('mcp.row.signinAgain')
+        : t('mcp.row.signin')
       : b === 'resignin'
-        ? 'Войти заново'
+        ? t('mcp.row.signinAgain')
         : b === 'reconnect'
-          ? 'Переподключить'
+          ? t('mcp.row.reconnect')
           : b === 'logout'
-            ? 'Выйти'
+            ? t('mcp.row.logout')
             : acts.toggle === 'enable'
-              ? 'Включить'
-              : 'Выключить';
+              ? t('mcp.row.enable')
+              : t('mcp.row.disable');
   const classOf = (b: RowButton): string => (b === 'signin' ? (flow ? 'btn' : 'btn primary') : b === 'reconnect' && !acts.quiet && !layout.menu.length ? 'btn' : 'btn ghost');
   const pending = pendingText(srv);
   const info = infoLine(srv);
@@ -329,7 +336,7 @@ function McpServerRow({ s, view, srv, machine, phone }: { s: SessionView; view: 
     void act(() => mcpAction(s.id, srv.name, b === 'reconnect' ? 'reconnect' : acts.toggle));
   };
   // UI review H2: while an action is on the way the previous error is history, not an alarm
-  const lastError = !err && srv.lastError ? srv.lastError : null;
+  const lastError = !err && srv.lastError ? hubText(srv.lastError, srv.lastErrorI18n) : null;
   return (
     <li className={`mcp-row ${tone}`} aria-label={`${srv.name}: ${MCP_STATUS_LABEL[status]}`}>
       <div className="mcp-r-top">
@@ -359,7 +366,7 @@ function McpServerRow({ s, view, srv, machine, phone }: { s: SessionView; view: 
       )}
       {lastError &&
         (srv.pendingAction ? (
-          <div className="mcp-meta mcp-past">Прошлая ошибка: {lastError}</div>
+          <div className="mcp-meta mcp-past">{t('mcp.row.pastError', { error: lastError })}</div>
         ) : (
           <div className="mcp-err" role="alert">
             {lastError}
@@ -402,6 +409,7 @@ function McpServerRow({ s, view, srv, machine, phone }: { s: SessionView; view: 
  * move between the items; after an item the focus is back on «⋯»; it opens upwards near the list's end.
  */
 export function McpRowMenu({ name, disabled, items }: { name: string; disabled: boolean; items: Array<{ key: string; label: string; danger?: boolean; onPick: () => void }> }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [up, setUp] = useState(false);
   const box = useRef<HTMLSpanElement>(null);
@@ -448,11 +456,11 @@ export function McpRowMenu({ name, disabled, items }: { name: string; disabled: 
         list[next]!.focus();
       }}
     >
-      <button type="button" ref={btn} className="btn ghost mcp-more-btn" aria-label={`Действия с ${name}`} aria-haspopup="menu" aria-expanded={open} disabled={disabled} onClick={toggle}>
+      <button type="button" ref={btn} className="btn ghost mcp-more-btn" aria-label={t('mcp.row.actionsOf', { name })} aria-haspopup="menu" aria-expanded={open} disabled={disabled} onClick={toggle}>
         ⋯
       </button>
       {open && (
-        <div className={`menu mcp-menu${up ? ' up' : ''}`} role="menu" aria-label={`Действия с ${name}`}>
+        <div className={`menu mcp-menu${up ? ' up' : ''}`} role="menu" aria-label={t('mcp.row.actionsOf', { name })}>
           {items.map(it => (
             <button
               key={it.key}
@@ -479,14 +487,19 @@ export function McpRowMenu({ name, disabled, items }: { name: string; disabled: 
  * filled danger «Выйти и отозвать токен» and «Отмена»; the focus starts on «Отмена», Esc cancels (not the panel).
  */
 function confirmBody(server: string, machine: string): ReactNode {
+  // the word «all» is bold: the dictionary text is cut at a marker that stands in its place
+  const [before, after] = t('mcp.logout.confirm', { server, machine, all: '\u0000' }).split('\u0000');
   return (
     <>
-      Выйти из {server} на {machine}? Вход сбросится во <b>всех</b> сессиях {machine} и в новых сессиях; токен будет отозван у провайдера.
+      {before}
+      <b>{t('mcp.logout.all')}</b>
+      {after}
     </>
   );
 }
 
 export function McpLogoutConfirm({ server, machine, onConfirm, onCancel }: { server: string; machine: string; onConfirm: () => void; onCancel: () => void }) {
+  const t = useT();
   const cancel = useRef<HTMLButtonElement>(null);
   const id = useId();
   useEffect(() => {
@@ -508,10 +521,10 @@ export function McpLogoutConfirm({ server, machine, onConfirm, onCancel }: { ser
       <p id={id}>{confirmBody(server, machine)}</p>
       <div className="mcp-confirm-actions">
         <button type="button" className="btn danger-fill" onClick={onConfirm}>
-          Выйти и отозвать токен
+          {t('mcp.logout.confirmButton')}
         </button>
         <button type="button" className="btn" ref={cancel} onClick={onCancel}>
-          Отмена
+          {t('mcp.logout.cancel')}
         </button>
       </div>
     </div>
@@ -524,6 +537,7 @@ export function McpLogoutConfirm({ server, machine, onConfirm, onCancel }: { ser
  * a valid address at once). After the link is used «Готово» becomes the main button; an accepted address hides the form.
  */
 export function McpAuthBlock({ sessionId, server, flow, phone = false, hint = null }: { sessionId: string; server: string; flow: McpAuthFlowView; phone?: boolean; hint?: string | null }) {
+  const t = useT();
   const now = useNow(1000);
   const flowError = useStore(st => st.mcpAuthErrors[authKey(sessionId, server)]);
   const id = useId();
@@ -558,7 +572,7 @@ export function McpAuthBlock({ sessionId, server, flow, phone = false, hint = nu
   const paste = async () => {
     // no access to the clipboard (a refused permission, an older browser) reads as an empty text
     const clip = await Promise.resolve(navigator.clipboard?.readText?.())
-      .then(t => t ?? '')
+      .then(clipText => clipText ?? '')
       .catch(() => '');
     if (!clip.trim()) return field.current?.focus(); // no access to the clipboard: the user pastes by hand
     setText(clip);
@@ -571,12 +585,12 @@ export function McpAuthBlock({ sessionId, server, flow, phone = false, hint = nu
   if (!left)
     return (
       <div className="mcp-auth" role="status">
-        Время попытки входа вышло — нажмите «Войти заново»
+        {t('mcp.authBlock.expired')}
       </div>
     );
   const link = (
     <a className={`btn${opened ? '' : ' primary'} mcp-auth-link`} href={flow.authUrl} target="_blank" rel="noopener" onClick={() => setOpened(true)}>
-      Открыть страницу входа
+      {t('mcp.authBlock.open')}
     </a>
   );
   const reset = hint && (
@@ -589,8 +603,8 @@ export function McpAuthBlock({ sessionId, server, flow, phone = false, hint = nu
       <div className="mcp-auth">
         {reset}
         {link}
-        <span className="mcp-auth-left">Ссылка действует ещё {left}</span>
-        <p className="mcp-auth-hint">После входа провайдер вернёт вас в хаб, сервер подключится сам.</p>
+        <span className="mcp-auth-left">{t('mcp.authBlock.linkLeft', { left })}</span>
+        <p className="mcp-auth-hint">{t('mcp.authBlock.afterHub')}</p>
         {shown && (
           <p className="mcp-err" role="alert">
             {shown}
@@ -602,7 +616,7 @@ export function McpAuthBlock({ sessionId, server, flow, phone = false, hint = nu
     return (
       <div className="mcp-auth">
         <p className="mcp-auth-ok" role="status">
-          <span className="spinner" aria-hidden="true" /> Адрес принят — подключаем…
+          <span className="spinner" aria-hidden="true" /> {t('mcp.authBlock.accepted')}
         </p>
       </div>
     );
@@ -611,19 +625,20 @@ export function McpAuthBlock({ sessionId, server, flow, phone = false, hint = nu
       {reset}
       <ol className="mcp-steps">
         <li>
-          <span>Откройте страницу входа и войдите.</span>
+          <span>{t('mcp.authBlock.step1')}</span>
           {link}
-          <span className="mcp-auth-left">Ссылка действует ещё {left}</span>
+          <span className="mcp-auth-left">{t('mcp.authBlock.linkLeft', { left })}</span>
         </li>
         <li>
           <span>
-            Браузер покажет ошибку — это нормально. Скопируйте адрес страницы: <span className="mono">http://localhost:{flow.callbackPort ?? '…'}/callback?…</span>
+            {t('mcp.authBlock.step2')}
+            <span className="mono">http://localhost:{flow.callbackPort ?? '…'}/callback?…</span>
           </span>
-          {phone && <span className="mcp-auth-hint">На телефоне: «Открыть в браузере» или «Поделиться → Скопировать».</span>}
+          {phone && <span className="mcp-auth-hint">{t('mcp.authBlock.phoneHint')}</span>}
         </li>
         <li>
           <form className="mcp-paste" onSubmit={submit}>
-            <label htmlFor={id}>Вставьте адрес сюда</label>
+            <label htmlFor={id}>{t('mcp.authBlock.pasteHere')}</label>
             <div className="mcp-paste-row">
               <input
                 id={id}
@@ -634,13 +649,13 @@ export function McpAuthBlock({ sessionId, server, flow, phone = false, hint = nu
                 autoComplete="off"
                 spellCheck={false}
                 inputMode="url"
-                aria-label="Адрес страницы после входа"
+                aria-label={t('mcp.authBlock.addressLabel')}
                 aria-invalid={!!shown}
                 aria-describedby={shown ? `${id}-err` : undefined}
                 onChange={e => setText(e.target.value)}
               />
               <button type="button" className="btn" disabled={busy} onClick={() => void paste()}>
-                Вставить
+                {t('mcp.authBlock.paste')}
               </button>
             </div>
             {shown && (
@@ -649,7 +664,7 @@ export function McpAuthBlock({ sessionId, server, flow, phone = false, hint = nu
               </p>
             )}
             <button type="submit" className={`btn${opened ? ' primary' : ''} mcp-paste-done`} disabled={busy}>
-              {busy ? 'Проверяем…' : 'Готово'}
+              {busy ? t('mcp.authBlock.checking') : t('mcp.authBlock.done')}
             </button>
           </form>
         </li>

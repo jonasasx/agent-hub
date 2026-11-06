@@ -22,6 +22,7 @@ import type {
   EventsPage,
   HubEvent,
   LayoutResponse,
+  Locale,
   MeResponse,
   ModelOption,
   PatchSessionRequest,
@@ -75,6 +76,7 @@ import type {
   McpRegistryMachineToggleResponse,
   McpServerConfig,
 } from './mcpRegistryTypes';
+import { currentLocale } from '../i18n';
 
 /** PUT /api/layout (M2.1): last write wins, no version (shared putLayoutRequestSchema). */
 export interface PutLayoutBody {
@@ -122,7 +124,9 @@ export function onUnauthorized(handler: (() => void) | null): void {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(path, { credentials: 'same-origin', ...init, headers: { Accept: 'application/json', ...init.headers } });
+  // change i18n D5: the hub answers human-readable texts in the interface language
+  const headers = { Accept: 'application/json', 'X-Agent-Hub-Locale': currentLocale(), ...init.headers };
+  const res = await fetch(path, { credentials: 'same-origin', ...init, headers });
   if (res.status === 401 && path.startsWith('/api/')) unauthorizedHandler?.();
   if (!res.ok) {
     let body: Record<string, unknown> = {};
@@ -159,11 +163,13 @@ export interface HandoffDraft {
   status: 'pending' | 'ready' | 'error';
   text?: string | null;
   error?: string | null;
+  errorI18n?: import('@agent-hub/shared').I18nText;
 }
 
 export const api = {
   answerProjectSuggestion: (id: string, answer: import('@agent-hub/shared').ProjectSuggestionAnswer) => request<{ ok: true }>(`/api/sessions/${enc(id)}/project-suggestion`, json('POST', answer)),
   me: () => request<MeResponse>('/api/me'),
+  setLocale: (locale: Locale | null) => request<void>('/api/preferences/locale', json('PUT', { locale })),
   sidebar: (cron = false) => request<SidebarResponse>(`/api/sidebar?cron=${cron ? 1 : 0}`),
   logout: () => request<void>('/auth/logout', { method: 'POST' }),
   projectSessions: (projectId: string | null, offset: number, limit: number, cron: boolean) =>

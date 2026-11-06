@@ -18,6 +18,7 @@ import { useMenu } from '../ui/a11y';
 import { IDLE_TIMEOUT_CHOICES, PROVIDER_LABELS, UI_PERMISSION_MODES, bypassUnavailable, type SessionView, type UiPermissionMode } from '../../api/types';
 import { providerModels } from '../newSession/ProviderField';
 import { projectKey, useStore } from '../../store';
+import { hubText, t as tr, useT } from '../../i18n';
 import { Glyph } from '../sessions/Glyph';
 import { childrenWorking, clockLabel, colorVar, displayStatus, externalText, isReadOnly, readOnlyText, runnerIndex, sleepsInMin, SOURCE_LABEL, statusText } from '../sessions/status';
 import { cancelResume, confirmResume, decide, idleLabel, interrupt, loadOlder, retryLog, openSession, patchSession, sendMessage, wake } from '../workspace/actions';
@@ -68,6 +69,7 @@ export function useSleepClock(sleepsAt: string | null): number {
 }
 
 function Banner({ s }: { s: SessionView }) {
+  const t = useT();
   const runners = useStore(st => st.runners);
   const idx = runnerIndex(runners);
   const r = idx[s.runnerId];
@@ -79,13 +81,11 @@ function Banner({ s }: { s: SessionView }) {
       <div className="banner" role="status">
         <span className="dot bad" />
         <div className="b-text">
-          <b>
-            {name} не в сети с {clockLabel(r?.lastSeenAt ?? null)}.
-          </b>
-          <span className="b-long"> История — из копии в хабе, продолжить можно, когда машина вернётся.</span>
+          <b>{t('chat.banner.offline', { name, time: clockLabel(r?.lastSeenAt ?? null) })}</b>
+          <span className="b-long">{t('chat.banner.offlineLong')}</span>
         </div>
         <button type="button" className="btn" onClick={() => useStore.setState({ modal: { type: 'fork', sessionId: s.id, mode: 'handoff' } })}>
-          Handoff на другую машину
+          {t('chat.banner.handoff')}
         </button>
       </div>
     );
@@ -95,8 +95,9 @@ function Banner({ s }: { s: SessionView }) {
       <div className="banner" role="status">
         <span className="g-work" />
         <div className="b-text">
-          <b>Сессия {ext}</b> на {name}
-          <span className="b-long">. Хаб показывает её из копии; отправить сообщение отсюда — когда она остановится там.</span>
+          <b>{t('chat.banner.external', { ext })}</b>
+          {t('chat.banner.externalOn', { name })}
+          <span className="b-long">{t('chat.banner.externalLong')}</span>
         </div>
       </div>
     );
@@ -104,7 +105,8 @@ function Banner({ s }: { s: SessionView }) {
     return (
       <div className="banner" role="status">
         <div className="b-text">
-          <b>{s.status === 'closed' ? 'Завершённая сессия' : 'Только чтение'}</b> · источник: {SOURCE_LABEL[s.originSource ?? s.source]}. {ro}
+          <b>{s.status === 'closed' ? t('chat.banner.closed') : t('chat.banner.readOnly')}</b>
+          {t('chat.banner.source', { source: SOURCE_LABEL[s.originSource ?? s.source], ro })}
         </div>
       </div>
     );
@@ -113,11 +115,11 @@ function Banner({ s }: { s: SessionView }) {
       <div className="banner" role="status">
         <span className="g-sleep" />
         <div className="b-text">
-          <b>Спит с {clockLabel(s.sleptAt)}.</b>
-          <span className="b-long"> Процесс завершён, история на диске. Сообщение или «Продолжить» поднимут её через resume.</span>
+          <b>{t('chat.banner.sleeping', { time: clockLabel(s.sleptAt) })}</b>
+          <span className="b-long">{t('chat.banner.sleepingLong')}</span>
         </div>
         <button type="button" className="btn primary" onClick={() => void wake(s.id)}>
-          Продолжить
+          {t('chat.banner.resume')}
         </button>
       </div>
     );
@@ -125,7 +127,8 @@ function Banner({ s }: { s: SessionView }) {
     return (
       <div className="banner" role="status">
         <div className="b-text">
-          <b>Завершённая сессия</b> · источник: {SOURCE_LABEL[s.originSource ?? s.source]}. Отправь сообщение — поднимется через resume на {name}.
+          <b>{t('chat.banner.closed')}</b>
+          {t('chat.banner.closedLine', { source: SOURCE_LABEL[s.originSource ?? s.source], name })}
         </div>
       </div>
     );
@@ -134,6 +137,7 @@ function Banner({ s }: { s: SessionView }) {
 
 /** «Нет входа в Claude» on the machine of the session (hello.claude / agent.status of agents 1.5). */
 export function ClaudeLoginBanner({ s }: { s: SessionView }) {
+  const t = useT();
   const runner = useStore(st => st.runners.find(r => r.id === s.runnerId));
   // a Codex session does not need the machine's Claude login (provider-parity)
   if (s.provider === 'codex' || !runner || !needsClaudeLogin(runner)) return null;
@@ -143,37 +147,40 @@ export function ClaudeLoginBanner({ s }: { s: SessionView }) {
         !
       </span>
       <div className="b-text">
-        <b>Нет входа в Claude на {runner.name}.</b>
-        <span className="b-long"> Ход не запустится, пока не войдёте. Выполните на машине:</span>
-        <CommandBox command={claudeLoginCommand(runner.os)} label={`Команда входа в Claude на ${runner.name}`} />
+        <b>{t('chat.login.title', { name: runner.name })}</b>
+        <span className="b-long">{t('chat.login.long')}</span>
+        <CommandBox command={claudeLoginCommand(runner.os)} label={t('chat.login.commandLabel', { name: runner.name })} />
       </div>
     </div>
   );
 }
 
 function ResumeWarning({ s }: { s: SessionView }) {
+  const t = useT();
   const pending = useStore(st => st.pendingResume[s.id]);
   const runner = useStore(st => st.runners.find(r => r.id === s.runnerId));
   if (!pending) return null;
   return (
-    <div className="banner warn" role="alertdialog" aria-label="Сессия, возможно, открыта в терминале">
+    <div className="banner warn" role="alertdialog" aria-label={t('chat.resumeWarn.label')}>
       <span className="g-perm" aria-hidden="true">
         !
       </span>
       <div className="b-text">
-        <b>Сессия, возможно, открыта в терминале на {runner?.name ?? s.runnerId}.</b> Файл сессии менялся вне хаба за последние 10 минут — второй процесс может испортить историю.
+        <b>{t('chat.resumeWarn.title', { name: runner?.name ?? s.runnerId })}</b>
+        {t('chat.resumeWarn.text')}
       </div>
       <button type="button" className="btn" onClick={() => cancelResume(s.id)}>
-        Отмена
+        {t('chat.resumeWarn.cancel')}
       </button>
       <button type="button" className="btn primary" onClick={() => void confirmResume(s.id)}>
-        Продолжить всё равно
+        {t('chat.resumeWarn.force')}
       </button>
     </div>
   );
 }
 
 function IdleControl({ s }: { s: SessionView }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLSpanElement>(null);
   useMenu(open, box, () => setOpen(false));
@@ -181,16 +188,16 @@ function IdleControl({ s }: { s: SessionView }) {
   const mins = sleepsInMin(s, now);
   // one source for the label and the checked item: the timeout the hub applies now
   const current = s.effectiveIdleTimeoutMin;
-  const label = mins !== null ? `уснёт через ${mins} мин` : current === 0 ? 'не усыплять' : `усыплять через ${idleLabel(current)}`;
+  const label = mins !== null ? t('chat.idle.sleepsIn', { mins }) : current === 0 ? t('chat.idle.never') : t('chat.idle.after', { label: idleLabel(current) });
   return (
     <span ref={box} style={{ position: 'relative' }}>
       ·{' '}
-      <button type="button" className="idle-btn" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)} title="Таймаут простоя">
+      <button type="button" className="idle-btn" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)} title={t('chat.idle.title')}>
         {label}
       </button>
       {open && (
-        <div className="menu" role="menu" aria-label="Усыплять при простое">
-          <div className="m-title">Усыплять при простое</div>
+        <div className="menu" role="menu" aria-label={t('chat.idle.menu')}>
+          <div className="m-title">{t('chat.idle.menu')}</div>
           {IDLE_TIMEOUT_CHOICES.map(m => (
             <button
               key={m}
@@ -203,7 +210,7 @@ function IdleControl({ s }: { s: SessionView }) {
                 void patchSession(s.id, { idleTimeoutMin: m });
               }}
             >
-              {m === 0 ? 'не усыплять' : `через ${idleLabel(m)}`}
+              {m === 0 ? t('chat.idle.never') : t('chat.idle.choice', { label: idleLabel(m) })}
             </button>
           ))}
         </div>
@@ -217,17 +224,18 @@ function IdleControl({ s }: { s: SessionView }) {
  * phone top bar (UI review H1, M10).
  */
 export function ModeModelMenu({ s }: { s: SessionView }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLSpanElement>(null);
   useMenu(open, box, () => setOpen(false));
   const ro = useStore(st => isReadOnly(s, runnerIndex(st.runners)));
   return (
     <span className="ctl-more" ref={box}>
-      <button type="button" className="icon-btn" aria-haspopup="menu" aria-expanded={open} aria-label="Режим прав и модель" title="Режим прав и модель" onClick={() => setOpen(!open)}>
+      <button type="button" className="icon-btn" aria-haspopup="menu" aria-expanded={open} aria-label={t('chat.menu.label')} title={t('chat.menu.label')} onClick={() => setOpen(!open)}>
         ⋯
       </button>
       {open && (
-        <div className="menu" role="menu" aria-label="Режим прав и модель">
+        <div className="menu" role="menu" aria-label={t('chat.menu.label')}>
           <button
             type="button"
             role="menuitem"
@@ -237,18 +245,18 @@ export function ModeModelMenu({ s }: { s: SessionView }) {
               useStore.setState({ modal: { type: 'fork', sessionId: s.id } });
             }}
           >
-            ⑂ Форк…
+            {t('chat.menu.fork')}
           </button>
           <McpMenuItem s={s} onPick={() => setOpen(false)} />
           {/* UI review C1: a pick closes the menu, so «Идёт ход: прервать и переключить?» is not under it */}
           <ModeModelSelects s={s} disabled={ro} onSubscriptionPicked={() => setOpen(false)} />
           {!ro && (
             <label className="phone-only">
-              Усыплять при простое
-              <select className="mini" aria-label="Усыплять при простое" value={String(s.effectiveIdleTimeoutMin)} onChange={e => void patchSession(s.id, { idleTimeoutMin: Number(e.target.value) })}>
+              {t('chat.idle.menu')}
+              <select className="mini" aria-label={t('chat.idle.menu')} value={String(s.effectiveIdleTimeoutMin)} onChange={e => void patchSession(s.id, { idleTimeoutMin: Number(e.target.value) })}>
                 {IDLE_TIMEOUT_CHOICES.map(m => (
                   <option key={m} value={m}>
-                    {m === 0 ? 'не усыплять' : `через ${idleLabel(m)}`}
+                    {m === 0 ? t('chat.idle.never') : t('chat.idle.choice', { label: idleLabel(m) })}
                   </option>
                 ))}
               </select>
@@ -261,6 +269,7 @@ export function ModeModelMenu({ s }: { s: SessionView }) {
 }
 
 function ModeModelSelects({ s, disabled, inline, onSubscriptionPicked }: { s: SessionView; disabled: boolean; inline?: boolean; onSubscriptionPicked?: () => void }) {
+  const t = useT();
   const provider = s.provider ?? 'claude';
   const claudeModels = useStore(st => st.models);
   const runner = useStore(st => st.runners.find(r => r.id === s.runnerId));
@@ -270,7 +279,13 @@ function ModeModelSelects({ s, disabled, inline, onSubscriptionPicked }: { s: Se
   const noBypass = provider === 'claude' && bypassUnavailable(runner);
   const modelOptions = s.model && !models.some(m => m.value === s.model) ? [{ value: s.model, displayName: s.model }, ...models] : models;
   const mode = (
-    <select className="mini" aria-label="Режим прав" disabled={disabled} value={s.permissionMode} onChange={e => void patchSession(s.id, { permissionMode: e.target.value as UiPermissionMode })}>
+    <select
+      className="mini"
+      aria-label={t('chat.selects.mode')}
+      disabled={disabled}
+      value={s.permissionMode}
+      onChange={e => void patchSession(s.id, { permissionMode: e.target.value as UiPermissionMode })}
+    >
       {/* a mode the process reported that is not in the list (plan, a new mode of the SDK): shown as it is */}
       {!(UI_PERMISSION_MODES as readonly string[]).includes(s.permissionMode) && (
         <option value={s.permissionMode} disabled>
@@ -278,15 +293,15 @@ function ModeModelSelects({ s, disabled, inline, onSubscriptionPicked }: { s: Se
         </option>
       )}
       {UI_PERMISSION_MODES.map(m => (
-        <option key={m} value={m} disabled={noBypass && m === 'bypassPermissions'} title={noBypass && m === 'bypassPermissions' ? 'Агент работает под root — bypassPermissions недоступен' : undefined}>
-          {noBypass && m === 'bypassPermissions' ? `${m} — недоступен под root` : m}
+        <option key={m} value={m} disabled={noBypass && m === 'bypassPermissions'} title={noBypass && m === 'bypassPermissions' ? t('chat.selects.noRoot') : undefined}>
+          {noBypass && m === 'bypassPermissions' ? t('chat.selects.optionNoRoot', { mode: m }) : m}
         </option>
       ))}
     </select>
   );
   const model = (
-    <select className="mini" aria-label="Модель" disabled={disabled} value={s.model ?? ''} onChange={e => void patchSession(s.id, { model: e.target.value })}>
-      {!s.model && <option value="">по умолчанию</option>}
+    <select className="mini" aria-label={t('chat.selects.model')} disabled={disabled} value={s.model ?? ''} onChange={e => void patchSession(s.id, { model: e.target.value })}>
+      {!s.model && <option value="">{t('chat.selects.default')}</option>}
       {modelOptions.map(m => (
         <option key={m.value} value={m.value}>
           {m.displayName}
@@ -304,8 +319,14 @@ function ModeModelSelects({ s, disabled, inline, onSubscriptionPicked }: { s: Se
     );
   return (
     <>
-      <label>Режим прав{mode}</label>
-      <label>Модель{model}</label>
+      <label>
+        {t('chat.selects.mode')}
+        {mode}
+      </label>
+      <label>
+        {t('chat.selects.model')}
+        {model}
+      </label>
       <HeadSubscription s={s} onPicked={onSubscriptionPicked} />
     </>
   );
@@ -328,6 +349,7 @@ function ClassLine({ s }: { s: SessionView }) {
  * mode and model live behind «⋯» (Ivan, M4a: the feed gets ≥ 75% of the screen).
  */
 function PhoneInfo({ s }: { s: SessionView }) {
+  const t = useT();
   const runners = useStore(st => st.runners);
   const idx = runnerIndex(runners);
   const r = idx[s.runnerId];
@@ -338,15 +360,18 @@ function PhoneInfo({ s }: { s: SessionView }) {
   const ext = externalText(s);
   const [short, long] =
     ext && st === 'external'
-      ? [ext, `Сессия ${ext} на ${name}. Хаб показывает её из копии.`]
+      ? [ext, t('chat.phone.external', { ext, name })]
       : st === 'offline'
-        ? [`${name} не в сети`, `${name} не в сети с ${clockLabel(r?.lastSeenAt ?? null)}. История — из копии в хабе, продолжить можно, когда машина вернётся.`]
+        ? [t('chat.phone.offlineShort', { name }), t('chat.phone.offlineLong', { name, time: clockLabel(r?.lastSeenAt ?? null) })]
         : ro
-          ? [s.status === 'closed' ? 'завершена' : 'только чтение', `${s.status === 'closed' ? 'Завершённая сессия' : 'Только чтение'} · источник: ${source}. ${ro}`]
+          ? [
+              s.status === 'closed' ? t('chat.phone.closedShort') : t('chat.phone.readOnlyShort'),
+              t('chat.phone.readOnlyLong', { title: s.status === 'closed' ? t('chat.banner.closed') : t('chat.banner.readOnly'), source, ro }),
+            ]
           : st === 'sleeping'
-            ? [`спит с ${clockLabel(s.sleptAt)}`, 'Процесс завершён, история на диске. Сообщение или «Продолжить» поднимут её через resume.']
+            ? [t('chat.phone.sleepShort', { time: clockLabel(s.sleptAt) }), t('chat.phone.sleepLong')]
             : st === 'closed'
-              ? ['завершена', `Завершённая сессия · источник: ${source}. Отправь сообщение — поднимется через resume на ${name}.`]
+              ? [t('chat.phone.closedShort'), t('chat.phone.closedLong', { source, name })]
               : [null, null];
   return (
     <div className="classline phone-info" role={short ? 'status' : undefined}>
@@ -357,12 +382,12 @@ function PhoneInfo({ s }: { s: SessionView }) {
       <LimitChip s={s} phone />
       {st === 'sleeping' && (
         <button type="button" className="btn primary" onClick={() => void wake(s.id)}>
-          Продолжить
+          {t('chat.banner.resume')}
         </button>
       )}
       {st === 'offline' && (
         <button type="button" className="btn" onClick={() => useStore.setState({ modal: { type: 'fork', sessionId: s.id, mode: 'handoff' } })}>
-          Handoff
+          {t('chat.phone.handoff')}
         </button>
       )}
     </div>
@@ -370,9 +395,10 @@ function PhoneInfo({ s }: { s: SessionView }) {
 }
 
 function Composer({ s, paneId }: { s: SessionView; paneId: string }) {
+  const t = useT();
   const runners = useStore(st => st.runners);
   const draft = useStore(st => st.drafts[s.id] ?? '');
-  const modelName = useStore(st => st.models.find(m => m.value === s.model)?.displayName ?? s.model ?? 'модель по умолчанию');
+  const modelName = useStore(st => st.models.find(m => m.value === s.model)?.displayName ?? s.model ?? tr('chat.composer.defaultModel'));
   const idx = runnerIndex(runners);
   const st = displayStatus(s, idx);
   const disabled = isReadOnly(s, idx);
@@ -388,16 +414,16 @@ function Composer({ s, paneId }: { s: SessionView; paneId: string }) {
   // one line on the phone: the placeholder must not wrap the empty field into two lines
   const bypass = s.permissionMode === 'bypassPermissions';
   const placeholder = disabled
-    ? 'Недоступно'
+    ? t('chat.composer.unavailable')
     : st === 'sleeping' || st === 'closed'
       ? phone
-        ? 'Сообщение (через resume)…'
-        : 'Сообщение поднимет сессию через resume…'
+        ? t('chat.composer.placeholderResumePhone')
+        : t('chat.composer.placeholderResume')
       : phone
         ? bypass
-          ? 'Сообщение · bypass'
-          : 'Сообщение…'
-        : `Сообщение для ${PROVIDER_LABELS[s.provider ?? 'claude']}… (Enter — отправить)`;
+          ? t('chat.composer.placeholderBypass')
+          : t('chat.composer.placeholderPhone')
+        : t('chat.composer.placeholder', { provider: PROVIDER_LABELS[s.provider ?? 'claude'] });
   const area = useRef<HTMLTextAreaElement>(null);
   // dictation (voice-input): the button only when the hub has an ElevenLabs key; the bar instead of the field
   const voiceOn = useStore(x => x.auth.kind === 'signed_in' && !!x.auth.me.voiceInput);
@@ -446,9 +472,9 @@ function Composer({ s, paneId }: { s: SessionView; paneId: string }) {
   // next to the dictation bar too (voice-input, Requirement «Запись голоса»: прервать сессию, не трогая запись)
   const interruptBtn =
     (st === 'working' || st === 'permission') && !childrenWorking(s) ? (
-      <button type="button" className="btn c-interrupt" aria-label="Прервать" title="Прервать" onClick={() => void interrupt(s.id)}>
+      <button type="button" className="btn c-interrupt" aria-label={t('chat.composer.interrupt')} title={t('chat.composer.interrupt')} onClick={() => void interrupt(s.id)}>
         <span aria-hidden="true">■</span>
-        <span className="lbl"> Прервать</span>
+        <span className="lbl"> {t('chat.composer.interrupt')}</span>
       </button>
     ) : null;
   return (
@@ -468,7 +494,7 @@ function Composer({ s, paneId }: { s: SessionView; paneId: string }) {
               data-composer={paneId}
               data-session={s.id}
               placeholder={placeholder}
-              aria-label="Сообщение"
+              aria-label={t('chat.composer.label')}
               disabled={disabled}
               value={draft}
               onChange={e => setDraft(e.target.value)}
@@ -482,7 +508,7 @@ function Composer({ s, paneId }: { s: SessionView; paneId: string }) {
                 {/* the head shows model and mode in a wide pane; here only in a narrow one, bypassPermissions always */}
                 <span className="mono narrow-only">{modelName}</span>
                 {bypass ? (
-                  <span className="pill bypass" title="Режим прав bypassPermissions: инструменты без подтверждения">
+                  <span className="pill bypass" title={t('chat.composer.bypassTitle')}>
                     bypass
                   </span>
                 ) : (
@@ -495,15 +521,15 @@ function Composer({ s, paneId }: { s: SessionView; paneId: string }) {
                 <button
                   type="button"
                   className={`btn c-send${st === 'sleeping' && empty ? '' : ' primary'}`}
-                  aria-label="Отправить"
+                  aria-label={t('chat.composer.send')}
                   disabled={disabled || empty || loading}
                   onClick={send}
-                  title={loading ? 'Изображения ещё загружаются' : 'Отправить'}
+                  title={loading ? t('chat.composer.imagesLoading') : t('chat.composer.send')}
                 >
                   <svg className="ico" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
                   </svg>
-                  <span className="lbl">Отправить</span>
+                  <span className="lbl">{t('chat.composer.send')}</span>
                 </button>
               </div>
             </div>
@@ -517,8 +543,9 @@ function Composer({ s, paneId }: { s: SessionView; paneId: string }) {
 
 /** Three or four «messages» while the first page of the history loads (M4a preloaders). */
 function HistorySkeleton() {
+  const t = useT();
   return (
-    <div className="msg-skeleton" role="status" aria-label="Загрузка истории">
+    <div className="msg-skeleton" role="status" aria-label={t('chat.history.loading')}>
       <span className="skeleton sk-user" />
       <span className="sk-block">
         <span className="skeleton sk-line" style={{ width: '92%' }} />
@@ -534,6 +561,13 @@ function HistorySkeleton() {
   );
 }
 
+type NoteItem = { text: string; i18nKey?: string };
+
+/** The hub's «resumed» note: by its key, older notes (no key, English or Russian text) by the text. */
+const isResumeNote = (n: NoteItem): boolean => (n.i18nKey ? n.i18nKey.startsWith('hub.sessions.noteResumed') : /resume/i.test(n.text));
+/** The hub's «restored from the copy» note: by its key, older notes by the text. */
+const isRestoreNote = (n: NoteItem): boolean => (n.i18nKey ? n.i18nKey === 'hub.sessions.noteRestored' : /копи|cop(y|ies)/i.test(n.text));
+
 /**
  * What the turn is doing now, from the events already in the chat (no new API): a new session before its first line —
  * «запускаем на <машина>»; after the hub's resume note — «поднимаем через resume»; a restore from the copy —
@@ -543,19 +577,19 @@ function HistorySkeleton() {
 export function turnLabel(items: ReturnType<typeof buildChat>, streaming: boolean, runnerName: string, agent = 'Claude'): string {
   const said = items.filter(i => i.kind === 'assistant' || i.kind === 'tool');
   const last = items.at(-1);
-  if (!items.some(i => i.kind === 'user' || i.kind === 'assistant' || i.kind === 'tool')) return `Запускаем на ${runnerName}`;
-  if (last?.kind === 'note' && /resume/i.test(last.text)) return 'Поднимаем через resume';
-  if (last?.kind === 'note' && /копи/i.test(last.text)) return 'Восстанавливаем из копии';
-  if (last?.kind === 'user' && !said.length) return `Запускаем на ${runnerName}`;
-  if (streaming) return `${agent} пишет`;
+  if (!items.some(i => i.kind === 'user' || i.kind === 'assistant' || i.kind === 'tool')) return tr('chat.turn.starting', { runner: runnerName });
+  if (last?.kind === 'note' && isResumeNote(last)) return tr('chat.turn.resuming');
+  if (last?.kind === 'note' && isRestoreNote(last)) return tr('chat.turn.restoring');
+  if (last?.kind === 'user' && !said.length) return tr('chat.turn.starting', { runner: runnerName });
+  if (streaming) return tr('chat.turn.writes', { agent });
   const tool = [...items].reverse().find(i => i.kind === 'tool');
-  if (tool?.kind === 'tool' && !tool.result && items.indexOf(tool) > items.findLastIndex(i => i.kind === 'user')) return `Выполняет ${tool.name}`;
-  return `${agent} думает`;
+  if (tool?.kind === 'tool' && !tool.result && items.indexOf(tool) > items.findLastIndex(i => i.kind === 'user')) return tr('chat.turn.runs', { tool: tool.name });
+  return tr('chat.turn.thinks', { agent });
 }
 
 /** «Работает в фоне: 2» under the feed while the session waits and its subagents or background commands work. */
 export function childrenLabel(n: number): string {
-  return `Работает в фоне: ${n}`;
+  return tr('chat.turn.background', { n });
 }
 
 /**
@@ -563,6 +597,7 @@ export function childrenLabel(n: number): string {
  * no turn indicator; `scope` is the session whose subagent registry the links of the feed look in.
  */
 function Messages({ s, viewOnly = false, scope }: { s: SessionView; viewOnly?: boolean; scope?: string }) {
+  const t = useT();
   const log = useStore(st => st.logs[s.id]);
   // A subagent's feed (`viewOnly`) is keyed by the subagent id: optimistic copies, drafts and the streamed partial
   // text belong to sessions only and are never read for it (review of subagents web, finding 5).
@@ -573,7 +608,9 @@ function Messages({ s, viewOnly = false, scope }: { s: SessionView; viewOnly?: b
   const st = viewOnly ? 'closed' : displayStatus(s, idx);
   const children = viewOnly ? 0 : childrenWorking(s);
   const ro = viewOnly || isReadOnly(s, idx);
-  const items = useMemo(() => buildChat(log?.events ?? []), [log?.events]);
+  // notes are translated while building: a language switch (a new `t`) builds them again
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `t` is read inside buildChat through the locale store
+  const items = useMemo(() => buildChat(log?.events ?? []), [log?.events, t]);
   const known = useMemo(() => knownLocalImages(log?.events ?? []), [log?.events]);
   const runnerName = idx[s.runnerId]?.name ?? s.runnerId;
   // images of a subagent's transcript are served by its session (the subagent id is not a session id)
@@ -608,7 +645,7 @@ function Messages({ s, viewOnly = false, scope }: { s: SessionView; viewOnly?: b
             <i />
             <i />
           </span>
-          доставляется…
+          {t('chat.feed.pending')}
         </span>
       </div>
     ));
@@ -632,7 +669,7 @@ function Messages({ s, viewOnly = false, scope }: { s: SessionView; viewOnly?: b
     const text = cur.trim() ? (cur.includes(u.text) ? cur : `${cur}\n${u.text}`) : u.text;
     useStore.setState({ drafts: { ...useStore.getState().drafts, [s.id]: text } });
     restoreAttachments(s.id, u.attachments);
-    const ta = box.current?.closest('.chat')?.querySelector<HTMLTextAreaElement>('textarea[aria-label="Сообщение"]');
+    const ta = box.current?.closest('.chat')?.querySelector<HTMLTextAreaElement>(`textarea[aria-label="${t('chat.composer.label')}"]`);
     if (ta)
       requestAnimationFrame(() => {
         ta.focus();
@@ -704,14 +741,14 @@ function Messages({ s, viewOnly = false, scope }: { s: SessionView; viewOnly?: b
             {log?.before && (
               <button type="button" className="btn ghost load-older" disabled={log.loading} aria-busy={log.loading} onClick={older}>
                 {log.loading && <span className="spinner" aria-hidden="true" />}
-                Показать раньше
+                {t('chat.feed.older')}
               </button>
             )}
             {log?.error && (
               <div className="sysnote err" role="alert">
                 {log.error}
                 <button type="button" className="btn note-retry" onClick={() => retryLog(s.id)}>
-                  Повторить
+                  {t('chat.feed.retry')}
                 </button>
               </div>
             )}
@@ -754,6 +791,7 @@ function Messages({ s, viewOnly = false, scope }: { s: SessionView; viewOnly?: b
 }
 
 export function Chat({ session: s, paneId }: { session: SessionView; paneId: string }) {
+  const t = useT();
   const runners = useStore(st => st.runners);
   const idx = runnerIndex(runners);
   const st = displayStatus(s, idx);
@@ -788,7 +826,7 @@ export function Chat({ session: s, paneId }: { session: SessionView; paneId: str
     <section className={`chat${dropping ? ' file-drop' : ''}${phone ? ' phone' : ''}`} style={{ '--gc': colorVar(s.project.colorKey) } as CSSProperties} aria-label={s.title} {...dropProps}>
       {dropping && (
         <div className="file-drop-hint" role="status">
-          Отпустите, чтобы прикрепить изображения
+          {t('chat.head.dropHint')}
         </div>
       )}
       <div className="chat-head">
@@ -799,20 +837,20 @@ export function Chat({ session: s, paneId }: { session: SessionView; paneId: str
               <button
                 type="button"
                 className="project-chip"
-                title="Открыть проект в боковой панели"
+                title={t('chat.head.openProject')}
                 onClick={() => useStore.setState(state => ({ openProjects: { ...state.openProjects, [projectKey(s.project.id)]: true } }))}
               >
-                {s.project.title}
+                {hubText(s.project.title, s.project.i18n)}
               </button>
             )}
-            <span className="provider-badge" title={`Сессия ${PROVIDER_LABELS[s.provider ?? 'claude']}`}>
+            <span className="provider-badge" title={t('chat.head.providerBadge', { provider: PROVIDER_LABELS[s.provider ?? 'claude'] })}>
               <ProviderIcon provider={s.provider ?? 'claude'} size={18} />
             </span>
           </div>
           <span className="sub mono">
             {runnerName} ·{' '}
             {s.cwd ? (
-              <button type="button" className="fx-cwd" title="Показать папку сессии в «Файлах»" onClick={() => openFilesForSession(s.id)}>
+              <button type="button" className="fx-cwd" title={t('chat.head.showCwd')} onClick={() => openFilesForSession(s.id)}>
                 {s.cwd}
               </button>
             ) : (
@@ -820,8 +858,8 @@ export function Chat({ session: s, paneId }: { session: SessionView; paneId: str
             )}
             {(s.originSource ?? s.source) !== 'hub' && ` · ${SOURCE_LABEL[s.originSource ?? s.source]}`}
             {s.isDriveImport && (s.originSource ?? s.source) !== 'drive_import' && (
-              <span className="drive-tag" title="Сессия перенесена импортом из Google Drive (vault-sessions)">
-                {' · из Drive'}
+              <span className="drive-tag" title={t('chat.head.driveTitle')}>
+                {t('chat.head.driveTag')}
               </span>
             )}
             {s.remoteControl && (
@@ -832,7 +870,7 @@ export function Chat({ session: s, paneId }: { session: SessionView; paneId: str
             )}
             {s.spawnedBy && (
               <>
-                {' · субагент сессии '}
+                {t('chat.head.subagentOf')}
                 <a
                   className="spawned-by"
                   href={`/s/${s.spawnedBy.id}`}
@@ -847,7 +885,7 @@ export function Chat({ session: s, paneId }: { session: SessionView; paneId: str
             )}
             {s.forkOf && (
               <>
-                {' · форк от '}
+                {t('chat.head.forkOf')}
                 <a
                   href={`/s/${s.forkOf.id}`}
                   onClick={e => {
@@ -867,15 +905,15 @@ export function Chat({ session: s, paneId }: { session: SessionView; paneId: str
             {statusText(s, st)}
           </span>
           {s.cwd && (
-            <button type="button" className="btn fx-files-btn" title="Папка сессии в панели «Файлы»" onClick={() => openFilesForSession(s.id)}>
-              {ICON_FOLDER_BTN} Файлы
+            <button type="button" className="btn fx-files-btn" title={t('chat.head.filesBtnTitle')} onClick={() => openFilesForSession(s.id)}>
+              {ICON_FOLDER_BTN} {t('chat.head.filesBtn')}
             </button>
           )}
           <SubagentsButton s={s} />
           <McpButton s={s} />
           <ModeModelSelects s={s} disabled={ro} inline />
-          <button type="button" className="btn fork-btn" title="Полная копия или handoff на другую машину" onClick={() => useStore.setState({ modal: { type: 'fork', sessionId: s.id } })}>
-            ⑂ Форк
+          <button type="button" className="btn fork-btn" title={t('chat.head.forkTitle')} onClick={() => useStore.setState({ modal: { type: 'fork', sessionId: s.id } })}>
+            {t('chat.head.fork')}
           </button>
           <ModeModelMenu s={s} />
         </div>
@@ -907,19 +945,20 @@ export function Chat({ session: s, paneId }: { session: SessionView; paneId: str
  * the parent session, its feed by pages and live; no composer, «Продолжить», mode, model, fork or project line.
  */
 export function SubagentChat({ id }: { id: string }) {
+  const t = useT();
   const v = useStore(st => st.subagents[id]);
   const parent = useSubagentParent(v);
   if (!v)
     return (
       <div className="empty" role="status">
-        <span className="spinner" aria-hidden="true" /> Загрузка субагента…
+        <span className="spinner" aria-hidden="true" /> {t('chat.sub.loading')}
       </div>
     );
   const feed: SessionView | null = parent ? { ...parent, id: v.id, title: subTitle(v) } : null;
   return (
-    <section className="chat sub-chat" style={{ '--gc': subagentColor(parent) } as CSSProperties} aria-label={`Субагент: ${subTitle(v)}`}>
+    <section className="chat sub-chat" style={{ '--gc': subagentColor(parent) } as CSSProperties} aria-label={t('chat.sub.label', { title: subTitle(v) })}>
       <SubagentHead v={v} parent={parent} />
-      <UserLabel.Provider value="Лид">{feed ? <Messages s={feed} viewOnly scope={v.sessionId} /> : <div className="messages" />}</UserLabel.Provider>
+      <UserLabel.Provider value={t('chat.sub.lead')}>{feed ? <Messages s={feed} viewOnly scope={v.sessionId} /> : <div className="messages" />}</UserLabel.Provider>
     </section>
   );
 }

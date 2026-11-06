@@ -4,12 +4,14 @@
  * Enter or leaving the field saves, Esc cancels; an empty or unchanged title changes nothing.
  */
 import { useRef, useState, type KeyboardEvent } from 'react';
+import { useT } from '../../i18n';
 import { useUnsavedInput } from '../update/unsaved';
 import { regenerateSessionTitle, renameSession } from '../workspace/actions';
 
 const TITLE_MAX = 200;
 
 export function SessionTitle({ sessionId, title }: { sessionId: string; title: string }) {
+  const t = useT();
   const [draft, setDraft] = useState<string | null>(null);
   const [busy, setBusy] = useState<'save' | 'regenerate' | null>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -56,7 +58,7 @@ export function SessionTitle({ sessionId, title }: { sessionId: string; title: s
         <input
           ref={input}
           className="input title-input"
-          aria-label="Название сессии"
+          aria-label={t('chat.title.label')}
           autoFocus
           value={draft}
           maxLength={TITLE_MAX}
@@ -67,15 +69,15 @@ export function SessionTitle({ sessionId, title }: { sessionId: string; title: s
           onBlur={() => void finish(true)}
         />
       ) : (
-        <button type="button" className="title-edit" title="Изменить название" disabled={busy !== null} onClick={() => setDraft(title)}>
+        <button type="button" className="title-edit" title={t('chat.title.edit')} disabled={busy !== null} onClick={() => setDraft(title)}>
           <span className="title-text">{title}</span>
         </button>
       )}
       <button
         type="button"
         className="title-regen"
-        aria-label="Перегенерировать название"
-        title="Перегенерировать название по всей сессии"
+        aria-label={t('chat.title.regenerate')}
+        title={t('chat.title.regenerateHint')}
         disabled={busy !== null}
         // keeps the focus in the field, so the blur does not save a half-typed title before the hub names the session
         onMouseDown={e => e.preventDefault()}

@@ -19,6 +19,7 @@ import { activateTab, closePane, closeTab, dropSplit, dropToPane, focusPane, pin
 import { backToList } from './phoneHistory';
 import { SUBAGENT_STATUS_LABEL, subStatus, subTitle } from '../subagents/model';
 import { SubStatusDot } from '../subagents/SubagentViews';
+import { hubText, useT } from '../../i18n';
 
 const ICON_SINGLE = (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
@@ -46,6 +47,7 @@ function startTabDrag(e: DragEvent, sid: string) {
 }
 
 function Tab({ sid, paneId, index, active, keyed, dropCls }: { sid: string; paneId: string; index: number; active: boolean; keyed: boolean; dropCls: string }) {
+  const t = useT();
   const s = useStore(st => st.sessions[sid]);
   const sub = useStore(st => (st.tabKinds[sid] ? st.subagents[sid] : undefined));
   const isSub = useStore(st => st.tabKinds[sid] === 'subagent');
@@ -62,8 +64,14 @@ function Tab({ sid, paneId, index, active, keyed, dropCls }: { sid: string; pane
   const preview = useFiles(f => !!file && !f.pinned.includes(sid));
   const fileMachine = useStore(st => (file ? st.runners.find(r => r.id === file.runnerId)?.name : undefined));
   // two open files with one name: the name of the folder helps to tell them apart
-  const sameName = useStore(st => !!file && Object.values(st.ws.panes).some(p => p.tabs.some(t => t !== sid && baseName(parseFileTabId(t)?.path ?? '') === baseName(file.path))));
-  const title = file ? baseName(file.path) : isSub ? (sub ? `Субагент · ${subTitle(sub)}` : 'Субагент…') : (s?.title ?? 'Загрузка…');
+  const sameName = useStore(st => !!file && Object.values(st.ws.panes).some(p => p.tabs.some(tab => tab !== sid && baseName(parseFileTabId(tab)?.path ?? '') === baseName(file.path))));
+  const title = file
+    ? baseName(file.path)
+    : isSub
+      ? sub
+        ? t('workspace.panes.subagentTitle', { title: subTitle(sub) })
+        : t('workspace.panes.subagentLoading')
+      : (s?.title ?? t('workspace.panes.loading'));
   const fileHint = file && sameName ? baseName(parentOf(file.path) ?? '') : '';
   const close = (e: MouseEvent) => {
     e.stopPropagation();
@@ -93,9 +101,9 @@ function Tab({ sid, paneId, index, active, keyed, dropCls }: { sid: string; pane
       style={{ '--gc': colorVar((s ?? parent)?.project.colorKey) } as CSSProperties}
       title={
         file
-          ? `${fileMachine ?? file.runnerId} · ${file.path}${preview ? ' — предпросмотр, двойной клик закрепит' : ''}`
+          ? `${fileMachine ?? file.runnerId} · ${file.path}${preview ? ` — ${t('workspace.panes.previewHint')}` : ''}`
           : s && st
-            ? `${s.title} · ${s.project.title} · ${statusText(s, st)}${s.spawnedBy ? ` · субагент сессии «${s.spawnedBy.title}»` : ''}`
+            ? `${s.title} · ${hubText(s.project.title, s.project.i18n)} · ${statusText(s, st)}${s.spawnedBy ? ` · ${t('workspace.panes.subagentOf', { title: s.spawnedBy.title })}` : ''}`
             : title
       }
       onClick={() => activateTab(paneId, sid)}
@@ -120,7 +128,7 @@ function Tab({ sid, paneId, index, active, keyed, dropCls }: { sid: string; pane
         {fileHint ? <span className="fx-tab-hint"> {fileHint}</span> : null}
       </span>
       {keyed && index < 8 && <span className="t-key">{index + 1}</span>}
-      <button type="button" className="t-close" aria-label={`Убрать из вкладок: ${title}`} tabIndex={-1} onClick={close}>
+      <button type="button" className="t-close" aria-label={t('workspace.panes.removeTab', { title })} tabIndex={-1} onClick={close}>
         ×
       </button>
     </div>
@@ -128,6 +136,7 @@ function Tab({ sid, paneId, index, active, keyed, dropCls }: { sid: string; pane
 }
 
 function TabBar({ paneId, multi }: { paneId: string; multi: boolean }) {
+  const t = useT();
   const pane = useStore(st => st.ws.panes[paneId]);
   const focus = useStore(st => st.ws.focus);
   const layout = useStore(st => st.ws.layout);
@@ -171,27 +180,27 @@ function TabBar({ paneId, multi }: { paneId: string; multi: boolean }) {
 
   return (
     <div className="tabbar" data-tabbar={paneId} onDragOver={onDragOver} onDragLeave={e => !e.currentTarget.contains(e.relatedTarget as Node) && setSlot(null)} onDrop={onDrop}>
-      <div className={`tabs${slot?.kind === 'empty' ? ' drop-empty' : ''}`} role="tablist" aria-label="Вкладки панели" ref={tabsRef}>
+      <div className={`tabs${slot?.kind === 'empty' ? ' drop-empty' : ''}`} role="tablist" aria-label={t('workspace.panes.tabList')} ref={tabsRef}>
         {pane.tabs.length ? (
           pane.tabs.map((sid, i) => <Tab key={sid} sid={sid} paneId={paneId} index={i} active={sid === pane.active} keyed={paneId === focus} dropCls={cls(sid)} />)
         ) : (
           <span className="hint" style={{ padding: '0 8px 10px' }}>
-            Открой сессию слева или перетащи сюда
+            {t('workspace.panes.tabsEmpty')}
           </span>
         )}
       </div>
       {multi && paneId === topRight(layout) && (
-        <button type="button" className="icon-btn layout-btn" title="Одно окно (Ctrl+\) — разделение запомнится" aria-label="Собрать вкладки в одно окно" onClick={toggleSingle}>
+        <button type="button" className="icon-btn layout-btn" title={t('workspace.panes.singleTitle')} aria-label={t('workspace.panes.singleLabel')} onClick={toggleSingle}>
           {ICON_SINGLE}
         </button>
       )}
       {!multi && saved && (
-        <button type="button" className="icon-btn layout-btn" title="Вернуть разделение (Ctrl+\)" aria-label="Вернуть разделение" onClick={toggleSingle}>
+        <button type="button" className="icon-btn layout-btn" title={t('workspace.panes.restoreTitle')} aria-label={t('workspace.panes.restoreLabel')} onClick={toggleSingle}>
           {ICON_SPLIT}
         </button>
       )}
       {multi && (
-        <button type="button" className="icon-btn pane-close" title="Закрыть панель (вкладки уйдут в соседнюю)" aria-label="Закрыть панель" onClick={() => closePane(paneId)}>
+        <button type="button" className="icon-btn pane-close" title={t('workspace.panes.closePaneTitle')} aria-label={t('workspace.panes.closePaneLabel')} onClick={() => closePane(paneId)}>
           {ICON_PANE_CLOSE}
         </button>
       )}
@@ -200,6 +209,7 @@ function TabBar({ paneId, multi }: { paneId: string; multi: boolean }) {
 }
 
 function Leaf({ paneId, multi, phone }: { paneId: string; multi: boolean; phone: boolean }) {
+  const t = useT();
   const pane = useStore(st => st.ws.panes[paneId]);
   const focused = useStore(st => st.ws.focus === paneId);
   const session = useStore(st => (pane?.active && !st.tabKinds[pane.active] ? st.sessions[pane.active] : undefined));
@@ -234,7 +244,7 @@ function Leaf({ paneId, multi, phone }: { paneId: string; multi: boolean; phone:
     <section
       className={`leaf${focused ? ' focused' : ''}${multi ? ' multi' : ''}${zone ? ' dragging-over' : ''}`}
       data-pane={paneId}
-      aria-label="Панель"
+      aria-label={t('workspace.panes.pane')}
       onPointerDownCapture={() => focusPane(paneId)}
       onDragOver={onDragOver}
       onDragLeave={e => !e.currentTarget.contains(e.relatedTarget as Node) && setZone(null)}
@@ -248,9 +258,9 @@ function Leaf({ paneId, multi, phone }: { paneId: string; multi: boolean; phone:
       ) : session ? (
         <Chat key={session.id} session={session} paneId={paneId} />
       ) : pane.active ? (
-        <div className="empty">Загрузка сессии…</div>
+        <div className="empty">{t('workspace.panes.sessionLoading')}</div>
       ) : (
-        <div className="empty">Выбери сессию слева или создай новую</div>
+        <div className="empty">{t('workspace.panes.pickSession')}</div>
       )}
       {zone && box && (
         <>
@@ -265,6 +275,7 @@ function Leaf({ paneId, multi, phone }: { paneId: string; multi: boolean; phone:
 }
 
 function Divider({ path, dir }: { path: string; dir: 'row' | 'col' }) {
+  const t = useT();
   const [drag, setDrag] = useState(false);
   const onDown = (e: PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -300,7 +311,7 @@ function Divider({ path, dir }: { path: string; dir: 'row' | 'col' }) {
       role="separator"
       tabIndex={0}
       aria-orientation={dir === 'row' ? 'vertical' : 'horizontal'}
-      aria-label="Изменить размер панелей"
+      aria-label={t('workspace.panes.resize')}
       onPointerDown={onDown}
       onKeyDown={onKey}
     />
@@ -324,6 +335,7 @@ function Node({ node, path, multi }: { node: LayoutNode; path: string; multi: bo
 
 /** Phone top bar: back to the left panel, title, fork. */
 function PhoneBar() {
+  const t = useT();
   const s = useStore(st => {
     const a = st.ws.panes[st.ws.focus]?.active;
     return a && !st.tabKinds[a] ? st.sessions[a] : undefined;
@@ -341,7 +353,7 @@ function PhoneBar() {
   // UI review M10: status as a glyph next to the title, mode and model behind «⋯»; the fork button comes with M4
   return (
     <div className="mbar">
-      <button type="button" className="icon-btn" aria-label="К списку" onClick={backToList}>
+      <button type="button" className="icon-btn" aria-label={t('workspace.panes.toList')} onClick={backToList}>
         ←
       </button>
       <span className="mt">
@@ -351,13 +363,15 @@ function PhoneBar() {
             <FileIcon kind={nameKind(file.path)} />
             <span className="fx-mt-file">
               <span className="nm">{baseName(file.path)}</span>
-              <small>{runners.find(r => r.id === file.runnerId)?.name ?? file.runnerId} · только чтение</small>
+              <small>
+                {runners.find(r => r.id === file.runnerId)?.name ?? file.runnerId} · {t('workspace.panes.readOnly')}
+              </small>
             </span>
           </>
         ) : s && !sub ? (
           <SessionTitle sessionId={s.id} title={s.title} />
         ) : (
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub ? `Субагент · ${subTitle(sub)}` : ''}</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub ? t('workspace.panes.subagentTitle', { title: subTitle(sub) }) : ''}</span>
         )}
       </span>
       {s && !sub && <ModeModelMenu s={s} />}

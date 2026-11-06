@@ -10,10 +10,10 @@ export function registerPeersApi(app: FastifyInstance, deps: { db: Db }): void {
   app.get('/api/peers/messages', async req => {
     const q = (req.query ?? {}) as { session?: string; limit?: string; before?: string };
     const s = q.session ? await getSession(db, q.session, req.user!.id) : undefined;
-    if (!s) throw new HttpError(404, 'not_found', 'Сессия не найдена');
+    if (!s) throw new HttpError(404, 'not_found', { key: 'hub.sessions.notFound' });
     const limit = Math.min(Math.max(Number(q.limit) || 50, 1), 200);
     const before = q.before ? new Date(q.before) : undefined;
-    if (before && Number.isNaN(before.getTime())) throw new HttpError(400, 'invalid_request', 'before: неверная дата');
+    if (before && Number.isNaN(before.getTime())) throw new HttpError(400, 'invalid_request', { key: 'hub.peers.badBefore' });
     const rows = await listPeerMessages(db, req.user!.id, s.id, limit, before);
     return {
       messages: rows.map(r => ({

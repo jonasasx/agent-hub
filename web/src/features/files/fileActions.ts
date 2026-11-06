@@ -2,6 +2,7 @@
  * Actions over an open file: «Показать в дереве», «@ В сообщение», copy the path (change tool-windows-file-explorer, task 6.6).
  * Requirement (file-explorer): Крошки и действия над файлом.
  */
+import { t } from '../../i18n';
 import { useStore } from '../../store';
 import { activateTab } from '../workspace/actions';
 import { lastActiveSession, useFiles } from './filesStore';
@@ -35,14 +36,14 @@ export function insertMention(path: string): string | null {
   useStore.setState({ drafts: { ...st.drafts, [sid]: `${cur ? `${cur.trimEnd()} ` : ''}${text} ` } });
   const pane = Object.values(st.ws.panes).find(p => p.tabs.includes(sid));
   if (pane && !(st.ws.focus === pane.id && pane.active === sid)) activateTab(pane.id, sid);
-  st.pushToast({ title: `В сообщение «${session.title}»`, text, color: 'var(--accent)' });
+  st.pushToast({ title: t('files.action.toMessage', { title: session.title }), text, color: 'var(--accent)' });
   return text;
 }
 
 export async function copyPath(path: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(path);
-    useStore.getState().pushToast({ title: 'Путь скопирован', text: path, color: 'var(--accent)' });
+    useStore.getState().pushToast({ title: t('files.action.pathCopied'), text: path, color: 'var(--accent)' });
     return true;
   } catch {
     return false;

@@ -8,7 +8,7 @@ import { useStore } from '../../store';
 import { mockFetch, resetStore } from '../../test/factories';
 import { UsersPage, machinesText, termLeft } from './UsersPage';
 
-const me: MeResponse = { user: { id: 'u-ivan', email: 'jonasasx@gmail.com', role: 'admin', name: 'Иван Волынкин', provider: 'google' }, vapidPublicKey: null, voiceInput: false };
+const me: MeResponse = { user: { id: 'u-ivan', email: 'jonasasx@gmail.com', role: 'admin', name: 'Иван Волынкин', provider: 'google' }, vapidPublicKey: null, voiceInput: false, locale: null };
 const user = (over: Partial<AdminUserView>): AdminUserView => ({
   id: 'u-ivan',
   email: 'jonasasx@gmail.com',
