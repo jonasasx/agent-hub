@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { McpImportPreviewResponse, McpRegistryDraftView, McpRegistryResponse, McpRegistryServerUpdate, McpRegistryStatus } from '../../api/mcpRegistryTypes';
 import { api } from '../../api/client';
+import { useDialog } from '../ui/a11y';
 import { useStore } from '../../store';
 import type { UserProjectView } from '../../api/types';
 import { McpRegistryList } from './McpRegistryList';
@@ -10,7 +11,9 @@ import { McpWizard } from './McpWizard';
 const emptyRegistry: McpRegistryResponse = { revision: 0, servers: [], drafts: [] };
 const emptyStatus: McpRegistryStatus = { revision: 0, agents: [], gateways: [], oauth: [] };
 
-export function McpRegistry({ onClose }: { onClose: () => void }) {
+export function McpRegistry({ onClose, sessionId }: { onClose: () => void; sessionId?: string }) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const machines = useStore(state => state.runners);
   const [projects, setProjects] = useState<UserProjectView[]>([]);
   const [registry, setRegistry] = useState(emptyRegistry);
@@ -22,6 +25,7 @@ export function McpRegistry({ onClose }: { onClose: () => void }) {
   const [preview, setPreview] = useState<McpImportPreviewResponse | null>(null);
   const [selectedImportServerIds, setSelectedImportServerIds] = useState<string[]>([]);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
 
   const reload = async () => {
     const [nextRegistry, nextStatus] = await Promise.all([api.mcpRegistry(), api.mcpRegistryStatus()]);
@@ -80,12 +84,14 @@ export function McpRegistry({ onClose }: { onClose: () => void }) {
   }, [status.oauth]);
 
   const startNewServer = () => {
+    setNotice('');
     setSelectedDraft(null);
     setWizardOpen(true);
     setError('');
   };
 
   const continueDraft = (draft: McpRegistryDraftView) => {
+    setNotice('');
     setSelectedDraft(draft);
     setWizardOpen(true);
   };
@@ -172,21 +178,35 @@ export function McpRegistry({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const doneWizard = async () => {
+  const doneWizard = async (message?: string) => {
     setWizardOpen(false);
     setSelectedDraft(null);
+    setError('');
     await reload();
+    if (message) setNotice(message);
   };
 
+  const closePanel = () => {
+    if (!wizardOpen) {
+      onClose();
+      return;
+    }
+    if (!window.confirm('Закрыть мастер? Несохранённый ввод будет потерян.')) return;
+    setWizardOpen(false);
+    setSelectedDraft(null);
+  };
+
+  useDialog(dialogRef, closePanel, closeButtonRef);
+
   return createPortal(
-    <div className="scrim sub-scrim" onMouseDown={event => event.target === event.currentTarget && onClose()}>
-      <section className="sub-list mcp-panel mcp-registry" role="dialog" aria-modal="true" aria-labelledby="registry-title">
+    <div className="scrim sub-scrim mcp-registry-scrim" onMouseDown={event => event.target === event.currentTarget && closePanel()}>
+      <section ref={dialogRef} className="sub-list mcp-panel mcp-registry" role="dialog" aria-modal="true" aria-labelledby="registry-title" onClick={() => notice && setNotice('')}>
         <header className="sub-head">
           <div>
             <h2 id="registry-title">Реестр MCP</h2>
-            <span className="mcp-when">Изменение {registry.revision}</span>
+            {!wizardOpen && <span className="mcp-when">Изменение {registry.revision}</span>}
           </div>
-          <button className="icon-btn" aria-label="Закрыть" onClick={onClose}>
+          <button ref={closeButtonRef} className="icon-btn" aria-label="Закрыть" onClick={closePanel}>
             ×
           </button>
         </header>
@@ -195,20 +215,26 @@ export function McpRegistry({ onClose }: { onClose: () => void }) {
             {error}
           </p>
         )}
+        {notice && (
+          <p className="mcp-note info" role="status">
+            {notice}
+          </p>
+        )}
         <OutdatedAgentNotice status={status} />
         {wizardOpen ? (
           <McpWizard
             initialDraft={selectedDraft}
-            machines={machines.map(machine => ({ id: machine.id, name: machine.name }))}
+            sessionId={sessionId}
+            machines={machines.map(machine => ({ id: machine.id, name: machine.name, online: machine.online }))}
             onDraftChange={updateDraft}
-            onDone={() => void doneWizard()}
+            onDone={message => void doneWizard(message)}
             onClose={() => setWizardOpen(false)}
           />
         ) : (
           <McpRegistryList
             registry={registry}
             status={status}
-            machines={machines.map(machine => ({ id: machine.id, name: machine.name }))}
+            machines={machines.map(machine => ({ id: machine.id, name: machine.name, online: machine.online }))}
             projects={projects}
             importMachineId={importMachineId}
             importProjectId={importProjectId}

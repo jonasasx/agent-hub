@@ -57,13 +57,18 @@ test('Скриншот Playwright: the preview under the collapsed call with the
     await page.screenshot({ path: `${process.env.SHOTS_DIR}/images-chat.png` });
   }
   await msg.getByRole('button', { name: 'Открыть изображение 1 из 3' }).click();
-  const box = page.getByRole('dialog', { name: 'Изображение 1 из 3' });
+  // the lightbox steps through all images of the session: the screenshot of the tool comes first (change image-viewer)
+  const box = page.getByRole('dialog', { name: 'Изображение 2 из 4' });
   await expect(box).toBeVisible();
+  await expect(box.locator('.lb-caption')).toContainText('2 / 4');
   if (process.env.SHOTS_DIR) await page.screenshot({ path: `${process.env.SHOTS_DIR}/images-lightbox.png` });
-  await page.keyboard.press('ArrowRight');
-  await expect(page.getByRole('dialog', { name: 'Изображение 2 из 3' })).toBeVisible();
   await page.keyboard.press('ArrowLeft');
-  await expect(page.getByRole('dialog', { name: 'Изображение 1 из 3' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Изображение 1 из 4' })).toBeVisible();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('dialog', { name: 'Изображение 3 из 4' })).toBeVisible();
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.getByRole('dialog', { name: 'Изображение 2 из 4' })).toBeVisible();
   // the feed with the lightbox open, once still: the click may have scrolled it a few pixels to reach the button
   // (Playwright brings the target into view), which is not the lightbox's doing
   const settled = async () => {
@@ -85,6 +90,58 @@ test('Скриншот Playwright: the preview under the collapsed call with the
   await expect(page.getByRole('dialog')).toHaveCount(0);
   // back to the same place of the feed: the focus returns to the preview button without scrolling to it
   expect(Math.abs((await settled()) - scroll)).toBeLessThanOrEqual(1);
+});
+
+test('Масштаб и перемещение: «+», the wheel at the cursor, a drag moves the zoomed picture and does not close it', async ({ page }) => {
+  // a screenshot 1280×720 in a stage narrower than it: «Вписать» is below 100 %
+  await page.setViewportSize({ width: 1000, height: 700 });
+  await start(page);
+  const tool = chat(page).locator('.tool-wrap', { hasText: 'browser_take_screenshot' });
+  await tool.getByRole('button', { name: 'Открыть изображение' }).click();
+  const box = page.getByRole('dialog', { name: 'Изображение 1 из 4' });
+  const pct = box.locator('.lb-pct');
+  const img = box.locator('.lb-stage img');
+  await expect(img).toHaveJSProperty('complete', true);
+  const fit = Number((await pct.innerText()).replace('%', ''));
+  expect(fit).toBeLessThan(100);
+  await box.getByRole('button', { name: 'Увеличить' }).click();
+  // the shown percentage is rounded: one step is ×1,25 of the exact scale
+  await expect.poll(async () => Math.abs(Number((await pct.innerText()).replace('%', '')) - fit * 1.25)).toBeLessThanOrEqual(1);
+  await box.getByRole('button', { name: '100%' }).click();
+  await expect(pct).toHaveText('100%');
+  if (process.env.SHOTS_DIR) await page.screenshot({ path: `${process.env.SHOTS_DIR}/images-lightbox-zoom.png` });
+  // a drag down shows the top of the picture: the image moves with the mouse, the lightbox stays, no other image
+  const before = (await img.boundingBox())!;
+  const stage = (await box.locator('.lb-frame').boundingBox())!;
+  await page.mouse.move(stage.x + stage.width / 2, stage.y + stage.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(stage.x + stage.width / 2 - 100, stage.y + stage.height / 2 + 40, { steps: 5 });
+  await page.mouse.up();
+  const after = (await img.boundingBox())!;
+  expect(Math.round(after.x - before.x)).toBe(-100);
+  expect(Math.round(after.y - before.y)).toBe(40);
+  await expect(page.getByRole('dialog', { name: 'Изображение 1 из 4' })).toBeVisible();
+  // the edge of the picture never comes inside the stage
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowUp');
+  expect(Math.round((await img.boundingBox())!.y)).toBe(Math.round(stage.y));
+  // «Вписать», then the wheel up at the cursor enlarges
+  await box.getByRole('button', { name: 'Вписать' }).click();
+  await expect(pct).toHaveText(`${fit}%`);
+  await page.mouse.move(stage.x + stage.width / 4, stage.y + stage.height / 4);
+  await page.mouse.wheel(0, -300);
+  await expect.poll(async () => Number((await pct.innerText()).replace('%', ''))).toBeGreaterThan(fit);
+  await page.keyboard.press('0');
+  await expect(pct).toHaveText(`${fit}%`);
+  // a click on the picture: 100 % and back; a click beside it closes the lightbox
+  await img.click();
+  await expect(pct).toHaveText('100%');
+  await img.click();
+  await expect(pct).toHaveText(`${fit}%`);
+  const shown = (await img.boundingBox())!;
+  await page.mouse.click(stage.x + 4, shown.y + shown.height + 6);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
 test('Изображения в ответе: an external image is a link and is not loaded; a local path is shown on request; a missing file says so', async ({ page }) => {

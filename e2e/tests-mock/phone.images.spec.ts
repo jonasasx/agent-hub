@@ -11,7 +11,8 @@ test('«назад» closes the lightbox and does not leave the page; «Прик
   await page.locator('.side-scroll .srow', { hasText: 'Скриншоты сайта' }).first().click();
   const msg = page.locator('.msg.user', { hasText: 'Сравни эти три варианта' });
   await msg.getByRole('button', { name: 'Открыть изображение 2 из 3' }).click();
-  const lb = page.getByRole('dialog', { name: 'Изображение 2 из 3' });
+  // all images of the session: the screenshot of the tool, then the three of the message (change image-viewer)
+  const lb = page.getByRole('dialog', { name: 'Изображение 3 из 4' });
   await expect(lb).toBeVisible();
   // UI review M3b: buttons and arrows ≥ 40 px; the caption on its own translucent panel, wrapped, not clipped
   for (const b of await lb.getByRole('button').all()) {
@@ -21,6 +22,13 @@ test('«назад» closes the lightbox and does not leave the page; «Прик
   const cap = await lb.locator('.lb-caption').evaluate(el => ({ fits: el.scrollWidth <= el.clientWidth, bg: getComputedStyle(el.parentElement!).backgroundColor }));
   expect(cap.fits).toBe(true);
   expect(cap.bg).not.toBe('rgba(0, 0, 0, 0)');
+  // a swipe to the left steps to the next image while the picture is fitted
+  const stage = (await lb.locator('.lb-frame').boundingBox())!;
+  await page.mouse.move(stage.x + stage.width * 0.8, stage.y + stage.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(stage.x + stage.width * 0.2, stage.y + stage.height / 2, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.getByRole('dialog', { name: 'Изображение 4 из 4' })).toBeVisible();
   const url = page.url();
   await page.goBack();
   await expect(page.getByRole('dialog')).toHaveCount(0);

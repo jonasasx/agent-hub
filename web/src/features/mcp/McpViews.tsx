@@ -152,7 +152,9 @@ export function McpPanel({ s, onClose, paneMark }: { s: SessionView; onClose: ()
   const [refreshing, setRefreshing] = useState(false);
   const [registryOpen, setRegistryOpen] = useState(false);
   const anchor = useAnchor(!phone, paneMark);
-  useDialog(ref, onClose);
+  useDialog(ref, () => {
+    if (!registryOpen) onClose();
+  });
   useNow(60_000);
   useEffect(() => {
     void loadMcp(s.id);
@@ -175,81 +177,83 @@ export function McpPanel({ s, onClose, paneMark }: { s: SessionView; onClose: ()
   // UI review M7: a sleeping session has nothing to refresh — no button at all
   const canRefresh = !!view && view.live && !outdated && view.reason !== 'not_hub_managed';
   return createPortal(
-    <div className={`scrim${phone ? ' sheet-scrim' : ' sub-scrim'}`} style={anchor} onMouseDown={e => e.target === e.currentTarget && onClose()}>
-      <div className={`sub-list mcp-panel${phone ? ' sheet' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} ref={ref}>
-        <div className="sub-head mcp-head">
-          <div className="mcp-head-t">
-            <h2 id={titleId}>MCP-серверы</h2>
-            {view && <span className="mcp-when">{snapshotLine(view, iso => clockLabel(iso))}</span>}
-          </div>
-          {canRefresh && (
-            <button type="button" className="btn ghost mcp-refresh" disabled={refreshing || view.waking} title="Запросить свежий статус у процесса сессии" onClick={() => void refresh()}>
-              {refreshing ? 'Обновляем…' : 'Обновить'}
+    <>
+      <div className={`scrim${phone ? ' sheet-scrim' : ' sub-scrim'}`} style={{ ...anchor, ...(registryOpen ? { display: 'none' } : {}) }} onMouseDown={e => e.target === e.currentTarget && onClose()}>
+        <div className={`sub-list mcp-panel${phone ? ' sheet' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} ref={ref}>
+          <div className="sub-head mcp-head">
+            <div className="mcp-head-t">
+              <h2 id={titleId}>MCP-серверы</h2>
+              {view && <span className="mcp-when">{snapshotLine(view, iso => clockLabel(iso))}</span>}
+            </div>
+            {canRefresh && (
+              <button type="button" className="btn ghost mcp-refresh" disabled={refreshing || view.waking} title="Запросить свежий статус у процесса сессии" onClick={() => void refresh()}>
+                {refreshing ? 'Обновляем…' : 'Обновить'}
+              </button>
+            )}
+            <button type="button" className="btn ghost" onClick={() => setRegistryOpen(true)}>
+              Реестр
             </button>
+            <button type="button" className="icon-btn" aria-label="Закрыть" ref={closeRef} onClick={onClose}>
+              ×
+            </button>
+          </div>
+          {view === undefined && (
+            <div className="sk-rows" role="status" aria-label="Загрузка списка">
+              {[78, 62, 86].map(w => (
+                <span key={w} className="skeleton" style={{ width: `${w}%` }} />
+              ))}
+            </div>
           )}
-          <button type="button" className="btn ghost" onClick={() => setRegistryOpen(true)}>
-            Реестр
-          </button>
-          <button type="button" className="icon-btn" aria-label="Закрыть" ref={closeRef} onClick={onClose}>
-            ×
-          </button>
+          {view && view.waking && (
+            <p className="mcp-note info" role="status">
+              <span className="spinner" aria-hidden="true" /> Сессия просыпается…
+            </p>
+          )}
+          {sleeping && (
+            <p className="mcp-note info" role="note">
+              {sleeping}
+            </p>
+          )}
+          {verdict && (
+            /* UI review H3: the machine and the versions in the banner itself; «Машины» is a secondary link */
+            <div className="mcp-note warn" role="note">
+              <b>{MCP_TEXTS.agentOutdated}</b>
+              <span>{verdict.line}</span>
+              <span className="mcp-note-sub">{verdict.next}</span>
+              <button
+                type="button"
+                className="btn ghost mcp-note-link"
+                onClick={() => {
+                  onClose();
+                  openSettings('machines');
+                }}
+              >
+                Открыть «Машины»
+              </button>
+            </div>
+          )}
+          {reason && (
+            <div className="mcp-note" role="note">
+              <span>{reason}</span>
+            </div>
+          )}
+          {err && (
+            <p className="mcp-note bad" role="alert">
+              {err}
+            </p>
+          )}
+          {view && (
+            <ul className="mcp-rows" aria-label="Серверы">
+              {problemsFirst(view.servers).map(srv => (
+                <McpServerRow key={srv.name} s={s} view={view} srv={srv} machine={machine} phone={phone} />
+              ))}
+              {!view.servers.length && view.observedAt && <li className="mcp-empty">MCP-серверов в этой сессии нет</li>}
+            </ul>
+          )}
         </div>
-        {view === undefined && (
-          <div className="sk-rows" role="status" aria-label="Загрузка списка">
-            {[78, 62, 86].map(w => (
-              <span key={w} className="skeleton" style={{ width: `${w}%` }} />
-            ))}
-          </div>
-        )}
-        {view && view.waking && (
-          <p className="mcp-note info" role="status">
-            <span className="spinner" aria-hidden="true" /> Сессия просыпается…
-          </p>
-        )}
-        {sleeping && (
-          <p className="mcp-note info" role="note">
-            {sleeping}
-          </p>
-        )}
-        {verdict && (
-          /* UI review H3: the machine and the versions in the banner itself; «Машины» is a secondary link */
-          <div className="mcp-note warn" role="note">
-            <b>{MCP_TEXTS.agentOutdated}</b>
-            <span>{verdict.line}</span>
-            <span className="mcp-note-sub">{verdict.next}</span>
-            <button
-              type="button"
-              className="btn ghost mcp-note-link"
-              onClick={() => {
-                onClose();
-                openSettings('machines');
-              }}
-            >
-              Открыть «Машины»
-            </button>
-          </div>
-        )}
-        {reason && (
-          <div className="mcp-note" role="note">
-            <span>{reason}</span>
-          </div>
-        )}
-        {err && (
-          <p className="mcp-note bad" role="alert">
-            {err}
-          </p>
-        )}
-        {view && (
-          <ul className="mcp-rows" aria-label="Серверы">
-            {problemsFirst(view.servers).map(srv => (
-              <McpServerRow key={srv.name} s={s} view={view} srv={srv} machine={machine} phone={phone} />
-            ))}
-            {!view.servers.length && view.observedAt && <li className="mcp-empty">MCP-серверов в этой сессии нет</li>}
-          </ul>
-        )}
       </div>
-      {registryOpen && <McpRegistry onClose={() => setRegistryOpen(false)} />}
-    </div>,
+      {registryOpen && <McpRegistry sessionId={s.id} onClose={() => setRegistryOpen(false)} />}
+    </>,
     document.body,
   );
 }

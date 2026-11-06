@@ -7,7 +7,7 @@
 Start an agent on your workstation from your phone. Let it sleep when idle and wake it with full context.
 Fork it, search it, hand it off to another machine or another vendor, and never lose a transcript again.
 
-[Why](#why) · [Features](#features) · [How it works](#how-it-works) · [Self-host](#self-host) · [Roadmap](#roadmap) · [License](#license)
+[Hosted](https://getagenthub.dev) · [Why](#why) · [Features](#features) · [How it works](#how-it-works) · [Self-host](#self-host) · [Roadmap](#roadmap) · [License](#license)
 
 ![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)
 ![Node 22](https://img.shields.io/badge/node-%E2%89%A522-339933)
@@ -39,8 +39,14 @@ Agent Hub is a small self-hosted server plus a lightweight agent on each machine
 ### One workspace for all machines
 - **Live sidebar** of every session on every connected machine — status at a glance: working, waiting for you, asking permission, running in background, asleep.
 - **Tabs and split view**, keyboard-first, with full-text search across all transcripts (`Ctrl K`).
-- **Automatic project grouping**: sessions land in a project based on which files and git remotes they actually touched — no manual tagging.
+- **Automatic project grouping**: sessions land in a project based on which files and git remotes they actually touched — no manual tagging. A classifier suggests a project (or a new one) for sessions it is unsure about; you can pin a session by hand and give projects colors.
+- **Rename sessions** inline, or regenerate the title from the whole transcript.
 - **Start new sessions from the UI** on any machine, in any folder, with any model and permission mode.
+
+### Tool windows
+- **File explorer** next to the chat: browse the session's folder, the project or the whole machine, open text, images and PDFs in the workspace as tabs. Read-only, with credential files hidden and size limits; it works through the agent, so nothing is exposed on the machine.
+- **Dockable windows** on a left or right icon rail — drag a window to the other side; on a phone they open from a drawer.
+- **Image viewer** with zoom, pan and a session-wide image list.
 
 ### Sessions that survive
 - **Sleep and resume.** Idle sessions release their process and memory; a new message resumes them exactly where they stopped.
@@ -56,7 +62,7 @@ Agent Hub is a small self-hosted server plus a lightweight agent on each machine
 ### Subscriptions and limits
 - **Several Claude and ChatGPT subscriptions** in one registry, encrypted at rest (AES-256-GCM).
 - **Pick a subscription per session**, switch it on the fly, and **auto-switch when one hits its limit**.
-- **Usage and limits** per subscription: 5-hour and weekly windows, reset times, spend.
+- **Usage and limits** per subscription: 5-hour and weekly windows, reset times, spend. A ring on the rail shows the tightest limit at a glance; details live in the Subscriptions window.
 
 ### MCP without the pain
 - **MCP panel per session**: server status, reconnect, enable/disable, OAuth sign-in to remote MCP servers *through the hub* — no localhost callbacks on a headless box.
@@ -68,6 +74,7 @@ Agent Hub is a small self-hosted server plus a lightweight agent on each machine
 
 ### Team-ready
 - **Multi-user** with Google (or any OIDC) sign-in and invites; every user sees only their own machines and sessions.
+- **Several public addresses** for one hub (`EXTRA_PUBLIC_URLS`): sign-in and WebSocket work on each, no redirects.
 - **One-line machine enrollment**: `curl … | bash` on Linux and macOS, one PowerShell line on Windows. Agents update themselves from the hub.
 
 ## How it works
@@ -78,6 +85,10 @@ Agent Hub is a small self-hosted server plus a lightweight agent on each machine
 - **Agent** (`agent/`) — a small Node.js service on each machine. It runs sessions through the official [Claude Agent SDK](https://docs.claude.com/en/api/agent-sdk/overview) and `codex app-server`, tails existing transcripts, and connects to the hub with an **outbound** WebSocket — no open ports on your machines.
 - **Web** (`web/`) — React + Vite PWA. **Desktop** (`desktop/`) — Electron wrapper with tray, notifications and auto-update.
 - Sessions run under your own Claude Code / Codex install and your own subscriptions. Agent Hub doesn't proxy model traffic.
+
+## Hosted instance
+
+A cloud installation runs at **[getagenthub.dev](https://getagenthub.dev)**: sign in, connect your machines with the one-line installer and use it without running a server of your own. The same code is what you get when you self-host.
 
 ## Self-host
 

@@ -63,9 +63,29 @@ export function safeReturnPath(value: unknown, publicUrl: string): string {
   return result;
 }
 
-/** Mutating requests must carry Origin equal to PUBLIC_URL's origin. */
-export function isAllowedOrigin(origin: string | undefined, publicOrigin: string): boolean {
-  return origin === publicOrigin;
+/** Mutating requests must carry Origin equal to one of the public origins. */
+export function isAllowedOrigin(origin: string | undefined, publicOrigins: string[]): boolean {
+  return origin !== undefined && publicOrigins.includes(origin);
+}
+
+/** The public address the request came to (Host, X-Forwarded-* only from TRUSTED_PROXIES); an unknown host — PUBLIC_URL. */
+export function requestPublicUrl(req: FastifyRequest, config: Config): string {
+  let origin: string;
+  try {
+    origin = new URL(`${req.protocol}://${req.host}`).origin;
+  } catch {
+    return config.PUBLIC_URL;
+  }
+  return config.publicUrls.find(u => new URL(u).origin === origin) ?? config.PUBLIC_URL;
+}
+
+/** Providers offered on the public address of this request. */
+export function providersFor(req: FastifyRequest, config: Config, oidc: OidcProviders): LoginProvider[] {
+  const providers = enabledProviders(oidc);
+  if (config.keycloakOrigins.length === 0 || config.keycloakOrigins.includes(new URL(requestPublicUrl(req, config)).origin)) {
+    return providers;
+  }
+  return providers.filter(provider => provider !== 'keycloak');
 }
 
 export function sessionCookieOptions() {
@@ -77,6 +97,8 @@ export async function authenticate(db: Db, req: FastifyRequest): Promise<AuthUse
 }
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+/** GET routes that give out machine data: a cross-site request is refused even though GET is safe (Sec-Fetch-Site, Origin). */
+const FETCH_GUARDED_GETS = new Set(['/api/runners/:runnerId/directories', '/api/runners/:runnerId/fs/list', '/api/runners/:runnerId/fs/file']);
 
 /**
  * Requirement: Защита браузерных запросов — paths called without a browser (installer, agent) and authenticated by an
@@ -153,8 +175,6 @@ export function registerAuth(
     await deleteSession(db, token);
     deps.onSessionEnded?.(hashSecret(token));
   };
-  const redirectUri = `${config.PUBLIC_URL}/auth/callback`;
-  const providers = enabledProviders(oidc);
   const security = (req: FastifyRequest, e: Parameters<typeof logSecurity>[1]) =>
     logSecurity(db, { ip: req.ip, userAgent: req.headers['user-agent'] ?? null, ...e }).catch((err: unknown) => req.log.warn({ err }, 'security log write failed'));
 
@@ -164,14 +184,14 @@ export function registerAuth(
   // URL: "/%61pi/me" reaches the /api/me handler and must be treated as /api.
   app.addHook('onRequest', async (req, reply) => {
     const path = routePath(req);
-    if (MUTATING.has(req.method) && !originExempt(path) && !isAllowedOrigin(req.headers.origin, config.publicOrigin)) {
+    if (MUTATING.has(req.method) && !originExempt(path) && !isAllowedOrigin(req.headers.origin, config.publicOrigins)) {
       return reply.code(403).send({ error: 'forbidden_origin' });
     }
     if (
       req.method === 'GET' &&
-      path === '/api/runners/:runnerId/directories' &&
+      FETCH_GUARDED_GETS.has(path) &&
       ((req.headers['sec-fetch-site'] !== undefined && req.headers['sec-fetch-site'] !== 'same-origin') ||
-        (req.headers.origin !== undefined && !isAllowedOrigin(req.headers.origin, config.publicOrigin)))
+        (req.headers.origin !== undefined && !isAllowedOrigin(req.headers.origin, config.publicOrigins)))
     ) {
       return reply.code(403).send({ error: 'forbidden_origin' });
     }
@@ -192,6 +212,7 @@ export function registerAuth(
       req.log.warn({ ip: req.ip }, 'rate limit: login start');
       return tooMany(reply);
     }
+    const providers = providersFor(req, config, oidc);
     const q = req.query as { return?: string; prompt?: string; provider?: string; invite?: string };
     const prompt = q.prompt === 'select_account' ? 'select_account' : undefined;
     let provider: LoginProvider | null = q.provider === 'google' || q.provider === 'keycloak' ? q.provider : null;
@@ -206,25 +227,26 @@ export function registerAuth(
       provider = row.provider;
       invite = q.invite;
     }
+    if (provider === 'keycloak' && oidc.keycloak && !providers.includes('keycloak')) {
+      return reply.redirect(`${config.keycloakOrigins[0]}${req.url}`, 302);
+    }
     if (provider && !providers.includes(provider)) provider = null;
     if (!provider) {
-      if (providers.length > 1) {
-        const keep = new URLSearchParams();
-        if (typeof q.return === 'string') keep.set('return', q.return);
-        if (prompt) keep.set('prompt', prompt);
-        return html(reply, 200, chooseProviderPage(providers, keep.toString()));
-      }
-      provider = 'google';
+      const keep = new URLSearchParams();
+      if (typeof q.return === 'string') keep.set('return', q.return);
+      if (prompt) keep.set('prompt', prompt);
+      return html(reply, 200, chooseProviderPage(providers, keep.toString()));
     }
     const client = provider === 'keycloak' ? oidc.keycloak! : oidc.google;
+    const base = requestPublicUrl(req, config);
     let started;
     try {
-      started = await client.start({ redirectUri, ...(prompt ? { prompt } : {}) });
+      started = await client.start({ redirectUri: `${base}/auth/callback`, ...(prompt ? { prompt } : {}) });
     } catch (err) {
       req.log.error({ err, provider }, 'oidc discovery failed');
       return html(reply, 502, loginErrorPage(`Сервис входа ${providerLabel(provider)} недоступен.`));
     }
-    const cookie: OidcCookie = { ...started.checks, r: safeReturnPath(q.return, config.PUBLIC_URL), p: provider, ...(invite ? { i: invite } : {}) };
+    const cookie: OidcCookie = { ...started.checks, r: safeReturnPath(q.return, base), p: provider, ...(invite ? { i: invite } : {}) };
     reply.setCookie(OIDC_COOKIE, JSON.stringify(cookie), {
       httpOnly: true,
       secure: true,
@@ -260,9 +282,10 @@ export function registerAuth(
     if (!client) return html(reply, 400, loginErrorPage('Этот способ входа выключен.'));
     if (q.error) return html(reply, 400, loginErrorPage(`${providerLabel(provider)} вернул ошибку: ${q.error}`));
 
+    const base = requestPublicUrl(req, config);
     let identity;
     try {
-      identity = await client.finish(new URL(req.url, config.PUBLIC_URL), checks);
+      identity = await client.finish(new URL(req.url, base), checks);
     } catch (err) {
       req.log.warn({ err: (err as Error).message, provider }, 'oidc code exchange failed');
       return html(reply, 400, loginErrorPage(`${providerLabel(provider)} не подтвердил вход. Начните вход заново.`));
@@ -284,7 +307,7 @@ export function registerAuth(
     req.log.info({ userId: a.user.id, provider, created: a.created }, 'login ok');
     void security(req, { userId: a.user.id, kind: 'login', provider });
     // A new user starts at the welcome screen.
-    return reply.redirect(a.created ? '/' : safeReturnPath(checks.r, config.PUBLIC_URL), 302);
+    return reply.redirect(a.created ? '/' : safeReturnPath(checks.r, base), 302);
   });
 
   /** The page of a refused login (browser and desktop app). */
@@ -319,6 +342,9 @@ export function registerAuth(
     const st = inviteStatus(row);
     if (st === 'expired') return html(reply, 410, inviteExpiredPage());
     if (st !== 'active') return html(reply, 410, inviteInvalidPage());
+    if (row.provider === 'keycloak' && oidc.keycloak && !providersFor(req, config, oidc).includes('keycloak')) {
+      return reply.redirect(`${config.keycloakOrigins[0]}${req.url}`, 302);
+    }
     return html(reply, 200, invitePage(row.email, row.provider, code));
   });
 

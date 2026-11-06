@@ -26,12 +26,21 @@ describe('McpDraftClient and MCP registry tools', () => {
     const request = vi.fn(async (input: Parameters<McpDraftClient['request']>[0]) => {
       if (input.op !== 'add') throw new Error('expected add draft request');
       const secret = input.payload.secrets?.[0]?.value ?? '';
-      return { requestId: '00000000-0000-4000-8000-000000000004', ok: true as const, result: { message: `stored ${secret}` } };
+      return {
+        requestId: '00000000-0000-4000-8000-000000000004',
+        ok: true as const,
+        result: {
+          draftId: '00000000-0000-4000-8000-000000000006',
+          revision: 1,
+          validation: { ok: true, status: 'checked' as const, tools: [{ name: 'lookup' }], oauthRequired: false },
+          confirmationUrl: '/s/00000000-0000-4000-8000-000000000001?mcp=1',
+          message: `stored ${secret}`,
+        },
+      };
     });
     const tools = mcpDraftTools('00000000-0000-4000-8000-000000000001', 'vm', { request });
     const result = await runPeerTool(tools, 'mcp_add', {
       server: {
-        id: '00000000-0000-4000-8000-000000000002',
         name: 'sample',
         enabled: true,
         transport: 'http',
@@ -48,6 +57,16 @@ describe('McpDraftClient and MCP registry tools', () => {
     expect(request.mock.calls[0]![0]).toMatchObject({
       op: 'add',
       payload: {
+        server: { name: 'sample' },
+      },
+    });
+    expect(request.mock.calls[0]![0]).not.toHaveProperty('payload.server.id');
+    expect(result.content[0]?.text).toContain('"draftId"');
+    expect(result.content[0]?.text).toContain('"status": "checked"');
+    expect(result.content[0]?.text).toContain('"confirmationUrl"');
+    expect(request.mock.calls[0]![0]).toMatchObject({
+      op: 'add',
+      payload: {
         server: {
           headers: { Authorization: { kind: 'secret-name', name: 'TOKEN' } },
           urlSecretName: 'TOKEN',
@@ -60,11 +79,19 @@ describe('McpDraftClient and MCP registry tools', () => {
 
   it('scopes mcp_list and mcp_update to the caller and redacts update secrets', async () => {
     const secret = 'update-only-secret';
-    const request = vi.fn(async (input: Parameters<McpDraftClient['request']>[0]) => ({
-      requestId: '00000000-0000-4000-8000-000000000005',
-      ok: true as const,
-      result: { message: input.op === 'update' ? `saved ${secret}` : 'listed', secretValues: input.op === 'update' ? [secret] : [{ masked: true }] },
-    }));
+    let updateCount = 0;
+    const request = vi.fn(async (input: Parameters<McpDraftClient['request']>[0]) => {
+      const hasSubmittedSecret = input.op === 'update' && 'draftId' in input.payload;
+      if (input.op === 'update') updateCount++;
+      return {
+        requestId: '00000000-0000-4000-8000-000000000005',
+        ok: true as const,
+        result: {
+          message: hasSubmittedSecret && updateCount === 1 ? `saved ${secret}` : 'updated safely',
+          secretValues: hasSubmittedSecret ? [secret] : [{ masked: true }],
+        },
+      };
+    });
     const sessionId = '00000000-0000-4000-8000-000000000001';
     const tools = mcpDraftTools(sessionId, 'vm', { request });
     const listed = await runPeerTool(tools, 'mcp_list', { includeDrafts: true });
@@ -76,8 +103,13 @@ describe('McpDraftClient and MCP registry tools', () => {
         secrets: [{ name: 'TOKEN', value: secret }],
       },
     });
+    const existingUpdated = await runPeerTool(tools, 'mcp_update', {
+      serverId: '00000000-0000-4000-8000-000000000007',
+      update: { revision: 4, server: { enabled: false } },
+    });
     expect(request.mock.calls.map(([input]) => [input.sessionId, input.op])).toEqual([
       [sessionId, 'list'],
+      [sessionId, 'update'],
       [sessionId, 'update'],
     ]);
     expect(request.mock.calls[1]![0]).toMatchObject({
@@ -86,15 +118,20 @@ describe('McpDraftClient and MCP registry tools', () => {
         update: { server: { headers: { Authorization: { kind: 'secret-name', name: 'TOKEN' } } } },
       },
     });
+    expect(request.mock.calls[2]![0]).toMatchObject({
+      op: 'update',
+      payload: { serverId: '00000000-0000-4000-8000-000000000007', update: { revision: 4 } },
+    });
     expect(JSON.stringify(listed)).not.toContain(secret);
     expect(JSON.stringify(updated)).not.toContain(secret);
+    expect(JSON.stringify(existingUpdated)).not.toContain(secret);
     const emptyScopeUpdate = await runPeerTool(tools, 'mcp_update', {
       draftId: '00000000-0000-4000-8000-000000000006',
       update: { revision: 2, server: { machineScope: { allMachines: false, machineIds: [] } } },
     });
     expect(emptyScopeUpdate.isError).toBe(true);
     expect(emptyScopeUpdate.content[0]?.text).toContain('include at least one machine when allMachines is false');
-    expect(request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledTimes(3);
   });
 
   it('defaults an omitted machine scope to the calling machine and rejects an explicitly empty scope', async () => {

@@ -17,6 +17,18 @@ function ToastItem({ toast }: { toast: Toast }) {
         <b>{toast.title}</b>
         <span>{toast.text}</span>
       </div>
+      {toast.action && (
+        <button
+          type="button"
+          className="btn"
+          onClick={() => {
+            toast.action!.run();
+            dismiss(toast.id);
+          }}
+        >
+          {toast.action.label}
+        </button>
+      )}
       <button type="button" className="icon-btn" aria-label="Закрыть" onClick={() => dismiss(toast.id)}>
         ×
       </button>

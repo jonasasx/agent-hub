@@ -6,6 +6,7 @@ import type { SidebarProject } from '../../api/types';
 import { useStore } from '../../store';
 import { RUNNERS, mockFetch, resetStore, session } from '../../test/factories';
 import { nowList, runnerIndex } from '../sessions/status';
+import { useMachineFilter } from '../machines/machineFilter';
 import { Sidebar } from './Sidebar';
 
 const NONE = { id: null, title: 'Без проекта', colorKey: 'none' as const, path: '' };
@@ -54,7 +55,7 @@ describe('Sidebar', () => {
     useStore.setState({ runners: RUNNERS, projects: [{ project: { id, title: 'Agent Hub', colorKey: 'none', path: '' }, live: 1, total: 1, lastActivityAt: ago(1), sessions: [s] }] });
     useStore.getState().upsertSessions([s]);
     render(<Sidebar onLogout={() => undefined} />);
-    expect(screen.getByRole('button', { name: /Agent Hub/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Agent Hub/, expanded: true })).toBeInTheDocument();
     expect(document.querySelector('.prow[title*="C:\\work"]')).toBeNull();
     expect(screen.getByText('Catalog session')).toBeInTheDocument();
   });
@@ -91,6 +92,18 @@ describe('Sidebar', () => {
     expect(proj).toHaveAttribute('title', 'Проект не определён');
     expect(document.querySelectorAll('.pchildren .srow')).toHaveLength(5);
     expect(screen.getByRole('button', { name: 'ещё 7' })).toBeInTheDocument();
+  });
+
+  it('the machine filter recounts the project: counters and «ещё N» follow the filtered list', () => {
+    setup();
+    useMachineFilter.getState().set('hp');
+    render(<Sidebar onLogout={() => undefined} />);
+    const proj = screen.getByRole('button', { name: /Без проекта/, expanded: true });
+    expect(within(proj).getByLabelText('всего 1')).toBeInTheDocument();
+    expect(within(proj).queryByTitle('активных')).not.toBeInTheDocument();
+    expect(document.querySelectorAll('.pchildren .srow')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: /^ещё/ })).not.toBeInTheDocument();
+    useMachineFilter.getState().set(null);
   });
 
   it('Ещё N: loads the rest from /api/projects/none/sessions and shows them all', async () => {

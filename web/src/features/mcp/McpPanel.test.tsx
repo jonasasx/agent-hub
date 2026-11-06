@@ -51,6 +51,37 @@ describe('the MCP panel', () => {
     expect(btn).toHaveAttribute('aria-expanded', 'true');
   });
 
+  it('keeps the registry and unsaved wizard open when Escape is pressed', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const s = session({ mcpProblems: 0 });
+    mockFetch({
+      [`GET /api/sessions/${s.id}/mcp`]: mcpRoute(mcpView()),
+      'GET /api/mcp/registry': () => ({ status: 200, body: { revision: 0, servers: [], drafts: [] } }),
+      'GET /api/mcp/registry/status': () => ({ status: 200, body: {} }),
+      'GET /api/catalog/projects': () => ({ status: 200, body: [] }),
+    });
+    head(s);
+    await userEvent.click(await screen.findByRole('button', { name: /^MCP/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Реестр' }));
+    const registry = await screen.findByRole('dialog', { name: 'Реестр MCP' });
+    const closeButton = within(registry).getByRole('button', { name: 'Закрыть' });
+    expect(closeButton).toHaveFocus();
+    await userEvent.tab();
+    const addButton = within(registry).getByRole('button', { name: 'Добавить сервер' });
+    expect(addButton).toHaveFocus();
+    await userEvent.click(addButton);
+    await userEvent.click(within(registry).getByRole('button', { name: 'Далее' }));
+    const nameInput = within(registry).getByLabelText('Имя');
+    await userEvent.type(nameInput, 'unsaved-server');
+    await userEvent.keyboard('{Escape}');
+
+    expect(nameInput).toHaveValue('unsaved-server');
+    expect(confirm).toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'Реестр MCP' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'MCP-серверы' })).not.toBeInTheDocument();
+    expect(document.querySelector('.scrim.sub-scrim:not(.mcp-registry-scrim)')).toHaveStyle({ display: 'none' });
+  });
+
   it('only needs-auth → --warn; no problems → a neutral «MCP»; 404 of the hub → no button', async () => {
     const a = session({ mcpProblems: 1 });
     const b = session({ mcpProblems: 0 });

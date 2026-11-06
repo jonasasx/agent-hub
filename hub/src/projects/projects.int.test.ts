@@ -81,7 +81,7 @@ describe('projects (integration)', () => {
     ];
     const id = await chunk(hp, sid, `c--x/${sid}.jsonl`, lines);
     expect(await view(id)).toMatchObject({
-      project: { title: '05-agent-hub', colorKey: 'personal', kind: 'system', path: '20-personal/05-pos/systems/05-agent-hub' },
+      project: { title: '05-agent-hub', colorKey: expect.any(String), kind: 'system', path: '20-personal/05-pos/systems/05-agent-hub' },
       projectSource: 'auto',
       projectEvidence: '2 правки в 05-agent-hub',
     });
@@ -163,7 +163,7 @@ describe('projects (integration)', () => {
     const sb = (await api('GET', '/api/sidebar')).json() as SidebarResponse;
     expect(sb.projects.at(-1)!.project.id).toBeNull();
     const ah = sb.projects.find(p => p.project.title === '05-agent-hub')!;
-    expect(ah).toMatchObject({ total: 1, project: { colorKey: 'personal' } });
+    expect(ah).toMatchObject({ total: 1, project: { colorKey: expect.any(String) } });
     const more = (await api('GET', `/api/projects/${ah.project.id}/sessions`)).json() as { total: number; sessions: SessionView[] };
     expect(more.total).toBe(1);
     expect((await api('GET', `/api/projects/${randomUUID()}/sessions`)).statusCode).toBe(404);
@@ -320,6 +320,17 @@ describe('projects (integration)', () => {
     } finally {
       c.release();
     }
+  });
+
+  it('catalog refresh preserves stored legacy group colors', async () => {
+    const row = (await t.tdb.pool.query(`SELECT id, color_key FROM projects WHERE slug='05-agent-hub' LIMIT 1`)).rows[0];
+    await t.tdb.pool.query(`UPDATE projects SET color_key='rose' WHERE id=$1`, [row.id]);
+    await t.hub.projects.catalog.reload(true);
+    expect(t.hub.projects.catalog.row(row.id)?.colorKey).toBe('rose');
+    await t.hub.projects.catalog.reload(true);
+    expect((await t.tdb.pool.query(`SELECT color_key FROM projects WHERE id=$1`, [row.id])).rows[0].color_key).toBe('rose');
+    await t.tdb.pool.query(`UPDATE projects SET color_key=$1 WHERE id=$2`, [row.color_key, row.id]);
+    await t.hub.projects.catalog.reload(true);
   });
 
   it('review M4a p. 9: a project removed from INDEX.md — one projects.changed, no session.upsert per session; its session decided again', async () => {

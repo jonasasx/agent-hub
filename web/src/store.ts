@@ -19,6 +19,7 @@ import { regroup, type ProjectItem } from './features/projects/projects';
 import type { McpSessionView, SubscriptionLimitsResponse } from './api/types';
 
 export interface Toast {
+  action?: { label: string; run: () => void };
   id: number;
   title: string;
   text: string;
@@ -136,7 +137,7 @@ interface State {
   /** serverTime − the browser's clock at the last load (ms): the model counts resets and cooldowns on the hub's clock. */
   limitsSkew: number;
   /** The open limits card: the subscription and what opened it (the focus goes back there). */
-  limitCard: { subscriptionId: string; from: 'row' | 'chip' | 'summary' } | null;
+  limitCard: { subscriptionId: string; from: 'row' | 'chip' } | null;
   /** The block folded by hand; null — by the number of subscriptions (3 on the phone, 4 on the desktop). */
   limitsCollapsed: boolean | null;
   /**

@@ -1,5 +1,5 @@
-// QA 8.1 (change subscription-limits, Requirement «Строка подписки»): a row is one line — a long subscription name, a
-// long right side or «обновите агента на …» with several machines never push past the row or the left panel.
+// QA 8.1 (change subscription-limits): a long subscription name never pushes the header of the «Подписки» window past
+// the column; the long right side and «обновите агента на …» live in the card.
 import { expect, type Page } from '@playwright/test';
 import { MockHub } from '../mock/hub.js';
 import { mockWindow } from '../mock/limits.js';
@@ -35,34 +35,28 @@ export function longLimitsHub() {
 }
 
 /**
- * Every `.lim-row` of the block fits (scrollWidth ≤ clientWidth + 1) inside the panel; its name and right side fit or
- * are cut by an ellipsis inside their own box, and end inside the row.
+ * Every subscription header (`.tw-sh`) of the «Подписки» window fits inside the window: the header never scrolls, the
+ * name is cut by the designed ellipsis inside its own box, and the box ends inside the header.
  */
 export async function limitRowsFit(page: Page, expectRows: number) {
-  const rows = page.getByRole('region', { name: 'Лимиты подписок' }).locator('.lim-row');
+  const win = page.locator('.tw-subs');
+  const rows = win.locator('.tw-sh');
   await expect(rows).toHaveCount(expectRows);
-  const side = (await page.locator('aside.side').boundingBox())!;
+  const col = (await win.boundingBox())!;
   for (const r of await rows.all()) {
-    const what = await r.getAttribute('aria-label');
-    // the row itself never scrolls
+    const what = (await r.locator('.tw-sn').textContent()) ?? '';
     const [sw, cw] = await r.evaluate(e => [e.scrollWidth, e.clientWidth]);
-    expect(sw, `${what}: row ${sw} > ${cw}`).toBeLessThanOrEqual(cw + 1);
+    expect(sw, `${what}: header ${sw} > ${cw}`).toBeLessThanOrEqual(cw + 1);
     const box = (await r.boundingBox())!;
-    for (const el of [r.locator('.ln'), r.locator('.ll')]) {
-      // the name or the right side either fits, or is cut by the designed ellipsis (its scrollWidth is then larger by
-      // definition) — never spilling out of its own box
-      const f = await el.evaluate(e => {
-        const cs = getComputedStyle(e);
-        return { cls: e.className, sw: e.scrollWidth, cw: e.clientWidth, cut: cs.overflowX === 'hidden' && cs.textOverflow === 'ellipsis' && cs.whiteSpace === 'nowrap' };
-      });
-      expect(f.sw <= f.cw + 1 || f.cut, `${what}: .${f.cls} ${f.sw} > ${f.cw} without an ellipsis`).toBe(true);
-      // and its box ends inside the button
-      const b = (await el.boundingBox())!;
-      expect(b.x + b.width, `${what}: .${f.cls} past the row`).toBeLessThanOrEqual(box.x + box.width + 0.5);
-    }
-    // the button inside the panel
-    expect(box.x + box.width, `${what}: row past the panel`).toBeLessThanOrEqual(side.x + side.width + 0.5);
-    // one line
+    const name = r.locator('.tw-sn');
+    const f = await name.evaluate(e => {
+      const cs = getComputedStyle(e);
+      return { sw: e.scrollWidth, cw: e.clientWidth, cut: cs.overflowX === 'hidden' && cs.textOverflow === 'ellipsis' && cs.whiteSpace === 'nowrap' };
+    });
+    expect(f.sw <= f.cw + 1 || f.cut, `${what}: name ${f.sw} > ${f.cw} without an ellipsis`).toBe(true);
+    const b = (await name.boundingBox())!;
+    expect(b.x + b.width, `${what}: name past the header`).toBeLessThanOrEqual(box.x + box.width + 0.5);
+    expect(box.x + box.width, `${what}: header past the window`).toBeLessThanOrEqual(col.x + col.width + 0.5);
     expect(box.height, `${what}: wrapped`).toBeLessThan(50);
   }
 }

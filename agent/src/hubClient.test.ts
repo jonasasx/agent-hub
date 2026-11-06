@@ -39,7 +39,7 @@ describe('agent ↔ hub (integration)', () => {
     const c = makeClient(token);
     const welcome = new Promise(r => c.once('welcome', r));
     c.start();
-    expect(await welcome).toMatchObject({ runnerId: 'hp', protocol: '1.13', capabilities: expect.arrayContaining(['fs.list-dirs']) });
+    expect(await welcome).toMatchObject({ runnerId: 'hp', protocol: '1.14', capabilities: expect.arrayContaining(['fs.list-dirs', 'fs.browse']) });
     const row = await waitFor(async () => {
       const r = await getRunner(t.tdb.db, 'hp');
       return r?.online ? r : null;

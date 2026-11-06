@@ -120,6 +120,7 @@ export interface RunnersTable {
 
 export interface RunnerUpdateState {
   version: string;
+  sha256?: string;
   status: 'sent' | 'waiting' | 'installing' | 'failed';
   error: string | null;
   at: string;
@@ -311,7 +312,13 @@ export interface ProjectsTable {
   updated_at: Generated<Date>;
 }
 
+export interface HiddenProjectGroupsTable {
+  user_id: string;
+  project_id: string;
+}
+
 export interface CatalogProjectsTable {
+  color_key: Generated<import('@agent-hub/shared').ProjectColorKey>;
   id: Generated<string>;
   user_id: string;
   name: string;
@@ -333,11 +340,32 @@ export interface UserPreferencesTable {
   last_runner_id: string | null;
   last_provider: Provider | null;
 }
+export interface ProjectSuggestionsTable {
+  user_id: string;
+  session_id: string;
+  project_id: string | null;
+  options: ColumnType<string[], string[] | undefined, string[]>;
+  new_project_name: string | null;
+  confidence: number;
+  reason_code: string;
+  input_hash: string;
+  messages_hash: string;
+  state: 'pending' | 'dismissed' | 'accepted';
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+export interface ProjectClassifierUsageTable {
+  id: Generated<string>;
+  user_id: string;
+  session_id: string;
+  created_at: Generated<Date>;
+}
 export interface SessionProjectsTable {
   user_id: string;
   session_id: string;
   project_id: string;
   source: 'explicit' | 'auto' | 'manual';
+  reason_code: ColumnType<string | null, string | null | undefined, string | null>;
   confidence: number | null;
   created_at: Generated<Date>;
 }
@@ -557,6 +585,8 @@ export interface McpRegistryDraftsTable {
   user_id: string;
   runner_id: string | null;
   session_id: string | null;
+  server_id: string | null;
+  base_revision: ColumnType<string | null, number | null | undefined, number | null>;
   name: string;
   state: McpDraftStateDb;
   config: ColumnType<Record<string, unknown>, string, string>;
@@ -646,9 +676,12 @@ export interface Database {
   alert_state: AlertStateTable;
   projects: ProjectsTable;
   catalog_projects: CatalogProjectsTable;
+  hidden_project_groups: HiddenProjectGroupsTable;
   project_bindings: ProjectBindingsTable;
   user_preferences: UserPreferencesTable;
   session_projects: SessionProjectsTable;
+  project_suggestions: ProjectSuggestionsTable;
+  project_classifier_usage: ProjectClassifierUsageTable;
   path_touches: PathTouchesTable;
   classification_labels: ClassificationLabelsTable;
   handoff_drafts: HandoffDraftsTable;

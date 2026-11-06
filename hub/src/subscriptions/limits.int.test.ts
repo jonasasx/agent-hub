@@ -116,7 +116,7 @@ describe('subscription limits (integration)', () => {
 
   beforeAll(async () => {
     t = await startTestHub({
-      env: { SUBSCRIPTION_TOKEN_KEY: KEY },
+      env: { SUBSCRIPTION_TOKEN_KEY: KEY, LIMITS_PROBE_LAST_HOSTS: 'ip-10-0-0-3' },
       logStream: { write: l => void logs.push(l) },
       sessions: { idleCheckMs: 0, initTimeoutMs: 3000 },
       limitsProbe: { now, timeoutMs: 5000 },

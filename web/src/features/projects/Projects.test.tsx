@@ -109,6 +109,19 @@ describe('project line under the chat head (4.9)', () => {
     expect(btn).toHaveFocus();
   });
 
+  it('a catalog project chosen by hand says «закреплено вручную», one from the classifier offers «изменить»', () => {
+    const pinned = session({ project: HUB, projectSource: 'none', catalogProject: { id: 'cook', name: 'Кулинария' }, catalogProjectSource: 'manual' } as Partial<SessionView>);
+    mockFetch({});
+    const view = chat(pinned);
+    expect(screen.getByText('закреплено вручную')).toBeInTheDocument();
+    expect(screen.queryByText('проект пока не определён')).not.toBeInTheDocument();
+    view.unmount();
+    const auto = session({ project: HUB, catalogProject: { id: 'hub', name: 'agent-hub' }, catalogProjectSource: 'auto', catalogProjectReason: 'classifier' } as Partial<SessionView>);
+    chat(auto);
+    expect(screen.getByText('Определено по первому сообщению')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'изменить' })).toBeInTheDocument();
+  });
+
   it('Перенос закрепляется: «Перенести в…» searches the directory, Enter sends PUT …/project, the line says «закреплено вручную»', async () => {
     const s = session({ project: LEDGER, projectSource: 'auto', projectEvidence: '1 чтение в 01-ledger' });
     const calls = mockFetch({
@@ -121,7 +134,7 @@ describe('project line under the chat head (4.9)', () => {
     const q = screen.getByRole('combobox', { name: 'Найти проект' });
     expect(q).toHaveFocus();
     expect(await screen.findByRole('option', { name: /Без проекта/ })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: /04-twenty-crm/ })).toHaveTextContent('архив');
+    expect(screen.getByRole('option', { name: /^04-twenty-crm/ })).toHaveTextContent('архив');
     await userEvent.type(q, 'sms');
     expect(within(screen.getByRole('listbox', { name: 'Проекты' })).getAllByRole('option')).toHaveLength(1);
     await userEvent.keyboard('{Enter}');
@@ -219,8 +232,8 @@ describe('tree «Проекты» (4.8)', () => {
     useStore.setState({ runners: RUNNERS, projects: [group(LEDGER, [shown]), group(old.project, [old]), group(NONE, [session({ title: 'Без', status: 'closed' })])], ws: emptyWorkspace([shown.id]) });
     useStore.getState().upsertSessions([shown, old]);
     render(<Sidebar onLogout={() => undefined} />);
-    expect(screen.getByRole('button', { name: /01-ledger/ })).toHaveAttribute('aria-expanded', 'true');
-    const crm = screen.getByRole('button', { name: /04-twenty-crm/ });
+    expect(screen.getByRole('button', { name: /01-ledger/, expanded: true })).toHaveAttribute('aria-expanded', 'true');
+    const crm = screen.getByRole('button', { name: /^04-twenty-crm/ });
     expect(crm).toHaveClass('archived');
     expect(crm).toHaveAttribute('title', '10-work/05-infra/projects/99-archive/04-twenty-crm · в архиве');
     expect(crm).toHaveAttribute('aria-expanded', 'false');

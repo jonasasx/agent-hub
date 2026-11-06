@@ -40,7 +40,7 @@ test('лайтбокс → «назад» → чат → «назад» → сп
   await page.getByRole('button', { name: /^ещё \d+/ }).click();
   await page.locator('.side-scroll .srow', { hasText: 'Скриншоты сайта' }).first().click();
   await page.locator('.msg.user', { hasText: 'Сравни эти три варианта' }).getByRole('button', { name: 'Открыть изображение 2 из 3' }).click();
-  await expect(page.getByRole('dialog', { name: 'Изображение 2 из 3' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Изображение 3 из 4' })).toBeVisible();
   await page.goBack();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('.mbar')).toContainText('Скриншоты сайта');

@@ -15,8 +15,8 @@ export function inlineScriptHashes(webDistDir: string): string[] {
   return out;
 }
 
-export function contentSecurityPolicy(publicOrigin: string, scriptHashes: string[]): string {
-  const ws = publicOrigin.replace(/^http/, 'ws');
+export function contentSecurityPolicy(publicOrigins: string[], scriptHashes: string[]): string {
+  const ws = publicOrigins.map(o => o.replace(/^http/, 'ws')).join(' ');
   return [
     "default-src 'self'",
     `script-src 'self' ${scriptHashes.join(' ')}`.trim(),
@@ -37,10 +37,10 @@ export function contentSecurityPolicy(publicOrigin: string, scriptHashes: string
  * The policy for HTML responses. The hashes follow index.html: a new web build (a deploy that replaces web/dist
  * without restarting the hub) changes the theme script, so they are recomputed when the file's mtime or size moves.
  */
-export function cspProvider(publicOrigin: string, webDistDir: string): () => string {
+export function cspProvider(publicOrigins: string[], webDistDir: string): () => string {
   const file = join(webDistDir, 'index.html');
   let key = '';
-  let value = contentSecurityPolicy(publicOrigin, []);
+  let value = contentSecurityPolicy(publicOrigins, []);
   return () => {
     let k = 'none';
     try {
@@ -51,7 +51,7 @@ export function cspProvider(publicOrigin: string, webDistDir: string): () => str
     }
     if (k !== key) {
       key = k;
-      value = contentSecurityPolicy(publicOrigin, inlineScriptHashes(webDistDir));
+      value = contentSecurityPolicy(publicOrigins, inlineScriptHashes(webDistDir));
     }
     return value;
   };

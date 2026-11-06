@@ -9,7 +9,7 @@ async function start(page: Page) {
   const hub = new MockHub({ tabs: [1, 4] });
   await hub.install(page);
   await page.goto('/');
-  await expect(page.getByRole('list', { name: 'Машины' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Сессии и проекты' })).toBeVisible();
   await expect.poll(() => hub.versionRequests).toBeGreaterThan(0);
   await page.evaluate(() => ((window as unknown as { __mark: number }).__mark = 1));
   return hub;
@@ -53,7 +53,7 @@ test('banner on the phone: on top, 44 px buttons, the composer free; the bottom-
   await expect(menu.getByLabel('Версии')).toContainText(/Хаб0\.1\.0 · 2222222/);
   await expect(menu.getByRole('menuitem', { name: 'Обновить до новой версии' })).toBeVisible();
   await Promise.all([page.waitForEvent('load'), banner(page).getByRole('button', { name: 'Обновить' }).click()]);
-  await expect(page.getByRole('list', { name: 'Машины' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Сессии и проекты' })).toBeVisible();
   expect(await sameDocument(page)).toBe(false);
   await expect(banner(page)).toHaveCount(0);
   await page.getByRole('button', { name: 'Профиль' }).click();
@@ -81,7 +81,7 @@ test('PWA in the background without input: reloads silently onto the new build',
   await setHidden(page, true);
   hub.deploy('2222222');
   await Promise.all([page.waitForEvent('load'), page.evaluate(() => window.dispatchEvent(new Event('online')))]);
-  await expect(page.getByRole('list', { name: 'Машины' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Сессии и проекты' })).toBeVisible();
   await page.getByRole('button', { name: 'Профиль' }).click();
   await expect(page.getByRole('menu', { name: 'Профиль' }).getByLabel('Версии')).toContainText(/Клиент0\.1\.0 · 2222222/);
 });

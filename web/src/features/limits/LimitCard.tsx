@@ -16,10 +16,10 @@ import { LevelBadge, LimitBar, useHubNow } from './parts';
 
 const CARD_W = 380;
 
-function anchorOf(id: string, from: 'row' | 'chip' | 'summary'): HTMLElement | null {
-  const sel = from === 'chip' ? `.lchip[data-sub="${id}"]` : `.lim-row[data-sub="${id}"]`;
+function anchorOf(id: string, from: 'row' | 'chip'): HTMLElement | null {
+  const sel = from === 'chip' ? `.lchip[data-sub="${id}"]` : `[data-sub="${id}"]:not(.lchip)`;
   const all = [...document.querySelectorAll<HTMLElement>(sel)];
-  return all.find(el => el.getClientRects().length > 0) ?? all[0] ?? document.querySelector<HTMLElement>('.lim-sum');
+  return all.find(el => el.getClientRects().length > 0) ?? all[0] ?? null;
 }
 
 export function overageText(o: LimitOverageView): string {
@@ -36,7 +36,7 @@ export function LimitCard() {
   return <Card key={`${target.subscriptionId}:${target.from}`} id={target.subscriptionId} from={target.from} />;
 }
 
-function Card({ id, from }: { id: string; from: 'row' | 'chip' | 'summary' }) {
+function Card({ id, from }: { id: string; from: 'row' | 'chip' }) {
   const now = useHubNow();
   const sub = useStore(s => s.subs?.subscriptions.find(x => x.id === id && !x.retired));
   const subsLoaded = useStore(s => !!s.subs);

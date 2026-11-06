@@ -14,7 +14,35 @@ const emailList = z
 
 const schema = z.object({
   NODE_ENV: z.string().default('production'),
+  // projects-catalog: the session classifier runs one turn of a small model under the user's subscription on the utility runner
+  PROJECT_CLASSIFIER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform(v => v === 'true'),
+  SESSION_TITLE_TIMEOUT_MS: z.coerce.number().int().min(1).max(180_000).default(60_000),
+  PROJECT_CLASSIFIER_MODEL: z.string().min(1).default('claude-haiku-4-5-20251001'),
+  PROJECT_CLASSIFIER_TIMEOUT_MS: z.coerce.number().int().min(1).max(180_000).default(90_000),
+  PROJECT_CLASSIFIER_MAX_MESSAGES: z.coerce.number().int().min(1).max(5).default(5),
+  PROJECT_CLASSIFIER_MAX_INPUT_CHARS: z.coerce.number().int().min(1).max(6000).default(6000),
+  PROJECT_CLASSIFIER_MAX_CANDIDATES: z.coerce.number().int().min(1).max(300).default(150),
+  /** At or above: the session is assigned without asking; below: a card with options. */
+  PROJECT_CLASSIFIER_AUTO_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.8),
+  PROJECT_CLASSIFIER_MAX_CALLS_PER_SESSION: z.coerce.number().int().min(1).max(10).default(3),
+  PROJECT_CLASSIFIER_DAILY_LIMIT_PER_USER: z.coerce.number().int().min(1).max(1000).default(200),
+  /** The model sees only sessions that started within this window; replicated history keeps the rules only. */
+  PROJECT_CLASSIFIER_MAX_SESSION_AGE_HOURS: z.coerce.number().int().min(1).max(8760).default(24),
   PUBLIC_URL: z.url().transform(u => u.replace(/\/+$/, '')),
+  /** More addresses the hub is served on (comma-separated): login, Origin checks and CSP accept each of them. */
+  EXTRA_PUBLIC_URLS: z
+    .string()
+    .default('')
+    .transform(s =>
+      s
+        .split(',')
+        .map(x => x.trim().replace(/\/+$/, ''))
+        .filter(Boolean),
+    )
+    .pipe(z.array(z.url())),
   HOST: z.string().default('0.0.0.0'),
   PORT: z.coerce.number().int().positive().default(8080),
   DATABASE_URL: z.string().min(1),
@@ -29,6 +57,16 @@ const schema = z.object({
   OIDC_KEYCLOAK_LABEL: z.string().min(1).default('Keycloak'),
   OIDC_KEYCLOAK_CLIENT_ID: z.string().optional(),
   OIDC_KEYCLOAK_CLIENT_SECRET: z.string().optional(),
+  OIDC_KEYCLOAK_PUBLIC_URLS: z
+    .string()
+    .default('')
+    .transform(s =>
+      s
+        .split(',')
+        .map(x => x.trim().replace(/\/+$/, ''))
+        .filter(Boolean),
+    )
+    .pipe(z.array(z.url())),
   /** Bootstrap administrators only (multi-user M2): everyone else enters by invite. */
   OIDC_ALLOWED_EMAILS: emailList,
   /**
@@ -139,10 +177,14 @@ const schema = z.object({
 });
 
 export type Config = z.infer<typeof schema> & {
-  /** Origin of PUBLIC_URL, compared with the Origin header of mutating requests. */
-  publicOrigin: string;
+  /** PUBLIC_URL first, then EXTRA_PUBLIC_URLS. */
+  publicUrls: string[];
+  /** Their origins, compared with the Origin header of mutating requests and WebSockets. */
+  publicOrigins: string[];
   /** The second provider is configured (issuer, client id and secret): «Войти через <OIDC_KEYCLOAK_LABEL>» is offered. */
   keycloakEnabled: boolean;
+  /** Origins offering Keycloak; empty means every public origin. */
+  keycloakOrigins: string[];
   /** SUBSCRIPTION_TOKEN_KEY is set: tokens can be stored (claude-subscriptions P1). */
   subscriptionsEnabled: boolean;
 };
@@ -168,9 +210,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (c.AUTH_DEV_EMAIL && c.NODE_ENV !== 'test') {
     throw new Error('AUTH_DEV_EMAIL is allowed only with NODE_ENV=test');
   }
+  const publicOrigins = [url.origin, ...c.EXTRA_PUBLIC_URLS.map(u => new URL(u).origin)];
+  const keycloakOrigins = c.OIDC_KEYCLOAK_PUBLIC_URLS.map(u => new URL(u).origin);
+  for (const origin of keycloakOrigins) {
+    if (!publicOrigins.includes(origin)) {
+      throw new Error(`OIDC_KEYCLOAK_PUBLIC_URLS contains an unknown public origin: ${origin}`);
+    }
+  }
   return {
     ...c,
-    publicOrigin: url.origin,
+    publicUrls: [c.PUBLIC_URL, ...c.EXTRA_PUBLIC_URLS],
+    publicOrigins,
+    keycloakOrigins,
     keycloakEnabled: Boolean(c.OIDC_KEYCLOAK_ISSUER && c.OIDC_KEYCLOAK_CLIENT_ID && c.OIDC_KEYCLOAK_CLIENT_SECRET),
     subscriptionsEnabled: c.SUBSCRIPTION_TOKEN_KEY !== undefined,
   };

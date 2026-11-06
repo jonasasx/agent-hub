@@ -78,7 +78,7 @@ export function mcpAuthSpecs(device: 'desktop' | 'phone') {
       await page.goto('/');
       const phone = device === 'phone';
       if (phone) {
-        await expect(page.getByRole('list', { name: 'Машины' })).toBeAttached();
+        await expect(page.getByRole('complementary', { name: 'Сессии и проекты' })).toBeAttached();
         await page.locator('.side-scroll .srow', { hasText: s1.title }).first().click();
       }
       await page.getByRole('button', { name: /^MCP/ }).first().click();

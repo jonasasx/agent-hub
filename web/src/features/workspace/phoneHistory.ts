@@ -6,12 +6,30 @@
  * - `popstate` onto an entry that is not the chat shows the list; the lightbox puts its own entry over the chat
  *   (ImagePreview), so the first «назад» closes it and the next one shows the list;
  * - «←» goes back when the top entry is ours, otherwise just shows the list.
+ * A tool window over the home screen (change tool-windows-file-explorer) is an entry too, `{ahView: 'win', id}`: «назад»
+ * from the window leads to the home screen.
  */
 import { useStore } from '../../store';
+import { useDock } from '../toolwindows/useDock';
+import { isWinId, type WinId } from '../toolwindows/dock';
 
 type ChatEntry = { ahView: 'chat'; sid: string | null; lightbox?: boolean };
 
 const isChat = (st: unknown): st is ChatEntry => !!st && typeof st === 'object' && (st as { ahView?: unknown }).ahView === 'chat';
+type WinEntry = { ahView: 'win'; id: WinId };
+const isWin = (st: unknown): st is WinEntry => !!st && typeof st === 'object' && (st as { ahView?: unknown }).ahView === 'win' && isWinId((st as { id?: unknown }).id);
+
+/** A tool window opens over the home screen: one history entry, so «назад» closes it. */
+export function pushPhoneWindow(id: WinId): void {
+  if (isWin(history.state)) history.replaceState({ ahView: 'win', id }, '', location.href);
+  else history.pushState({ ahView: 'win', id }, '', location.href);
+}
+
+/** «←» in the header of a phone window. */
+export function backFromWindow(): void {
+  if (isWin(history.state)) history.back();
+  else useDock.getState().setPhoneWin(null);
+}
 
 function activeSid(): string | null {
   const { ws } = useStore.getState();
@@ -35,7 +53,7 @@ export function backToList(): void {
 /** Starts following the chat state of the phone; returns the cleanup. */
 export function startPhoneHistory(): () => void {
   // a reload on the chat entry starts on the list: the stale entry becomes the list again
-  if (isChat(history.state)) history.replaceState(null, '', location.href);
+  if (isChat(history.state) || isWin(history.state)) history.replaceState(null, '', location.href);
   const unsub = useStore.subscribe((s, prev) => {
     if (fromPop || s.device !== 'phone') return;
     const sid = activeSid();
@@ -72,6 +90,9 @@ export function startPhoneHistory(): () => void {
     if (useStore.getState().device !== 'phone') return;
     fromPop = true;
     try {
+      // a window entry shows its window; the home screen entry (neither a chat nor a window) closes it
+      if (isWin(e.state)) useDock.getState().setPhoneWin(e.state.id);
+      else if (!isChat(e.state) && useDock.getState().phoneWin) useDock.getState().setPhoneWin(null);
       if (isChat(e.state)) {
         if (!e.state.lightbox) {
           const at = stack.lastIndexOf(e.state.sid);

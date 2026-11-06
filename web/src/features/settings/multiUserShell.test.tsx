@@ -2,7 +2,7 @@
 // by role, `/settings/<tab>` addresses, «Доступ отключён» on /ws/ui close 4403, the «Нет входа в Claude» plaque in the
 // session header and «Начать первую сессию» in the new-session form.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { MeResponse, RunnerView, SidebarResponse } from '../../api/types';
 import { App } from '../../App';
@@ -135,7 +135,7 @@ describe('multi-user shell', () => {
     expect(window.location.pathname).toBe('/settings/security');
     expect(await screen.findByRole('heading', { name: 'Безопасность' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Пользователи' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Машины' }));
+    await user.click(within(screen.getByRole('region', { name: 'Настройки' })).getByRole('button', { name: 'Машины' }));
     expect(window.location.pathname).toBe('/settings/machines');
     expect(await screen.findByRole('heading', { name: 'Машины' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Закрыть настройки' }));

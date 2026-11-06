@@ -38,7 +38,7 @@ describe('/ws/agent (integration)', () => {
     // A 1.0 agent (M2) and the 1.5 hub talk: minor versions do not break the connection; the hub records 1.0.
     const a = connectFakeAgent(t.wsBase, hpToken, { protocol: '1.0' });
     const welcome = await a.next('welcome');
-    expect(welcome.payload).toEqual({ runnerId: 'hp', protocol: '1.13', cursors: [] });
+    expect(welcome.payload).toEqual({ runnerId: 'hp', protocol: '1.14', cursors: [] });
     const r = await waitFor(async () => {
       const row = await getRunner(t.tdb.db, 'hp');
       return row?.online ? row : null;
@@ -203,20 +203,31 @@ describe('/ws/agent (integration)', () => {
 describe('updateOfferHeld (Requirement: Самообновление агента, design M5)', () => {
   const now = Date.parse('2026-10-27T12:00:00Z');
   const at = (ms: number) => new Date(now - ms).toISOString();
-  const st = (status: 'sent' | 'waiting' | 'installing' | 'failed', ago: number, error: string | null = null) => ({ version: '0.2.0', status, error, at: at(ago) });
-  it('failed: held for 6 h, then offered again; sha_mismatch is held for good', () => {
-    expect(updateOfferHeld(st('failed', UPDATE_RETRY_FAILED_MS - 1000, 'install_failed: npm'), '0.2.0', now)).toBe(true);
-    expect(updateOfferHeld(st('failed', UPDATE_RETRY_FAILED_MS, 'install_failed: npm'), '0.2.0', now)).toBe(false);
-    expect(updateOfferHeld(st('failed', 30 * 24 * 3600_000, 'sha_mismatch: expected a, got b'), '0.2.0', now)).toBe(true);
+  const st = (status: 'sent' | 'waiting' | 'installing' | 'failed', ago: number, error: string | null = null, sha256?: string) => ({
+    version: '0.2.0',
+    status,
+    error,
+    at: at(ago),
+    ...(sha256 ? { sha256 } : {}),
+  });
+  it('failed: held for 6 h; sha_mismatch is held only for the same build SHA', () => {
+    expect(updateOfferHeld(st('failed', UPDATE_RETRY_FAILED_MS - 1000, 'install_failed: npm'), '0.2.0', 'sha', now)).toBe(true);
+    expect(updateOfferHeld(st('failed', UPDATE_RETRY_FAILED_MS, 'install_failed: npm'), '0.2.0', 'sha', now)).toBe(false);
+    expect(updateOfferHeld(st('failed', 30 * 24 * 3600_000, 'sha_mismatch: expected a, got b', 'old-sha'), '0.2.0', 'old-sha', now)).toBe(true);
+    expect(updateOfferHeld(st('failed', 30 * 24 * 3600_000, 'sha_mismatch: expected a, got b', 'old-sha'), '0.2.0', 'new-sha', now)).toBe(false);
+    const oldSha = 'a'.repeat(64);
+    const oldState = st('failed', 30 * 24 * 3600_000, `sha_mismatch: expected ${oldSha}, got b`);
+    expect(updateOfferHeld(oldState, '0.2.0', oldSha, now)).toBe(true);
+    expect(updateOfferHeld(oldState, '0.2.0', 'c'.repeat(64), now)).toBe(false);
   });
   it('installing without a result: held for 1 h, then offered again', () => {
-    expect(updateOfferHeld(st('installing', UPDATE_RETRY_INSTALLING_MS - 1000), '0.2.0', now)).toBe(true);
-    expect(updateOfferHeld(st('installing', UPDATE_RETRY_INSTALLING_MS + 1000), '0.2.0', now)).toBe(false);
+    expect(updateOfferHeld(st('installing', UPDATE_RETRY_INSTALLING_MS - 1000), '0.2.0', 'sha', now)).toBe(true);
+    expect(updateOfferHeld(st('installing', UPDATE_RETRY_INSTALLING_MS + 1000), '0.2.0', 'sha', now)).toBe(false);
   });
   it('another build version, no state, sent/waiting: not held', () => {
-    expect(updateOfferHeld(st('failed', 0, 'sha_mismatch'), '0.3.0', now)).toBe(false);
-    expect(updateOfferHeld(null, '0.2.0', now)).toBe(false);
-    expect(updateOfferHeld(st('sent', 0), '0.2.0', now)).toBe(false);
-    expect(updateOfferHeld(st('waiting', 0), '0.2.0', now)).toBe(false);
+    expect(updateOfferHeld(st('failed', 0, 'sha_mismatch'), '0.3.0', 'sha', now)).toBe(false);
+    expect(updateOfferHeld(null, '0.2.0', 'sha', now)).toBe(false);
+    expect(updateOfferHeld(st('sent', 0), '0.2.0', 'sha', now)).toBe(false);
+    expect(updateOfferHeld(st('waiting', 0), '0.2.0', 'sha', now)).toBe(false);
   });
 });

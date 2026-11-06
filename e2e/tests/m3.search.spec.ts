@@ -29,7 +29,7 @@ test.afterAll(async () => {
 async function start(page: Page) {
   await page.context().addCookies([{ name: 'ah_session', value: COOKIE, url: BASE, secure: BASE.startsWith('https'), httpOnly: true, sameSite: 'Lax' }]);
   await page.goto('/');
-  await expect(page.getByRole('list', { name: 'Машины' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Сессии и проекты' })).toBeVisible();
 }
 const dialog = (page: Page) => page.getByRole('dialog', { name: 'Быстрый переход' });
 async function search(page: Page, q: string) {

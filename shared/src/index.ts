@@ -5,3 +5,4 @@ export * from './desktop.js';
 export * from './subagents.js';
 export * from './peers.js';
 export * from './mcpRegistry.js';
+export * from './files.js';

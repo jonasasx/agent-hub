@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { envelope } from '@agent-hub/shared';
 import { createAgent } from '../agent.js';
 import { createLogger } from '../log.js';
+import { RegistryCache } from './registryCache.js';
 
 describe('MCP secret delivery over the agent websocket', () => {
   let root = '';
@@ -45,12 +46,43 @@ describe('MCP secret delivery over the agent websocket', () => {
 
     const logs: string[] = [];
     const stateDir = join(root, 'agent-hub');
+    const cache = new RegistryCache(stateDir);
+    let cacheWriteStarted!: () => void;
+    const writeStarted = new Promise<void>(resolve => {
+      cacheWriteStarted = resolve;
+    });
+    let releaseCacheWrite!: () => void;
+    const cacheWriteGate = new Promise<void>(resolve => {
+      releaseCacheWrite = resolve;
+    });
+    let cacheWriteFinished!: () => void;
+    const cacheWriteComplete = new Promise<void>(resolve => {
+      cacheWriteFinished = resolve;
+    });
+    let secondCacheWriteStarted = false;
+    let secondCacheWriteFinished!: () => void;
+    const secondCacheWriteComplete = new Promise<void>(resolve => {
+      secondCacheWriteFinished = resolve;
+    });
+    const originalWrite = cache.write.bind(cache);
+    cache.write = async snapshot => {
+      if (snapshot.revision === 1) {
+        cacheWriteStarted();
+        await cacheWriteGate;
+      } else {
+        secondCacheWriteStarted = true;
+      }
+      await originalWrite(snapshot);
+      if (snapshot.revision === 1) cacheWriteFinished();
+      else secondCacheWriteFinished();
+    };
     const agent = createAgent({
       hubUrl: `ws://127.0.0.1:${address.port}/ws/agent`,
       token: 'test-token',
       vaultRoot: null,
       claudeProjectsDir: join(root, 'claude', 'projects'),
       stateDir,
+      registryCache: cache,
       codexBin: null,
       watch: false,
       log: createLogger({ level: 'debug', write: line => logs.push(line) }),
@@ -112,21 +144,28 @@ describe('MCP secret delivery over the agent websocket', () => {
       };
 
       const syncId = sendCommand('mcp.registry.sync', snapshot);
-      expect(await waitForReply(syncId)).toMatchObject({ type: 'cmd.ok' });
+      await writeStarted;
       const deliveryId = sendCommand('mcp.secrets.deliver', {
         serverId,
         machineId,
         revision: 1,
         secrets: [{ name: 'API_TOKEN', value: secret }],
       });
+      const bearerToken = randomUUID() + randomUUID();
+      const startId = sendCommand('mcp.gateway.start', { serverId, revision: 1, sessionId, bearerToken });
+      expect(await waitForReply(syncId)).toMatchObject({ type: 'cmd.ok' });
       const deliveryReply = await waitForReply(deliveryId);
       expect(JSON.stringify(deliveryReply)).not.toContain(secret);
       expect(deliveryReply).toMatchObject({ type: 'cmd.ok', payload: { result: { delivered: true } } });
-
-      const bearerToken = randomUUID() + randomUUID();
-      const startId = sendCommand('mcp.gateway.start', { serverId, revision: 1, sessionId, bearerToken });
       const startReply = await waitForReply(startId);
       const endpoint = (startReply.payload as { result: { endpoint: string } }).result.endpoint;
+      const nextSyncId = sendCommand('mcp.registry.sync', { ...snapshot, revision: 2 });
+      expect(await waitForReply(nextSyncId)).toMatchObject({ type: 'cmd.ok' });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(secondCacheWriteStarted).toBe(false);
+      releaseCacheWrite();
+      await cacheWriteComplete;
+      await secondCacheWriteComplete;
       const response = await fetch(`${endpoint}?server=${serverId}`, {
         method: 'POST',
         headers: {
@@ -143,9 +182,89 @@ describe('MCP secret delivery over the agent websocket', () => {
 
       const cache = await readFile(join(stateDir, 'mcp-registry.json'), 'utf8');
       expect(cache).not.toContain(secret);
+      expect(JSON.parse(cache)).toMatchObject({ revision: 2 });
       expect(JSON.stringify(frames)).not.toContain(secret);
       expect(logs.join('\n')).not.toContain(secret);
       expect(logs.join('\n')).toContain('[redacted]');
+    } finally {
+      releaseCacheWrite();
+      await agent.stop(100);
+    }
+  }, 30_000);
+
+  it('clears buffered commands when the hub disconnects before welcome', async () => {
+    root = await mkdtemp(join(tmpdir(), 'agent-prewelcome-disconnect-'));
+    const probe = createServer();
+    await new Promise<void>(resolve => probe.listen(0, '127.0.0.1', resolve));
+    const address = probe.address();
+    if (!address || typeof address === 'string') throw new Error('failed to reserve a test port');
+    await new Promise<void>(resolve => probe.close(() => resolve()));
+
+    wss = new WebSocketServer({ port: address.port, host: '127.0.0.1' });
+    await new Promise<void>(resolve => wss!.once('listening', resolve));
+    let firstSocket: WebSocket | undefined;
+    let reconnectWelcome!: () => void;
+    const welcomedAgain = new Promise<void>(resolve => {
+      reconnectWelcome = resolve;
+    });
+    const reconnectFrames: Array<Record<string, unknown>> = [];
+    let connections = 0;
+    wss.on('connection', ws => {
+      connections += 1;
+      if (connections === 1) {
+        firstSocket = ws;
+        ws.on('message', () => undefined);
+        return;
+      }
+      ws.on('message', data => {
+        const message = JSON.parse(data.toString()) as Record<string, unknown>;
+        reconnectFrames.push(message);
+        if (message.type === 'hello') {
+          ws.send(JSON.stringify(envelope('welcome', { runnerId: randomUUID(), protocol: '1.13', cursors: [] })));
+          reconnectWelcome();
+        }
+      });
+    });
+
+    const cache = new RegistryCache(join(root, 'agent-hub'));
+    let cacheWrites = 0;
+    const write = cache.write.bind(cache);
+    cache.write = async snapshot => {
+      cacheWrites += 1;
+      await write(snapshot);
+    };
+    let agentWelcome!: () => void;
+    const agentWelcomed = new Promise<void>(resolve => {
+      agentWelcome = resolve;
+    });
+    const agent = createAgent({
+      hubUrl: `ws://127.0.0.1:${address.port}/ws/agent`,
+      token: 'test-token',
+      vaultRoot: null,
+      claudeProjectsDir: join(root, 'claude', 'projects'),
+      stateDir: join(root, 'agent-hub'),
+      registryCache: cache,
+      codexBin: null,
+      watch: false,
+      backoff: { minMs: 10, maxMs: 10 },
+      onWelcome: agentWelcome,
+      log: createLogger({ level: 'error', write: () => undefined }),
+    });
+
+    try {
+      agent.start();
+      for (let attempt = 0; attempt < 200 && !firstSocket; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+      expect(firstSocket).toBeDefined();
+      const commandId = randomUUID();
+      firstSocket!.send(JSON.stringify(envelope('mcp.registry.sync', { protocol: '1.13', revision: 1, generatedAt: 1, registryEnabled: true, servers: [] }, { id: commandId })));
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(cacheWrites).toBe(0);
+      firstSocket!.close();
+      await welcomedAgain;
+      await agentWelcomed;
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(cacheWrites).toBe(0);
+      expect(reconnectFrames.some(frame => frame.re === commandId)).toBe(false);
     } finally {
       await agent.stop(100);
     }

@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import { sql, type Transaction } from 'kysely';
-import type { z } from 'zod';
+import { z } from 'zod';
 import {
   MCP_REGISTRY_CAPABILITIES,
   MCP_REGISTRY_PROTOCOL_VERSION,
   mcpDraftConnectSchema,
   mcpDraftCreateSchema,
   mcpDraftRequestPayload,
+  mcpDraftValidationResultSchema,
   mcpDraftSaveUncheckedSchema,
   mcpDraftUpdateSchema,
   mcpDraftValidateSchema,
@@ -42,6 +43,7 @@ import { decryptToken, encryptToken, tokenKey } from '../subscriptions/crypto.js
 
 const MIN = '1.13';
 type Cfg = Record<string, unknown>;
+const apiDraftCreateRequestSchema = z.object({ sessionId: z.string().uuid().optional() }).passthrough();
 function encryptionKey(keyText: string | undefined) {
   if (!keyText) throw new HttpError(503, 'secret_storage_disabled', 'Secret storage is not configured');
   try {
@@ -79,6 +81,14 @@ function redactValues(value: unknown, secrets: string[]): unknown {
   if (Array.isArray(value)) return value.map(item => redactValues(item, secrets));
   if (!value || typeof value !== 'object') return value;
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactValues(item, secrets)]));
+}
+function matchesSavedServerOrigin(candidate: Cfg, saved: Cfg): boolean {
+  if (candidate.transport !== saved.transport || typeof candidate.url !== 'string' || typeof saved.url !== 'string') return false;
+  try {
+    return new URL(candidate.url).origin === new URL(saved.url).origin;
+  } catch {
+    return false;
+  }
 }
 function prepareDraftUrlSecrets(input: unknown): { body: unknown; urlSecrets: Map<string, string> } {
   const urlSecrets = new Map<string, string>();
@@ -328,7 +338,8 @@ export class McpRegistryService {
     });
     const writeByName = new Map(writes.map(write => [write.name, write]));
     const writeById = new Map(writes.map(write => [write.id, write]));
-    const allowedName = (name: string) => writeByName.get(name) ?? ownedByName.get(name);
+    const trustedByName = new Map<string, { id: string; name: string }>();
+    const allowedName = (name: string) => writeByName.get(name) ?? ownedByName.get(name) ?? trustedByName.get(name);
     const allowedId = (id: string) => writeById.get(id)?.name ?? ownedById.get(id);
     const trustedIds = new Set<string>();
     const trustedNames = new Map<string, string>();
@@ -337,7 +348,10 @@ export class McpRegistryService {
       for (const ref of refs) {
         if (typeof ref.secretId === 'string') {
           trustedIds.add(ref.secretId);
-          if (typeof ref.name === 'string') trustedNames.set(ref.secretId, ref.name);
+          if (typeof ref.name === 'string') {
+            trustedNames.set(ref.secretId, ref.name);
+            if (!trustedByName.has(ref.name)) trustedByName.set(ref.name, { id: ref.secretId, name: ref.name });
+          }
         }
       }
       if (typeof source.urlSecretId === 'string') trustedIds.add(source.urlSecretId);
@@ -350,6 +364,8 @@ export class McpRegistryService {
     readTrustedReferences(trustedConfig);
     const normalized: Cfg = { ...config };
     const refs = new Map<string, { secretId: string; name: string; state: 'set' | 'needs-secret' }>();
+    const missingByName = new Map<string, string>();
+    const missingNamesById = new Map<string, string>();
     const addRef = (secretId: string, refName: string, state: 'set' | 'needs-secret' = 'set') => refs.set(secretId, { secretId, name: refName, state });
     const inheritedRefs = (Array.isArray(config.secrets) ? config.secrets : []) as Array<{ secretId?: string; name?: string; state?: string }>;
     for (const ref of inheritedRefs) {
@@ -364,37 +380,79 @@ export class McpRegistryService {
       for (const [key, rawValue] of Object.entries(values)) {
         const value = { ...rawValue };
         if (value.kind === 'secret-name') {
-          const resolved = allowedName(String(value.name ?? ''));
-          if (!resolved) throw new HttpError(400, 'invalid_input', 'Secret name is not present in this MCP entry');
+          const secretName = String(value.name ?? '');
+          const resolved = allowedName(secretName);
+          if (!resolved) {
+            const secretId = missingByName.get(secretName) ?? randomUUID();
+            missingByName.set(secretName, secretId);
+            missingNamesById.set(secretId, secretName);
+            value.secretId = secretId;
+            addRef(secretId, secretName, 'needs-secret');
+          } else {
+            value.secretId = resolved.id;
+          }
           value.kind = 'secret';
-          value.secretId = resolved.id;
           delete value.name;
         }
         if (value.kind === 'secret') {
           const secretId = String(value.secretId ?? '');
           const refName = allowedId(secretId) ?? trustedNames.get(secretId);
-          if (!refName || (!ownedById.has(secretId) && !writeById.has(secretId) && !trustedIds.has(secretId))) {
+          const missing = missingNamesById.has(String(value.secretId ?? ''));
+          if (!refName && !missing) {
             throw new HttpError(400, 'invalid_input', 'Secret reference does not belong to this MCP entry');
           }
-          addRef(secretId, refName);
+          if (!missing && !ownedById.has(secretId) && !writeById.has(secretId) && !trustedIds.has(secretId)) {
+            throw new HttpError(400, 'invalid_input', 'Secret reference does not belong to this MCP entry');
+          }
+          addRef(secretId, refName ?? missingNamesById.get(secretId) ?? 'secret', missing ? 'needs-secret' : 'set');
         }
         values[key] = value;
       }
       if (normalized[bucket] !== undefined) normalized[bucket] = values;
     }
     if (typeof normalized.urlSecretName === 'string') {
-      const resolved = allowedName(normalized.urlSecretName);
-      if (!resolved) throw new HttpError(400, 'invalid_input', 'URL secret name is not present in this MCP entry');
-      normalized.urlSecretId = resolved.id;
+      const name = normalized.urlSecretName;
+      const resolved = allowedName(name);
+      if (!resolved) {
+        const secretId = missingByName.get(name) ?? randomUUID();
+        missingByName.set(name, secretId);
+        missingNamesById.set(secretId, name);
+        normalized.urlSecretId = secretId;
+        addRef(secretId, name, 'needs-secret');
+      } else {
+        normalized.urlSecretId = resolved.id;
+      }
       delete normalized.urlSecretName;
     }
     if (typeof normalized.urlSecretId === 'string') {
       const urlSecretId = normalized.urlSecretId;
       const refName = allowedId(urlSecretId) ?? trustedNames.get(urlSecretId);
-      if (!refName || (!ownedById.has(urlSecretId) && !writeById.has(urlSecretId) && !trustedIds.has(urlSecretId))) {
+      const missing = missingNamesById.has(urlSecretId);
+      if (!refName && !missing) {
         throw new HttpError(400, 'invalid_input', 'URL secret reference does not belong to this MCP entry');
       }
-      addRef(urlSecretId, refName);
+      if (!missing && !ownedById.has(urlSecretId) && !writeById.has(urlSecretId) && !trustedIds.has(urlSecretId)) {
+        throw new HttpError(400, 'invalid_input', 'URL secret reference does not belong to this MCP entry');
+      }
+      addRef(urlSecretId, refName ?? missingNamesById.get(urlSecretId) ?? 'url:secret', missing ? 'needs-secret' : 'set');
+    }
+    const replacementIds = new Map<string, string>();
+    for (const ref of refs.values()) {
+      const replacement = writeByName.get(ref.name);
+      if (replacement && replacement.id !== ref.secretId) {
+        replacementIds.set(ref.secretId, replacement.id);
+        refs.delete(ref.secretId);
+      }
+    }
+    for (const bucket of ['env', 'headers']) {
+      const values = (normalized[bucket] ?? {}) as Record<string, Cfg>;
+      for (const value of Object.values(values)) {
+        const replacement = replacementIds.get(String(value.secretId ?? ''));
+        if (value.kind === 'secret' && replacement) value.secretId = replacement;
+      }
+    }
+    if (typeof normalized.urlSecretId === 'string') {
+      normalized.urlSecretId = replacementIds.get(normalized.urlSecretId) ?? normalized.urlSecretId;
     }
     for (const write of writes) addRef(write.id, write.name);
     normalized.secrets = [...refs.values()];
@@ -646,6 +704,7 @@ export class McpRegistryService {
         draftId: serverId,
         revision: Number(server.revision),
         machineId: request.machineId,
+        oauthServerId: serverId,
         server: parse(mcpServerConfigSchema, config),
         ...(secrets.length ? { secretDelivery: { serverId, revision: Number(server.revision), machineId: request.machineId, secrets } } : {}),
       });
@@ -952,6 +1011,11 @@ export class McpRegistryService {
     await this.audit(userId, actor, 'draft.create', null, id);
     return { draftId: id, revision: 1, state: 'draft', server: safe(config) };
   }
+  async draftForSession(userId: string, body: unknown, sessionId: string) {
+    const session = await this.o.db.selectFrom('sessions').select('id').where('id', '=', sessionId).where('user_id', '=', userId).executeTakeFirst();
+    if (!session) throw new HttpError(403, 'forbidden', 'Session access denied');
+    return this.draft(userId, body, sessionId);
+  }
   async updateDraft(userId: string, id: string, body: unknown, actor = 'api') {
     const row = await this.o.db.selectFrom('mcp_registry_drafts').select(['config', 'revision', 'state']).where('id', '=', id).where('user_id', '=', userId).executeTakeFirst();
     if (!row) throw new HttpError(404, 'draft_not_found', 'Draft not found');
@@ -977,6 +1041,73 @@ export class McpRegistryService {
     });
     await this.audit(userId, actor, 'draft.update', null, id);
     return { draftId: id, revision: b.revision + 1, state: 'draft', server: safe(config) };
+  }
+  async updateExistingServerDraft(userId: string, serverId: string, body: unknown, sessionId: string, runnerId: string) {
+    const prepared = prepareDraftUrlSecrets(body);
+    const update = parse(mcpDraftUpdateSchema, prepared.body);
+    const current = await this.o.db
+      .selectFrom('mcp_registry_servers')
+      .select(['id', 'name', 'config', 'enabled', 'revision'])
+      .where('id', '=', serverId)
+      .where('user_id', '=', userId)
+      .executeTakeFirst();
+    if (!current) throw new HttpError(404, 'mcp_server_not_found', 'MCP server not found');
+    const baseRevision = Number(current.revision);
+    if (update.revision !== baseRevision) throw new HttpError(409, 'revision_conflict', 'Registry revision changed');
+    const id = randomUUID();
+    const generatedIds = new Map(prepared.urlSecrets);
+    for (const write of update.secrets ?? []) {
+      if (!generatedIds.has(write.name)) generatedIds.set(write.name, randomUUID());
+    }
+    const replacementIds = new Map<string, string>();
+    const writeNames = new Set((update.secrets ?? []).map(write => write.name));
+    for (const ref of (current.config.secrets ?? []) as Array<{ secretId?: string; name?: string }>) {
+      if (ref.secretId && ref.name && writeNames.has(ref.name)) replacementIds.set(ref.secretId, generatedIds.get(ref.name)!);
+    }
+    const merged = {
+      ...current.config,
+      ...update.server,
+      id: serverId,
+      name: update.server.name ?? current.name,
+      enabled: update.server.enabled ?? current.enabled,
+      revision: 1,
+      secrets: ((current.config.secrets ?? []) as Array<{ secretId?: string; name?: string }>).filter(ref => !ref.name || !writeNames.has(ref.name)),
+    } as Cfg;
+    for (const bucket of ['env', 'headers']) {
+      const values = (merged[bucket] ?? {}) as Record<string, Cfg>;
+      for (const value of Object.values(values)) {
+        const oldId = String(value.secretId ?? '');
+        if (value.kind === 'secret' && replacementIds.has(oldId)) value.secretId = replacementIds.get(oldId);
+      }
+      if (merged[bucket] !== undefined) merged[bucket] = values;
+    }
+    if (typeof merged.urlSecretId === 'string' && replacementIds.has(merged.urlSecretId)) {
+      merged.urlSecretId = replacementIds.get(merged.urlSecretId);
+    }
+    const resolved = await this.resolveConfigSecretBindings(userId, merged, update.secrets ?? [], generatedIds, { draftId: id }, current.config);
+    const config = { ...resolved.config, id: serverId, revision: 1 } as Cfg;
+    parse(mcpServerConfigSchema, config);
+    await this.o.db.transaction().execute(async trx => {
+      await trx
+        .insertInto('mcp_registry_drafts')
+        .values({
+          id,
+          user_id: userId,
+          runner_id: runnerId,
+          session_id: sessionId,
+          server_id: serverId,
+          base_revision: baseRevision,
+          name: String(config.name),
+          state: 'draft',
+          config: JSON.stringify(config),
+          validation: null,
+          revision: 1,
+        })
+        .execute();
+      await this.persistSecretWrites(userId, { draftId: id }, resolved.writes, trx);
+    });
+    await this.audit(userId, sessionId, 'server.update-draft', serverId, id);
+    return { draftId: id, revision: 1, state: 'draft', server: safe(config) };
   }
   async getDraft(userId: string, id: string) {
     const r = await this.o.db
@@ -1016,7 +1147,7 @@ export class McpRegistryService {
     };
   }
   async validate(userId: string, id: string, body: unknown) {
-    const row = await this.o.db.selectFrom('mcp_registry_drafts').select(['config', 'revision']).where('id', '=', id).where('user_id', '=', userId).executeTakeFirst();
+    const row = await this.o.db.selectFrom('mcp_registry_drafts').select(['config', 'revision', 'server_id']).where('id', '=', id).where('user_id', '=', userId).executeTakeFirst();
     if (!row) throw new HttpError(404, 'draft_not_found', 'Draft not found');
     const b = parse(mcpDraftValidateSchema, body);
     if (Number(row.revision) !== b.revision) throw new HttpError(409, 'revision_conflict', 'Draft revision changed');
@@ -1030,6 +1161,7 @@ export class McpRegistryService {
     }
     if (!this.o.agents.isOnline(b.machineId)) throw new HttpError(409, 'runner_offline', 'Target machine is offline');
     const cfg: Cfg = { ...row.config, revision: b.revision };
+    const validationCfg = row.server_id ? { ...cfg, id } : cfg;
     const scope = cfg.machineScope as { allMachines?: boolean; machineIds?: string[] } | undefined;
     if (scope && !scope.allMachines && !scope.machineIds?.includes(b.machineId)) throw new HttpError(403, 'machine_not_allowed', 'Target machine is outside the server allow-list');
     const refs = new Set<string>();
@@ -1047,8 +1179,8 @@ export class McpRegistryService {
           .selectFrom('mcp_secrets')
           .select(['id', 'name', 'ciphertext'])
           .where('user_id', '=', userId)
-          .where('draft_id', '=', id)
           .where('id', 'in', [...refs])
+          .where(eb => eb.or([eb('draft_id', '=', id), ...(row.server_id ? [eb('server_id', '=', row.server_id)] : [])]))
           .execute()
       : [];
     const secrets = secretRows.map(s => ({ name: s.name, value: decryptSecret(this.o.key, userId, s.id, s.ciphertext) }));
@@ -1065,6 +1197,10 @@ export class McpRegistryService {
       throw new HttpError(409, 'needs_secret', 'One or more referenced secrets have not been saved');
     }
     const command = this.o.agents.get(b.machineId)!;
+    const savedServer = row.server_id
+      ? await this.o.db.selectFrom('mcp_registry_servers').select('config').where('user_id', '=', userId).where('id', '=', row.server_id).executeTakeFirst()
+      : undefined;
+    const oauthServerId = savedServer && matchesSavedServerOrigin(cfg, savedServer.config) ? row.server_id : undefined;
     const validating = await this.o.db
       .updateTable('mcp_registry_drafts')
       .set({ state: 'validating', runner_id: b.machineId, updated_at: new Date() })
@@ -1081,8 +1217,9 @@ export class McpRegistryService {
         draftId: id,
         revision: b.revision,
         machineId: b.machineId,
-        server: parse(mcpServerConfigSchema, cfg),
-        ...(secrets.length ? { secretDelivery: { serverId: cfg.id as string, revision: b.revision, machineId: b.machineId, secrets } } : {}),
+        ...(oauthServerId ? { oauthServerId } : {}),
+        server: parse(mcpServerConfigSchema, validationCfg),
+        ...(secrets.length ? { secretDelivery: { serverId: validationCfg.id as string, revision: b.revision, machineId: b.machineId, secrets } } : {}),
       });
       const parsed = mcpRegistryValidateResultPayload.safeParse(validationResult);
       if (!parsed.success) {
@@ -1139,10 +1276,98 @@ export class McpRegistryService {
     await this.audit(userId, 'api', 'draft.validate', null, id);
     return { draftId: id, revision: b.revision, state, server: safe(cfg), validation: safeResult };
   }
+  private async connectExistingServerDraft(
+    userId: string,
+    draftId: string,
+    draftRevision: number,
+    draft: { config: Cfg; runner_id: string | null; session_id: string | null; server_id: string; base_revision: string | number | null },
+    needsAuth: boolean,
+  ) {
+    if (needsAuth) throw new HttpError(409, 'validation_required', 'Sign in before confirming this MCP server update');
+    if (draft.base_revision === null) throw new HttpError(409, 'revision_conflict', 'Original MCP server revision is missing');
+    const serverId = draft.server_id;
+    const baseRevision = Number(draft.base_revision);
+    const config = { ...draft.config, id: serverId, revision: baseRevision + 1 } as Cfg;
+    parse(mcpServerConfigSchema, config);
+    const refs = [...new Set(((config.secrets ?? []) as Array<{ secretId?: string }>).map(secret => secret.secretId).filter((id): id is string => !!id))];
+    try {
+      await this.o.db.transaction().execute(async trx => {
+        const updated = await trx
+          .updateTable('mcp_registry_servers')
+          .set({
+            name: String(config.name),
+            enabled: config.enabled !== false,
+            config: JSON.stringify(config),
+            revision: baseRevision + 1,
+            updated_at: new Date(),
+          })
+          .where('user_id', '=', userId)
+          .where('id', '=', serverId)
+          .where('revision', '=', String(baseRevision))
+          .returning('id')
+          .executeTakeFirst();
+        if (!updated) throw new HttpError(409, 'revision_conflict', 'Registry revision changed');
+        const claimed = await trx
+          .updateTable('mcp_registry_drafts')
+          .set({ state: 'connected', config: JSON.stringify(config), updated_at: new Date() })
+          .where('user_id', '=', userId)
+          .where('id', '=', draftId)
+          .where('revision', '=', String(draftRevision))
+          .where('state', '=', 'checked')
+          .returning('id')
+          .executeTakeFirst();
+        if (!claimed) throw new HttpError(409, 'revision_conflict', 'Draft changed before confirmation');
+        await trx.updateTable('mcp_secrets').set({ server_id: serverId, draft_id: null, updated_at: new Date() }).where('user_id', '=', userId).where('draft_id', '=', draftId).execute();
+        let stale = trx.deleteFrom('mcp_secrets').where('user_id', '=', userId).where('server_id', '=', serverId);
+        if (refs.length) stale = stale.where('id', 'not in', refs);
+        await stale.execute();
+      });
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      if ((error as { code?: string }).code === '23505') throw new HttpError(409, 'name_taken', 'An MCP server already uses this name');
+      throw error;
+    }
+    const registryRevision = await this.bump(userId);
+    await this.audit(userId, draft.session_id ?? 'api', 'server.update-confirm', serverId, draftId);
+    await this.syncUser(userId);
+    let sessionUpdate: Cfg | undefined;
+    if (draft.session_id && draft.runner_id && this.capabilities.get(draft.runner_id)?.has('mcp.registry.v1')) {
+      const current = await this.o.db.selectFrom('sessions').select(['user_id', 'runner_id']).where('id', '=', draft.session_id).where('user_id', '=', userId).executeTakeFirst();
+      if (current?.runner_id === draft.runner_id) {
+        await this.o.db
+          .insertInto('mcp_registry_session_updates')
+          .values({
+            user_id: userId,
+            runner_id: draft.runner_id,
+            session_id: draft.session_id,
+            server_id: serverId,
+            revision: registryRevision,
+            activation: 'deferred',
+            applied: false,
+            error: 'Awaiting agent acknowledgement',
+          })
+          .onConflict(conflict =>
+            conflict.columns(['session_id', 'revision']).doUpdateSet({
+              server_id: serverId,
+              activation: 'deferred',
+              applied: false,
+              error: 'Awaiting agent acknowledgement',
+              updated_at: new Date(),
+            }),
+          )
+          .execute();
+        this.o.agents
+          .get(draft.runner_id)
+          ?.send('mcp.registry.session-update', { sessionId: draft.session_id, revision: registryRevision, server: parse(mcpServerConfigSchema, config), activation: 'connected-live' });
+        sessionUpdate = { activation: 'pending', applied: false };
+      }
+    }
+    return { serverId, state: 'connected', server: safe(config), ...(sessionUpdate ? { sessionUpdate } : {}) };
+  }
   async connect(userId: string, id: string, body: unknown, unchecked = false) {
     const row = await this.o.db
       .selectFrom('mcp_registry_drafts')
-      .select(['config', 'revision', 'state', 'validation', 'runner_id', 'session_id'])
+      .select(['config', 'revision', 'state', 'validation', 'runner_id', 'session_id', 'server_id', 'base_revision'])
       .where('id', '=', id)
       .where('user_id', '=', userId)
       .executeTakeFirst();
@@ -1154,6 +1379,13 @@ export class McpRegistryService {
     }
     const needsAuth = !unchecked && row.state === 'needs_auth' && row.validation?.oauthRequired === true;
     if (!unchecked && !needsAuth && (row.state !== 'checked' || row.validation?.ok !== true)) throw new HttpError(409, 'validation_required', 'A successful connection check is required');
+    const existingServerId = row.server_id;
+    if (existingServerId) {
+      if (unchecked) {
+        throw new HttpError(409, 'validation_required', 'Connected MCP updates must pass validation before confirmation');
+      }
+      return this.connectExistingServerDraft(userId, id, b.revision, { ...row, server_id: existingServerId }, needsAuth);
+    }
     const name = String(row.config.name);
     const exists = await this.o.db.selectFrom('mcp_registry_servers').select('id').where('user_id', '=', userId).where('name', '=', name).executeTakeFirst();
     if (exists) throw new HttpError(409, 'name_taken', 'An MCP server with this name already exists');
@@ -1403,9 +1635,56 @@ export class McpRegistryService {
       return fail('forbidden', 'Session access denied');
     }
     try {
+      const validateToolDraft = async (draft: { draftId: string; revision: number; state: string; server: Cfg }) => {
+        let validation: z.infer<typeof mcpDraftValidationResultSchema>;
+        let currentDraft = draft;
+        try {
+          const checked = await this.validate(session.user_id, draft.draftId, { machineId: runnerId, revision: draft.revision });
+          const raw = checked.validation as Cfg;
+          const rawTools = Array.isArray(raw.tools) ? (raw.tools as Cfg[]) : [];
+          const toolsTruncated =
+            rawTools.length > 100 ||
+            rawTools.some(
+              tool => typeof tool.name !== 'string' || tool.name.length > 128 || !/^[a-zA-Z0-9_.-]+$/.test(tool.name) || (typeof tool.description === 'string' && tool.description.length > 200),
+            );
+          validation = {
+            ok: raw.ok === true,
+            status: raw.status as z.infer<typeof mcpDraftValidationResultSchema>['status'],
+            tools: rawTools
+              .slice(0, 100)
+              .flatMap((tool: Cfg) =>
+                typeof tool.name === 'string' && tool.name.length <= 128 && /^[a-zA-Z0-9_.-]+$/.test(tool.name)
+                  ? [{ name: tool.name, ...(typeof tool.description === 'string' ? { description: tool.description.slice(0, 200) } : {}) }]
+                  : [],
+              ),
+            ...(toolsTruncated ? { truncated: true } : {}),
+            ...(typeof raw.error === 'string' ? { error: raw.error.slice(0, 500) } : {}),
+            oauthRequired: raw.oauthRequired === true,
+          };
+          currentDraft = { ...draft, state: checked.state };
+        } catch (error) {
+          const code = error instanceof HttpError ? error.code : 'validation_failed';
+          const status = code === 'needs_secret' ? 'needs-secret' : code === 'timeout' ? 'timeout' : 'validation-failed';
+          const message = status === 'needs-secret' ? 'One or more configured secrets are missing.' : status === 'timeout' ? 'Connection check timed out.' : 'Connection check failed.';
+          validation = { ok: false, status, tools: [], error: message, oauthRequired: false };
+          try {
+            const latest = await this.getDraft(session.user_id, draft.draftId);
+            currentDraft = { ...draft, state: latest.state };
+          } catch {
+            // The original draft response is safe to return if its status cannot be refreshed.
+          }
+        }
+        return {
+          draftId: draft.draftId,
+          revision: draft.revision,
+          draft: { ...currentDraft, server: safe(currentDraft.server) },
+          validation,
+          confirmationUrl: `/s/${encodeURIComponent(req.sessionId)}?mcp=1`,
+        };
+      };
       if (req.op === 'add') {
         const draft = await this.draft(session.user_id, req.payload, req.sessionId);
-        return send({ requestId: req.requestId, ok: true, result: { draft } });
+        return send({ requestId: req.requestId, ok: true, result: await validateToolDraft(draft as { draftId: string; revision: number; state: string; server: Cfg }) });
       }
       if (req.op === 'list') {
         const registry = await this.list(session.user_id);
@@ -1435,8 +1714,11 @@ export class McpRegistryService {
           },
         });
       }
-      const draft = await this.updateDraft(session.user_id, req.payload.draftId, req.payload.update, req.sessionId);
-      return send({ requestId: req.requestId, ok: true, result: { draft: { draftId: draft.draftId, revision: draft.revision, state: draft.state, server: draft.server } } });
+      const draft =
+        'serverId' in req.payload
+          ? await this.updateExistingServerDraft(session.user_id, req.payload.serverId, req.payload.update, req.sessionId, runnerId)
+          : await this.updateDraft(session.user_id, req.payload.draftId, req.payload.update, req.sessionId);
+      return send({ requestId: req.requestId, ok: true, result: await validateToolDraft(draft as { draftId: string; revision: number; state: string; server: Cfg }) });
     } catch (err) {
       if (err instanceof HttpError) {
         const code =
@@ -1834,7 +2116,12 @@ export function registerMcpRegistryApi(app: FastifyInstance, service: McpRegistr
     const query = req.query as { revision?: string };
     return service.remove(req.user!.id, (req.params as { id: string }).id, Number(body.revision ?? query.revision));
   });
-  app.post('/api/mcp/registry/drafts', async (req, reply) => reply.code(201).send(await service.draft(req.user!.id, req.body)));
+  app.post('/api/mcp/registry/drafts', async (req, reply) => {
+    const body = parse(apiDraftCreateRequestSchema, req.body);
+    const sessionId = body.sessionId;
+    const created = sessionId ? await service.draftForSession(req.user!.id, req.body, sessionId) : await service.draft(req.user!.id, req.body);
+    return reply.code(201).send(created);
+  });
   app.get('/api/mcp/registry/drafts/:id', async req => service.getDraft(req.user!.id, (req.params as { id: string }).id));
   app.patch('/api/mcp/registry/drafts/:id', async req => service.updateDraft(req.user!.id, (req.params as { id: string }).id, req.body));
   app.post('/api/mcp/registry/drafts/:id/validate', async req => {

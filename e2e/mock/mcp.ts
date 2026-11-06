@@ -129,7 +129,7 @@ export function mcpSpecs(device: 'desktop' | 'phone') {
       await page.goto('/');
       const phone = device === 'phone';
       if (phone) {
-        await expect(page.getByRole('list', { name: 'Машины' })).toBeAttached();
+        await expect(page.getByRole('complementary', { name: 'Сессии и проекты' })).toBeAttached();
         await expect(page.getByRole('img', { name: 'Проблемы MCP: 2' }).first()).toBeVisible();
         await noHScroll(page);
         await shot(page, `mcp-${device}-${theme}-1-tree`);

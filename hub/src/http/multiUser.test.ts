@@ -632,7 +632,7 @@ describe('multi-user: rate limits of the spec', () => {
   it('login start: 21st a minute → 429; the invite page: 21st → 429', async () => {
     const login = [];
     for (let i = 0; i < 21; i++) login.push((await t.hub.app.inject({ method: 'GET', url: '/auth/login' })).statusCode);
-    expect(login.slice(0, 20).every(c => c === 302)).toBe(true);
+    expect(login.slice(0, 20).every(c => c === 200)).toBe(true);
     expect(login[20]).toBe(429);
     const inv = [];
     for (let i = 0; i < 21; i++) inv.push((await t.hub.app.inject({ method: 'GET', url: `/invite/${'x'.repeat(43)}` })).statusCode);

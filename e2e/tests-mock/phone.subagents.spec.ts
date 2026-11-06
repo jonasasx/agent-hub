@@ -8,7 +8,7 @@ test('телефон: «Субагенты 4» → sheet → the subagent chat o
   await hub.install(page);
   await page.goto('about:blank');
   await page.goto('/');
-  await expect(page.getByRole('list', { name: 'Машины' })).toBeAttached();
+  await expect(page.getByRole('complementary', { name: 'Сессии и проекты' })).toBeAttached();
   await page
     .locator('.side-scroll .srow', { hasText: hub.session(1).title })
     .first()
@@ -42,7 +42,7 @@ test('телефон: nested subagent → «назад» to the parent subagent;
   await hub.install(page);
   await page.goto('about:blank');
   await page.goto('/');
-  await expect(page.getByRole('list', { name: 'Машины' })).toBeAttached();
+  await expect(page.getByRole('complementary', { name: 'Сессии и проекты' })).toBeAttached();
   const parent = hub.session(1).title;
   await page.locator('.side-scroll .srow', { hasText: parent }).first().click();
   await page.getByRole('button', { name: /Субагенты 4/ }).click();
@@ -67,7 +67,7 @@ test('телефон: no label over the user message in a session, the bubble on
   const hub = new MockHub({ tabs: [1], subagents: true });
   await hub.install(page);
   await page.goto('/');
-  await expect(page.getByRole('list', { name: 'Машины' })).toBeAttached();
+  await expect(page.getByRole('complementary', { name: 'Сессии и проекты' })).toBeAttached();
   await page
     .locator('.side-scroll .srow', { hasText: hub.session(1).title })
     .first()

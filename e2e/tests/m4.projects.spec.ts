@@ -30,7 +30,7 @@ async function start(page: Page, path = '/') {
   await page.context().addCookies([{ name: 'ah_session', value: COOKIE, url: BASE, secure: BASE.startsWith('https'), httpOnly: true, sameSite: 'Lax' }]);
   await page.goto(path);
   // the app is ready when the machines footer is rendered (hidden under the chat on the phone)
-  await page.getByRole('list', { name: 'Машины' }).waitFor({ state: 'attached' });
+  await page.getByRole('complementary', { name: 'Сессии и проекты' }).waitFor({ state: 'attached' });
 }
 const dialog = (page: Page) => page.getByRole('dialog', { name: 'Быстрый переход' });
 async function search(page: Page, q: string) {

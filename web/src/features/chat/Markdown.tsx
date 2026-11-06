@@ -75,23 +75,37 @@ function LocalImage({ path, alt }: { path: string; alt: string }) {
   );
 }
 
+/**
+ * The file viewer (task 6.5) gives pictures of a Markdown file a resolver: it turns the path written in the document into
+ * the URL of the file endpoint, or null for a picture outside the root (then the picture is not loaded).
+ */
+export const FileImageContext = createContext<((path: string) => string | null) | null>(null);
+
+function MdImg({ src, alt }: { src?: unknown; alt?: string }) {
+  const resolve = useContext(FileImageContext);
+  const url = decodePath(typeof src === 'string' ? src : '');
+  if (resolve && !/^https?:\/\//i.test(url)) {
+    const href = resolve(url);
+    if (href) return <img className="md-file-img" src={href} alt={alt ?? ''} loading="lazy" />;
+    return <span className="md-img-blocked">{alt ? `[${alt}]` : '[изображение вне папки]'}</span>;
+  }
+  if (isAbsoluteLocalPath(url)) return <LocalImage path={url} alt={alt ?? ''} />;
+  if (/^https?:\/\//i.test(url))
+    return (
+      <a href={url} target="_blank" rel="noreferrer noopener" className="md-ext-img">
+        {alt || 'изображение'} ({url})
+      </a>
+    );
+  return <span>{alt ? `[${alt}]` : '[изображение]'}</span>;
+}
+
 const components: Components = {
   a: ({ href, children }) => (
     <a href={href} target="_blank" rel="noreferrer noopener">
       {children}
     </a>
   ),
-  img: ({ src, alt }) => {
-    const url = decodePath(typeof src === 'string' ? src : '');
-    if (isAbsoluteLocalPath(url)) return <LocalImage path={url} alt={alt ?? ''} />;
-    if (/^https?:\/\//i.test(url))
-      return (
-        <a href={url} target="_blank" rel="noreferrer noopener" className="md-ext-img">
-          {alt || 'изображение'} ({url})
-        </a>
-      );
-    return <span>{alt ? `[${alt}]` : '[изображение]'}</span>;
-  },
+  img: ({ src, alt }) => <MdImg src={src} alt={alt} />,
 };
 
 /** The Markdown parser percent-encodes backslashes of a destination: `C:%5CUsers` → `C:\Users`. */

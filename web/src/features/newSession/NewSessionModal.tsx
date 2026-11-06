@@ -1,3 +1,4 @@
+import { colorVar } from '../sessions/status';
 /**
  * «Новая сессия» (docs/prototype.html modal() type 'new').
  * Requirement (sessions): Запуск сессии из UI — runner (offline ones unavailable), directory (default — the vault root
@@ -315,7 +316,7 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
               <div className="project-list">
                 <button type="button" className={`seg-opt${project === 'auto' ? ' on' : ''}`} onClick={() => setProject('auto')} title="Хаб сам определяет проект по сообщению и рабочему каталогу">
                   <b>✦ Определи сам</b>
-                  <span>Хаб сам определит проект; пока группирует по рабочему каталогу.</span>
+                  <span>Точное совпадение определит проект; предположение можно подтвердить в сессии.</span>
                 </button>
                 {projects
                   .filter(p => !p.archived)
@@ -329,7 +330,12 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
                         onClick={() => setProject(p.id)}
                         title={binding?.path ?? `Каталога на ${runner?.name ?? 'машине'} нет`}
                       >
-                        <b>{p.name}</b>
+                        <div className="project-option-heading">
+                          <span className="pdot project-initial" aria-hidden="true" style={{ background: colorVar(p.colorKey), display: 'inline-grid' }}>
+                            {Array.from(p.name)[0]?.toLocaleUpperCase()}
+                          </span>
+                          <b>{p.name}</b>
+                        </div>
                         {!binding && <span>нет каталога на {runner?.name ?? 'машине'} — привязать</span>}
                       </button>
                     );

@@ -4,7 +4,9 @@ import { WebSocket } from 'ws';
 import { ALLOWED_EMAIL, PUBLIC_URL, cookieValue, startTestHub, type TestHub } from '../test/harness.js';
 import { hashSecret } from '../auth/secrets.js';
 import { isAllowedOrigin, safeReturnPath } from './auth.js';
+import { contentSecurityPolicy } from './csp.js';
 import { addRunner } from '../runners/repo.js';
+import { createInvite } from '../users/repo.js';
 import { upsertUser } from '../auth/sessions.js';
 
 function wsHandshake(url: string, headers: Record<string, string>): Promise<number> {
@@ -40,9 +42,9 @@ describe('auth helpers', () => {
   ])('safeReturnPath(%j) = %s', (input, out) => expect(safeReturnPath(input, PUBLIC_URL)).toBe(out));
 
   it('accepts only the exact public origin', () => {
-    expect(isAllowedOrigin(PUBLIC_URL, PUBLIC_URL)).toBe(true);
-    expect(isAllowedOrigin('https://evil.example', PUBLIC_URL)).toBe(false);
-    expect(isAllowedOrigin(undefined, PUBLIC_URL)).toBe(false);
+    expect(isAllowedOrigin(PUBLIC_URL, [PUBLIC_URL])).toBe(true);
+    expect(isAllowedOrigin('https://evil.example', [PUBLIC_URL])).toBe(false);
+    expect(isAllowedOrigin(undefined, [PUBLIC_URL])).toBe(false);
   });
 });
 
@@ -55,8 +57,19 @@ describe('spec auth (integration)', () => {
 
   const app = () => t.hub.app;
 
+  it('hub without Keycloak shows the login page with one Google button', async () => {
+    const r = await app().inject({ method: 'GET', url: '/auth/login' });
+    expect(r.statusCode).toBe(200);
+    expect(r.body).toContain('Agent Hub');
+    expect(r.body).toContain('Войти через Google');
+    expect(r.body).toContain('/auth/login?provider=google');
+    expect(r.body).not.toContain('provider=keycloak');
+    expect(r.headers.location).toBeUndefined();
+    expect(r.headers['set-cookie']).toBeUndefined();
+  });
+
   it('Вход разрешённым аккаунтом: returns to the original address with a 30-day session cookie', async () => {
-    const start = await app().inject({ method: 'GET', url: '/auth/login?return=/s/abc' });
+    const start = await app().inject({ method: 'GET', url: '/auth/login?provider=google&return=/s/abc' });
     expect(start.statusCode).toBe(302);
     const loc = new URL(start.headers.location as string);
     expect(loc.origin).toBe(t.oidc.issuer);
@@ -83,7 +96,7 @@ describe('spec auth (integration)', () => {
   });
 
   it('open redirect with a TAB is neutralised end to end: return=%2F%09%2Fevil.example → /', async () => {
-    const start = await app().inject({ method: 'GET', url: '/auth/login?return=%2F%09%2Fevil.example' });
+    const start = await app().inject({ method: 'GET', url: '/auth/login?provider=google&return=%2F%09%2Fevil.example' });
     const { code, state } = t.oidc.authorize(start.headers.location as string, { email: ALLOWED_EMAIL });
     const cb = await app().inject({
       method: 'GET',
@@ -113,13 +126,13 @@ describe('spec auth (integration)', () => {
   });
 
   it('forwards prompt=select_account for «Войти другим аккаунтом»', async () => {
-    const r = await app().inject({ method: 'GET', url: '/auth/login?prompt=select_account' });
+    const r = await app().inject({ method: 'GET', url: '/auth/login?provider=google&prompt=select_account' });
     expect(new URL(r.headers.location as string).searchParams.get('prompt')).toBe('select_account');
   });
 
   it('Вход чужим аккаунтом отклоняется (multi-user: «Доступ только по приглашению»): 403 page with the address, no session', async () => {
     const before = await t.tdb.pool.query('SELECT count(*)::int AS n FROM auth_sessions');
-    const start = await app().inject({ method: 'GET', url: '/auth/login' });
+    const start = await app().inject({ method: 'GET', url: '/auth/login?provider=google' });
     const { code, state } = t.oidc.authorize(start.headers.location as string, { email: 'stranger@example.com' });
     const cb = await app().inject({
       method: 'GET',
@@ -140,7 +153,7 @@ describe('spec auth (integration)', () => {
 
   it('a denied login also drops an existing session in this browser', async () => {
     const session = await t.login();
-    const start = await app().inject({ method: 'GET', url: '/auth/login' });
+    const start = await app().inject({ method: 'GET', url: '/auth/login?provider=google' });
     const { code, state } = t.oidc.authorize(start.headers.location as string, { email: 'stranger@example.com' });
     await app().inject({
       method: 'GET',
@@ -157,7 +170,7 @@ describe('spec auth (integration)', () => {
 
   it('Подмена state: 400, no session', async () => {
     const before = await t.tdb.pool.query('SELECT count(*)::int AS n FROM auth_sessions');
-    const start = await app().inject({ method: 'GET', url: '/auth/login' });
+    const start = await app().inject({ method: 'GET', url: '/auth/login?provider=google' });
     const { code } = t.oidc.authorize(start.headers.location as string, { email: ALLOWED_EMAIL });
     const cb = await app().inject({
       method: 'GET',
@@ -172,7 +185,7 @@ describe('spec auth (integration)', () => {
   });
 
   it('rejects a callback without the login cookie and a tampered cookie', async () => {
-    const start = await app().inject({ method: 'GET', url: '/auth/login' });
+    const start = await app().inject({ method: 'GET', url: '/auth/login?provider=google' });
     const { code, state } = t.oidc.authorize(start.headers.location as string, { email: ALLOWED_EMAIL });
     const noCookie = await app().inject({ method: 'GET', url: `/auth/callback?code=${code}&state=${state}` });
     expect(noCookie.statusCode).toBe(400);
@@ -274,5 +287,135 @@ describe('spec auth (integration)', () => {
     const session = await t.login();
     expect(await wsHandshake(`${t.wsBase}/ws/ui`, { Origin: 'https://evil.example', Cookie: `ah_session=${session}` })).toBe(403);
     expect(await wsHandshake(`${t.wsBase}/ws/ui`, { Origin: PUBLIC_URL, Cookie: `ah_session=${session}` })).toBe(101);
+  });
+});
+
+describe('public-addresses: the hub on PUBLIC_URL and EXTRA_PUBLIC_URLS', () => {
+  const SECOND = 'https://second.example';
+  let t: TestHub;
+  beforeAll(async () => {
+    t = await startTestHub({ env: { EXTRA_PUBLIC_URLS: `${SECOND}/` } });
+  });
+  afterAll(async () => t.close());
+  const second = { host: 'second.example', 'x-forwarded-proto': 'https' };
+
+  it('Вход на дополнительном адресе: redirect_uri and callback on that address', async () => {
+    const start = await t.hub.app.inject({ method: 'GET', url: '/auth/login?provider=google&return=/s/abc', headers: second });
+    const loc = new URL(start.headers.location as string);
+    expect(loc.searchParams.get('redirect_uri')).toBe(`${SECOND}/auth/callback`);
+    const oidcCookie = cookieValue(start.headers['set-cookie'], 'ah_oidc')!;
+    const { code, state } = t.oidc.authorize(loc.href, { email: ALLOWED_EMAIL });
+    const cb = await t.hub.app.inject({ method: 'GET', url: `/auth/callback?code=${code}&state=${state}`, headers: second, cookies: { ah_oidc: decodeURIComponent(oidcCookie) } });
+    expect(cb.statusCode).toBe(302);
+    expect(cb.headers.location).toBe('/s/abc');
+  });
+
+  it('Неизвестный хост: redirect_uri on PUBLIC_URL', async () => {
+    const start = await t.hub.app.inject({ method: 'GET', url: '/auth/login?provider=google', headers: { host: 'evil.example', 'x-forwarded-proto': 'https' } });
+    expect(new URL(start.headers.location as string).searchParams.get('redirect_uri')).toBe(`${PUBLIC_URL}/auth/callback`);
+  });
+
+  it('Origin дополнительного адреса: HTTP and /ws/ui accept it, others get 403', async () => {
+    expect((await t.hub.app.inject({ method: 'POST', url: '/auth/logout', headers: { origin: SECOND } })).statusCode).toBe(204);
+    expect((await t.hub.app.inject({ method: 'POST', url: '/auth/logout', headers: { origin: 'https://evil.example' } })).statusCode).toBe(403);
+    const session = await t.login();
+    expect(await wsHandshake(`${t.wsBase}/ws/ui`, { Origin: SECOND, Cookie: `ah_session=${session}` })).toBe(101);
+    expect(await wsHandshake(`${t.wsBase}/ws/ui`, { Origin: 'https://evil.example', Cookie: `ah_session=${session}` })).toBe(403);
+  });
+
+  it('CSP: connect-src lists every public address', () => {
+    expect(t.config.publicOrigins).toEqual([PUBLIC_URL, SECOND]);
+    expect(contentSecurityPolicy(t.config.publicOrigins, [])).toContain("connect-src 'self' wss://agents.test.example wss://second.example");
+  });
+});
+
+describe('Keycloak per public address', () => {
+  const allowed = 'https://agents.ivolynkin.ru';
+  const hidden = 'https://getagenthub.dev';
+  let t: TestHub;
+  beforeAll(async () => {
+    t = await startTestHub({
+      keycloak: true,
+      env: { PUBLIC_URL: allowed, EXTRA_PUBLIC_URLS: hidden, OIDC_KEYCLOAK_PUBLIC_URLS: allowed, OIDC_KEYCLOAK_LABEL: 'OneCell' },
+    });
+  });
+  afterAll(async () => t.close());
+  const get = (path: string, base = hidden) => t.hub.app.inject({ method: 'GET', url: path, headers: { host: new URL(base).host, 'x-forwarded-proto': 'https' } });
+
+  it('hidden address shows the Agent Hub login page with only Google', async () => {
+    const r = await get('/auth/login?return=/s/abc&prompt=select_account');
+    expect(r.statusCode).toBe(200);
+    expect(r.body).toContain('Agent Hub');
+    expect(r.body).toContain('Войти через Google');
+    expect(r.body).toContain('/auth/login?provider=google&amp;return=%2Fs%2Fabc&amp;prompt=select_account');
+    expect(r.body).not.toContain('OneCell');
+    expect(r.body).not.toContain('provider=keycloak');
+    expect(r.headers.location).toBeUndefined();
+    expect(r.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('Google button on the hidden address starts Google with its own callback', async () => {
+    const r = await get('/auth/login?provider=google');
+    expect(r.statusCode).toBe(302);
+    const location = new URL(r.headers.location!);
+    expect(location.origin).toBe(t.oidc.issuer);
+    expect(location.searchParams.get('redirect_uri')).toBe(`${hidden}/auth/callback`);
+  });
+
+  it('allowed address offers Google and OneCell', async () => {
+    const r = await get('/auth/login', allowed);
+    expect(r.statusCode).toBe(200);
+    expect(r.body).toContain('Войти через Google');
+    expect(r.body).toContain('Войти через OneCell');
+  });
+
+  it('explicit Keycloak preserves the path and query on the first allowed origin', async () => {
+    const path = '/auth/login?provider=keycloak&return=/s/abc&prompt=select_account';
+    const r = await get(path);
+    expect(r.statusCode).toBe(302);
+    expect(r.headers.location).toBe(`${allowed}${path}`);
+    expect(r.headers['set-cookie']).toBeUndefined();
+    const start = await get(path, allowed);
+    expect(new URL(start.headers.location!).origin).toBe(t.keycloak!.issuer);
+  });
+
+  it('Keycloak invites redirect both entry points after validation', async () => {
+    const admin = await upsertUser(t.tdb.db, ALLOWED_EMAIL);
+    const { code } = await createInvite(t.tdb.db, admin.id, 'invite@example.com', 'keycloak');
+    for (const path of [`/invite/${code}?return=/s/abc`, `/auth/login?invite=${code}&return=/s/abc`]) {
+      const r = await get(path);
+      expect(r.statusCode).toBe(302);
+      expect(r.headers.location).toBe(`${allowed}${path}`);
+    }
+    expect((await get(`/invite/${code}`, allowed)).statusCode).toBe(200);
+    await t.tdb.pool.query("UPDATE invites SET expires_at = now() - interval '1 day'");
+    for (const path of [`/invite/${code}`, `/auth/login?invite=${code}&provider=keycloak`]) {
+      expect((await get(path)).statusCode).toBe(410);
+    }
+    expect((await get('/auth/login?invite=missing&provider=keycloak')).statusCode).toBe(404);
+    expect((await get('/invite/missing')).statusCode).toBe(404);
+  });
+
+  it.each(['', '&provider=keycloak'])('desktop on hidden address starts Google (%s)', async provider => {
+    const path = `/auth/desktop/start?code_challenge=${'a'.repeat(43)}&code_challenge_method=S256&state=${'b'.repeat(22)}${provider}`;
+    const r = await get(path);
+    expect(r.statusCode).toBe(302);
+    const location = new URL(r.headers.location!);
+    expect(location.origin).toBe(t.oidc.issuer);
+    expect(location.searchParams.get('redirect_uri')).toBe(`${hidden}/auth/desktop/callback`);
+    expect((await get(path.split('&provider=')[0]!, allowed)).statusCode).toBe(200);
+  });
+
+  it('empty list offers both providers on every public address', async () => {
+    const unrestricted = await startTestHub({ keycloak: true, env: { PUBLIC_URL: allowed, EXTRA_PUBLIC_URLS: hidden } });
+    try {
+      for (const base of [allowed, hidden]) {
+        const r = await unrestricted.hub.app.inject({ method: 'GET', url: '/auth/login', headers: { host: new URL(base).host, 'x-forwarded-proto': 'https' } });
+        expect(r.statusCode).toBe(200);
+        expect(r.body).toContain('provider=keycloak');
+      }
+    } finally {
+      await unrestricted.close();
+    }
   });
 });

@@ -1,3 +1,5 @@
+import { ProjectActions } from '../projects/ProjectActions';
+import { ProjectSuggestion } from '../projects/ProjectSuggestion';
 /**
  * Chat of one session (docs/prototype.html chat(), banner(), composer()).
  * Requirements (sessions): Обмен сообщениями; Карточка разрешения; Прерывание хода; Смена режима прав и модели на
@@ -22,6 +24,7 @@ import { cancelResume, confirmResume, decide, idleLabel, interrupt, loadOlder, r
 import { ChatItemView, ItemBoundary } from './ChatItems';
 import { AgentProvider } from './agentName';
 import { ProviderIcon } from './ProviderIcon';
+import { SessionTitle } from './SessionTitle';
 import { ProjectLine } from '../projects/ProjectButton';
 import { ImageSourceContext, Markdown } from './Markdown';
 import { buildChat, finishedMessageIds, knownLocalImages, matchPending, pendingSlot, type Undelivered } from './transcript';
@@ -39,6 +42,8 @@ import { HeadSubscription } from '../subscriptions/HeadSubscription';
 import { LimitChip } from '../limits/LimitChip';
 import { switchSubscription } from '../subscriptions/actions';
 import { McpButton, McpMenuItem, McpPanelHost } from '../mcp/McpViews';
+import { ICON_FOLDER_BTN } from '../files/fileIcons';
+import { openFilesForSession } from '../files/open';
 
 /**
  * Current time for «уснёт через N мин» (D11, M2.1): N = ceil((sleepsAt − now) / 1 min), so the component re-renders
@@ -311,6 +316,7 @@ function ClassLine({ s }: { s: SessionView }) {
   return (
     <div className="classline">
       <ProjectLine s={s} />
+      {s.catalogProject && <ProjectActions project={s.project} total={1} />}
       {!ro && <IdleControl s={s} />}
     </div>
   );
@@ -345,6 +351,7 @@ function PhoneInfo({ s }: { s: SessionView }) {
   return (
     <div className="classline phone-info" role={short ? 'status' : undefined}>
       <ProjectLine s={s} note={short ?? undefined} noteTitle={long ?? undefined} />
+      {s.catalogProject && <ProjectActions project={s.project} total={1} />}
       <SubagentsButton s={s} compact />
       <McpButton s={s} compact />
       <LimitChip s={s} phone />
@@ -787,7 +794,7 @@ export function Chat({ session: s, paneId }: { session: SessionView; paneId: str
       <div className="chat-head">
         <div className="chat-title">
           <div className="title-row">
-            <span className="title-text">{s.title}</span>
+            <SessionTitle sessionId={s.id} title={s.title} />
             {s.project.id && (
               <button
                 type="button"
@@ -803,7 +810,14 @@ export function Chat({ session: s, paneId }: { session: SessionView; paneId: str
             </span>
           </div>
           <span className="sub mono">
-            {runnerName} · {s.cwd ?? '—'}
+            {runnerName} ·{' '}
+            {s.cwd ? (
+              <button type="button" className="fx-cwd" title="Показать папку сессии в «Файлах»" onClick={() => openFilesForSession(s.id)}>
+                {s.cwd}
+              </button>
+            ) : (
+              '—'
+            )}
             {(s.originSource ?? s.source) !== 'hub' && ` · ${SOURCE_LABEL[s.originSource ?? s.source]}`}
             {s.isDriveImport && (s.originSource ?? s.source) !== 'drive_import' && (
               <span className="drive-tag" title="Сессия перенесена импортом из Google Drive (vault-sessions)">
@@ -852,6 +866,11 @@ export function Chat({ session: s, paneId }: { session: SessionView; paneId: str
             <Glyph status={st} unread={s.unread} label={statusText(s, st)} />
             {statusText(s, st)}
           </span>
+          {s.cwd && (
+            <button type="button" className="btn fx-files-btn" title="Папка сессии в панели «Файлы»" onClick={() => openFilesForSession(s.id)}>
+              {ICON_FOLDER_BTN} Файлы
+            </button>
+          )}
           <SubagentsButton s={s} />
           <McpButton s={s} />
           <ModeModelSelects s={s} disabled={ro} inline />
@@ -870,6 +889,7 @@ export function Chat({ session: s, paneId }: { session: SessionView; paneId: str
       ) : (
         <>
           <Banner s={s} />
+          <ProjectSuggestion s={s} />
           <ClaudeLoginBanner s={s} />
           <ResumeWarning s={s} />
           <ClassLine s={s} />

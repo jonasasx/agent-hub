@@ -89,11 +89,17 @@ export const UPDATE_RETRY_INSTALLING_MS = 60 * 60_000;
  * except `sha_mismatch`: the same build would fail again; `installing` — the agent is restarting into it (a failed start
  * is reported by the old version right after welcome), retried after 1 h without a result.
  */
-export function updateOfferHeld(state: RunnerUpdateState | null, version: string, nowMs = Date.now()): boolean {
+export function updateOfferHeld(state: RunnerUpdateState | null, version: string, sha256: string, nowMs = Date.now()): boolean {
   if (!state || state.version !== version) return false;
   const age = nowMs - Date.parse(state.at);
   const fresh = (ms: number) => !(age >= ms); // an unparsable `at` counts as fresh
-  if (state.status === 'failed') return (state.error ?? '').startsWith('sha_mismatch') || fresh(UPDATE_RETRY_FAILED_MS);
+  if (state.status === 'failed') {
+    if ((state.error ?? '').startsWith('sha_mismatch')) {
+      const expectedSha = state.sha256 ?? state.error?.match(/^sha_mismatch:\s*expected\s+([a-f\d]{64})\b/i)?.[1];
+      return !expectedSha || expectedSha === sha256;
+    }
+    return fresh(UPDATE_RETRY_FAILED_MS);
+  }
   if (state.status === 'installing') return fresh(UPDATE_RETRY_INSTALLING_MS);
   return false;
 }
@@ -267,10 +273,10 @@ export class AgentGateway {
     const r = await getRunner(this.opts.db, runnerId);
     if (!r?.agent_version || !protocolAtLeast(r.protocol_version, AGENT_UPDATE_PROTOCOL) || !versionLess(r.agent_version, build.version)) return false;
     // A failed update is not retried on every reconnect, an update in progress is not offered twice.
-    if (updateOfferHeld(r.update_state, build.version)) return false;
+    if (updateOfferHeld(r.update_state, build.version, build.sha256)) return false;
     if (o.periodic && r.update_state?.version === build.version && (r.update_state.status === 'sent' || r.update_state.status === 'waiting')) return false;
     conn.send('agent.update', { version: build.version, sha256: build.sha256, url: build.url });
-    await this.setUpdate(runnerId, { version: build.version, status: 'sent', error: null, at: new Date().toISOString() });
+    await this.setUpdate(runnerId, { version: build.version, sha256: build.sha256, status: 'sent', error: null, at: new Date().toISOString() });
     this.opts.log.info({ runnerId, from: r.agent_version, to: build.version }, 'agent update offered');
     return true;
   }
@@ -482,7 +488,9 @@ export class AgentGateway {
       if (Object.keys(set).length) await this.opts.db.updateTable('runners').set(set).where('id', '=', conn.runnerId).execute();
     } else {
       const p = m.payload;
-      await this.setUpdate(conn.runnerId, { version: p.version, status: p.status, error: p.error ?? null, at: new Date().toISOString() });
+      const runner = await getRunner(this.opts.db, conn.runnerId);
+      const sha256 = runner?.update_state?.version === p.version ? runner.update_state.sha256 : undefined;
+      await this.setUpdate(conn.runnerId, { version: p.version, ...(sha256 ? { sha256 } : {}), status: p.status, error: p.error ?? null, at: new Date().toISOString() });
       if (p.status === 'failed') this.opts.log.warn({ runnerId: conn.runnerId, version: p.version, error: p.error }, 'agent update failed');
     }
     await this.emitStatus(conn.runnerId);

@@ -26,9 +26,11 @@ export function mcpErrorText(err: unknown): { message: string; code: string } {
     mcp_unknown_server: 'Такого сервера нет в последнем снимке — нажмите «Обновить»',
     probe_busy: 'Проверка уже идёт',
     concurrent_external: 'Сессия сейчас открыта вне хаба',
+    revision_conflict: 'Черновик изменился на сервере. Его актуальная версия загружена; проверьте данные и повторите действие.',
   };
   // agent_outdated: the spec's text plus the offer to update; else the hub's text wins
   if (err.code === 'agent_outdated') return { code: err.code, message: byCode.agent_outdated! };
+  if (err.code === 'revision_conflict') return { code: err.code, message: byCode.revision_conflict! };
   return { code: err.code, message: err.serverMessage ?? byCode[err.code] ?? (err.status === 0 ? 'Хаб не ответил. Проверьте связь и попробуйте ещё раз.' : `Не выполнено (${err.status})`) };
 }
 

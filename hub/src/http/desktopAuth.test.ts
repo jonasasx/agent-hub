@@ -142,7 +142,7 @@ describe('/auth/desktop/* (integration)', () => {
       const noCookie = await t.hub.app.inject({ method: 'GET', url: `/auth/desktop/callback?code=${code}&state=whatever` });
       expect(noCookie.statusCode).toBe(400);
       // The browser login cookie ah_oidc (path /auth) is not accepted instead of ah_desktop.
-      const browserStart = await t.hub.app.inject({ method: 'GET', url: '/auth/login' });
+      const browserStart = await t.hub.app.inject({ method: 'GET', url: '/auth/login?provider=google' });
       const oc = cookieValue(browserStart.headers['set-cookie'], 'ah_oidc');
       const g = t.oidc.authorize(browserStart.headers.location as string, { email: ALLOWED_EMAIL });
       const mixed = await t.hub.app.inject({ method: 'GET', url: `/auth/desktop/callback?code=${g.code}&state=${g.state}`, cookies: { ah_desktop: decodeURIComponent(oc!) } });
@@ -269,7 +269,7 @@ describe('/auth/desktop/* (integration)', () => {
 
   describe('Вход браузера не меняется', () => {
     it('/auth/login still redirects with the browser redirect URI', async () => {
-      const r = await t.hub.app.inject({ method: 'GET', url: '/auth/login?return=/s/x' });
+      const r = await t.hub.app.inject({ method: 'GET', url: '/auth/login?provider=google&return=/s/x' });
       expect(r.statusCode).toBe(302);
       expect(new URL(r.headers.location as string).searchParams.get('redirect_uri')).toBe(`${PUBLIC_URL}/auth/callback`);
     });

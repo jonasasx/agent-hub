@@ -38,8 +38,8 @@ describe('NewSessionModal', () => {
     expect(screen.getByLabelText('Режим прав')).toHaveValue('bypassPermissions');
     expect(screen.getByLabelText('Модель')).toHaveValue('opus');
     expect(screen.queryByLabelText('Каталог')).not.toBeInTheDocument();
-    expect(screen.getByText('Хаб сам определит проект; пока группирует по рабочему каталогу.')).toBeInTheDocument();
-    expect(screen.getAllByText(/Хаб сам определит проект/)).toHaveLength(1);
+    expect(screen.getByText('Точное совпадение определит проект; предположение можно подтвердить в сессии.')).toBeInTheDocument();
+    expect(screen.getAllByText(/Точное совпадение определит проект/)).toHaveLength(1);
     const sort = screen.getByRole('group', { name: 'Сортировка проектов' });
     expect(screen.getByRole('button', { name: 'по последнему событию' })).toHaveAttribute('aria-pressed', 'true');
     expect(within(sort).getByRole('button', { name: 'по имени' })).toHaveAttribute('aria-pressed', 'false');

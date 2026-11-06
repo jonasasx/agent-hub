@@ -178,13 +178,26 @@ const activeIn = (s: Snapshot | null | undefined) => Object.values(s?.panes ?? {
  * `keep` and not active in any pane — of the layout after opening, of the layout before opening (`before`; a tab the
  * new one displaced in its pane was on screen a moment ago) and of the layout remembered by «Одно окно» (`saved`).
  * `openedAt` — epoch ms of the last opening in this window (missing = never).
+ * Requirement (file-explorer): Файловые вкладки — `pinned` is the set of pinned file tabs: a preview file tab (a file
+ * tab that is not in it) goes first, a pinned file tab is evicted only like a session tab, by age. Without `pinned`
+ * every file tab counts as pinned.
  */
-export function evictionCandidate(ws: Snapshot & { saved?: Snapshot | null }, keep: SessionId, openedAt: Record<SessionId, number>, before?: Snapshot | null): SessionId | null {
+export function evictionCandidate(
+  ws: Snapshot & { saved?: Snapshot | null },
+  keep: SessionId,
+  openedAt: Record<SessionId, number>,
+  before?: Snapshot | null,
+  pinned?: ReadonlySet<string>,
+): SessionId | null {
   const tabs = allTabs(ws);
   if (tabs.length <= TAB_LIMIT) return null;
   const kept = new Set([...activeIn(ws), ...activeIn(ws.saved), ...activeIn(before)]);
   const candidates = tabs.filter(id => id !== keep && !kept.has(id));
-  candidates.sort((a, b) => (openedAt[a] ?? 0) - (openedAt[b] ?? 0));
+  const isPreview = (id: string) => !!pinned && isFileTab(id) && !pinned.has(id);
+  candidates.sort((a, b) => {
+    const byKind = Number(isPreview(b)) - Number(isPreview(a));
+    return byKind || (openedAt[a] ?? 0) - (openedAt[b] ?? 0);
+  });
   return candidates[0] ?? null;
 }
 
@@ -192,9 +205,15 @@ export function evictionCandidate(ws: Snapshot & { saved?: Snapshot | null }, ke
  * Applies the 8-tab limit of the window after `keep` was opened. `full` — nobody can be evicted (all other tabs are
  * active in panes): the caller takes the new tab back and tells the user.
  */
-export function enforceLimit(ws: Workspace, keep: SessionId, openedAt: Record<SessionId, number>, before?: Snapshot | null): { ws: Workspace; evicted: SessionId | null; full: boolean } {
+export function enforceLimit(
+  ws: Workspace,
+  keep: SessionId,
+  openedAt: Record<SessionId, number>,
+  before?: Snapshot | null,
+  pinned?: ReadonlySet<string>,
+): { ws: Workspace; evicted: SessionId | null; full: boolean } {
   if (allTabs(ws).length <= TAB_LIMIT) return { ws, evicted: null, full: false };
-  const victim = evictionCandidate(ws, keep, openedAt, before);
+  const victim = evictionCandidate(ws, keep, openedAt, before, pinned);
   if (!victim) return { ws, evicted: null, full: true };
   return { ws: closeTab(ws, victim), evicted: victim, full: false };
 }
@@ -434,4 +453,51 @@ export function parseWorkspace(raw: unknown): Workspace | null {
   if (!ids || !ids.length || ids.some(id => !w.panes![id] || !Array.isArray(w.panes![id]!.tabs))) return null;
   const focus = w.panes[w.focus] ? w.focus : ids[0]!;
   return { layout: w.layout, panes: w.panes, focus, saved: w.saved ?? null, seq: typeof w.seq === 'number' ? w.seq : ids.length + 1 };
+}
+
+// ---------- file tabs (change tool-windows-file-explorer) ----------
+
+const FILE_TAB_PREFIX = 'file:';
+
+/** Id of the tab of a file: `file:<runnerId>:<absolute path>` (the runner id has no colon, the path may). */
+export function fileTabId(runnerId: string, path: string): string {
+  return `${FILE_TAB_PREFIX}${runnerId}:${path}`;
+}
+
+export function isFileTab(id: string): boolean {
+  return id.startsWith(FILE_TAB_PREFIX);
+}
+
+/** The runner and the path of a file tab; null for any other id. */
+export function parseFileTabId(id: string): { runnerId: string; path: string } | null {
+  if (!isFileTab(id)) return null;
+  const rest = id.slice(FILE_TAB_PREFIX.length);
+  const at = rest.indexOf(':');
+  if (at <= 0 || at === rest.length - 1) return null;
+  return { runnerId: rest.slice(0, at), path: rest.slice(at + 1) };
+}
+
+/** The same for the layout remembered by «Одно окно». */
+export function stripFileTabsFromSnapshot(snap: Snapshot): Snapshot {
+  if (!Object.values(snap.panes).some(p => p.tabs.some(isFileTab))) return snap;
+  const open = allTabs(snap).filter(id => !isFileTab(id));
+  const { layout, panes, focus } = reconcileTabs({ ...snap, saved: null, seq: Object.keys(snap.panes).length + 1 }, open);
+  return { layout, panes, focus };
+}
+
+/**
+ * Without file tabs: they are local to the window and never go to the server.
+ * Requirement (file-explorer): Файловые вкладки, scenario «Раскладка на сервере».
+ */
+export function stripFileTabs(ws: Workspace): Workspace {
+  const hasFiles = Object.values(ws.panes).some(p => p.tabs.some(isFileTab));
+  const savedHasFiles = !!ws.saved && Object.values(ws.saved.panes).some(p => p.tabs.some(isFileTab));
+  if (!hasFiles && !savedHasFiles) return ws;
+  const main = hasFiles
+    ? reconcileTabs(
+        ws,
+        allTabs(ws).filter(id => !isFileTab(id)),
+      )
+    : ws;
+  return { ...main, saved: ws.saved ? stripFileTabsFromSnapshot(ws.saved) : null };
 }

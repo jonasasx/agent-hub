@@ -24,6 +24,7 @@ import {
   mcpSecretDeliveryPayload,
   mcpRegistrySessionUpdateAckPayload,
 } from './mcpRegistry.js';
+import { fsListPayload, fsReadPayload } from './files.js';
 
 /**
  * 1.1 (M3a): repl.files, side files. 1.2 (M3b): attachments, attachments.fetch, fs.read_image, fs.stat size/mtime.
@@ -43,14 +44,17 @@ import {
  * design D2): op `spawn` in peers.request (a child hub session), `resultText` in session.result (the final answer).
  * 1.13 (change `mcp-registry`): the MCP registry, gateway, secret delivery, OAuth, import preview, draft API and capabilities;
  * negotiated fs.list-dirs (projects-catalog D).
+ * 1.14 (change `tool-windows-file-explorer`, design D1): negotiated fs.browse, commands fs.list and fs.read (read-only file explorer).
  * Minor versions talk to each other (D3); images need 1.2 on the agent, subscriptions 1.4, self-update 1.5, limits 1.6,
- * MCP management 1.7, MCP sign-out 1.8, session peers 1.9, providers other than Claude 1.10, negotiated fs.list-dirs 1.13.
+ * MCP management 1.7, MCP sign-out 1.8, session peers 1.9, providers other than Claude 1.10, negotiated fs.list-dirs 1.13, fs.browse 1.14.
  */
-export const PROTOCOL_VERSION = '1.13';
+export const PROTOCOL_VERSION = '1.14';
+/** The first protocol version whose agents answer fs.list / fs.read and declare the capability `fs.browse` (tool-windows-file-explorer D1). */
+export const FILES_PROTOCOL = '1.14';
 /** First protocol version with the centralized MCP registry and gateway contracts. */
 export const MCP_REGISTRY_PROTOCOL = '1.13';
-export const AGENT_CAPABILITIES = [...MCP_REGISTRY_CAPABILITIES, 'fs.list-dirs'] as const;
-export const HUB_CAPABILITIES = [...MCP_REGISTRY_CAPABILITIES, 'fs.list-dirs'] as const;
+export const AGENT_CAPABILITIES = [...MCP_REGISTRY_CAPABILITIES, 'fs.list-dirs', 'fs.browse'] as const;
+export const HUB_CAPABILITIES = [...MCP_REGISTRY_CAPABILITIES, 'fs.list-dirs', 'fs.browse'] as const;
 /** The first protocol version whose agents give sessions `session_spawn` and send `resultText` (hub-subagents D2). */
 export const SPAWN_PROTOCOL = '1.12';
 /** The first protocol version whose agents take Codex subscriptions (provider-parity D1): `provider` in a subscription cred, provider.credential.update. */
@@ -863,6 +867,8 @@ export const hubMessageSchema = z.discriminatedUnion('type', [
   command('file.restore', fileRestorePayload),
   command('fs.stat', fsStatPayload),
   command('fs.list-dirs', fsListDirsPayload),
+  command('fs.list', fsListPayload),
+  command('fs.read', fsReadPayload),
   command('fs.read_image', fsReadImagePayload),
   command('attachments.fetch', attachmentsFetchPayload),
   command('handoff.generate', handoffGeneratePayload),

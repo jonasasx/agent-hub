@@ -10,7 +10,7 @@ import { useCallback, useEffect, useId, useState } from 'react';
 import { ApiError, api } from '../../api/client';
 import type { RunnerDetail, RunnerView } from '../../api/types';
 import { useStore } from '../../store';
-import { formatLastSeen } from '../machines/RunnerFooter';
+import { formatLastSeen } from '../machines/runnerInfo';
 import { CommandBox, MacDiskWarning } from '../machines/EnrollModal';
 import { claudeLoginCommand, needsClaudeLogin, osFamily } from '../machines/machines';
 import { useUnsavedInput } from '../update/unsaved';
@@ -102,7 +102,7 @@ function MachineCard({ r, agentVersion, onChange }: { r: RunnerView; agentVersio
   };
   const uninstall = disabled?.uninstallCommand;
   return (
-    <li className={`mcard${off ? ' disabled' : ''}`} aria-label={r.name}>
+    <li className={`mcard${off ? ' disabled' : ''}`} aria-label={r.name} data-runner={r.id} tabIndex={-1}>
       <div className="mc-head">
         <span className={`dot ${st.cls}`} aria-hidden="true" />
         {renaming ? (

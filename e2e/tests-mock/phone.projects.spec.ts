@@ -7,7 +7,7 @@ test('Строка проекта на телефоне: ≥ 40 px, the evidence
   const hub = new MockHub({ tabs: [1], projects: true });
   await hub.install(page);
   await page.goto('/');
-  await expect(page.getByRole('list', { name: 'Машины' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Сессии и проекты' })).toBeVisible();
   const proj = page.locator('.prow', { hasText: '04-copilot' });
   if ((await proj.getAttribute('aria-expanded')) !== 'true') await proj.click();
   await page.locator('.pchildren .srow', { hasText: 'Индексация Notion' }).click();

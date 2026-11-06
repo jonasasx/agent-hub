@@ -10,7 +10,7 @@ import { RUNNERS, mockFetch, resetStore, session } from '../../test/factories';
 import { Chat } from '../chat/Chat';
 import { NewSessionModal } from '../newSession/NewSessionModal';
 import { addFiles, useAttachments } from './attachments';
-import { Lightbox, useLightbox } from './ImagePreview';
+import { ImageGroup, Lightbox, picOf, useLightbox } from './ImagePreview';
 import type { Codec } from './normalize';
 
 const SHA = (n: number) => String(n).repeat(64).slice(0, 64);
@@ -82,23 +82,24 @@ describe('images from the agent (3.8)', () => {
   });
 });
 
-describe('lightbox (3.15)', () => {
+describe('lightbox (3.15, image-viewer)', () => {
   beforeEach(resetStore);
   afterEach(() => vi.unstubAllGlobals());
 
-  it('Несколько картинок в сообщении: → and ← step through the message images, Esc closes', async () => {
+  it('Листание картинок сессии: → and ← step through all images of the session, Esc closes', async () => {
     show(session(), screenshotEvents());
     const msg = screen.getByText('что на картинках?').closest('.msg')!;
     await userEvent.click(within(msg as HTMLElement).getByRole('button', { name: 'Открыть изображение 1 из 3' }));
-    const box = screen.getByRole('dialog', { name: 'Изображение 1 из 3' });
+    // the screenshot of the tool comes first in the feed
+    const box = screen.getByRole('dialog', { name: 'Изображение 2 из 4' });
     expect(box.querySelector('.lb-stage img')).toHaveAttribute('src', `/api/blobs/${SHA(2)}`);
+    expect(box.querySelector('.lb-caption')).toHaveTextContent('2 / 4');
     expect(within(box).getByRole('link', { name: 'Открыть оригинал' })).toHaveAttribute('target', '_blank');
-    await userEvent.keyboard('{ArrowRight}');
-    expect(screen.getByRole('dialog', { name: 'Изображение 2 из 3' })).toBeInTheDocument();
-    await userEvent.keyboard('{ArrowRight}{ArrowRight}');
-    expect(screen.getByRole('dialog', { name: 'Изображение 3 из 3' })).toBeInTheDocument();
     await userEvent.keyboard('{ArrowLeft}');
-    expect(screen.getByRole('dialog', { name: 'Изображение 2 из 3' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Изображение 1 из 4' }).querySelector('.lb-stage img')).toHaveAttribute('src', `/api/blobs/${SHA(1)}`);
+    await userEvent.keyboard('{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}');
+    expect(screen.getByRole('dialog', { name: 'Изображение 4 из 4' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Следующее' })).toBeDisabled();
     await userEvent.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
@@ -107,20 +108,123 @@ describe('lightbox (3.15)', () => {
     show(session(), screenshotEvents());
     const msg = screen.getByText('что на картинках?').closest('.msg')!;
     await userEvent.click(within(msg as HTMLElement).getByRole('button', { name: 'Открыть изображение 1 из 3' }));
-    const box = screen.getByRole('dialog');
-    fireEvent.pointerDown(box, { clientX: 300 });
-    fireEvent.pointerUp(box, { clientX: 100 });
-    expect(screen.getByRole('dialog', { name: 'Изображение 2 из 3' })).toBeInTheDocument();
+    swipe(-200);
+    expect(screen.getByRole('dialog', { name: 'Изображение 3 из 4' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Закрыть' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     act(() => useLightbox.setState({ open: true, index: 0 }));
-    fireEvent.click(document.querySelector('.lb-stage')!);
+    fireEvent.click(document.querySelector('.lb-frame')!);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     act(() => useLightbox.setState({ open: true, index: 0 }));
     act(() => window.dispatchEvent(new PopStateEvent('popstate')));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
+
+  it('a nested chat (a subagent) is a list of its own; outside a chat — the images of the group', async () => {
+    const pics = (ns: number[]) => ns.map(n => picOf({ sha256: SHA(n), size: 1000, mime: 'image/png', width: 100, height: 100 }));
+    render(
+      <>
+        <section className="chat">
+          <ImageGroup pics={pics([1])} />
+          <section className="chat sub-chat">
+            <ImageGroup pics={pics([2, 3])} />
+          </section>
+          <ImageGroup pics={pics([4])} />
+        </section>
+        <ImageGroup pics={pics([5, 6])} />
+        <Lightbox />
+      </>,
+    );
+    const buttons = document.querySelectorAll<HTMLElement>('.img-open');
+    await userEvent.click(buttons[3]!);
+    expect(screen.getByRole('dialog', { name: 'Изображение 2 из 2' }).querySelector('.lb-stage img')).toHaveAttribute('src', `/api/blobs/${SHA(4)}`);
+    await userEvent.keyboard('{Escape}');
+    await userEvent.click(buttons[1]!);
+    expect(screen.getByRole('dialog', { name: 'Изображение 1 из 2' }).querySelector('.lb-stage img')).toHaveAttribute('src', `/api/blobs/${SHA(2)}`);
+    await userEvent.keyboard('{Escape}');
+    await userEvent.click(buttons[5]!);
+    expect(screen.getByRole('dialog', { name: 'Изображение 2 из 2' }).querySelector('.lb-stage img')).toHaveAttribute('src', `/api/blobs/${SHA(6)}`);
+  });
+
+  describe('Масштаб и перемещение (stage 640×360, picture 1280×720)', () => {
+    const sizes = { clientWidth: 640, clientHeight: 360 };
+    beforeEach(() => {
+      for (const [k, v] of Object.entries(sizes))
+        Object.defineProperty(HTMLElement.prototype, k, {
+          configurable: true,
+          get(this: HTMLElement) {
+            return this.classList.contains('lb-frame') ? v : 0;
+          },
+        });
+    });
+    afterEach(() => {
+      for (const k of Object.keys(sizes)) delete (HTMLElement.prototype as unknown as Record<string, unknown>)[k];
+    });
+
+    const open = async () => {
+      show(session(), screenshotEvents());
+      await userEvent.click(within(document.querySelector('.tool-wrap') as HTMLElement).getByRole('button', { name: 'Открыть изображение' }));
+      return screen.getByRole('dialog', { name: 'Изображение 1 из 4' });
+    };
+    const pct = () => document.querySelector('.lb-pct')!.textContent;
+    const transform = () => (document.querySelector('.lb-stage img') as HTMLElement).style.transform;
+
+    it('buttons and keys: «+», «−», «Вписать», «100%», `+`, `-`, `0`', async () => {
+      const box = await open();
+      expect(pct()).toBe('50%');
+      expect(within(box).getByRole('button', { name: 'Вписать' })).toBeDisabled();
+      await userEvent.click(within(box).getByRole('button', { name: 'Увеличить' }));
+      expect(pct()).toBe('63%');
+      await userEvent.keyboard('+');
+      expect(pct()).toBe('78%');
+      await userEvent.keyboard('-');
+      expect(pct()).toBe('63%');
+      await userEvent.click(within(box).getByRole('button', { name: 'Уменьшить' }));
+      expect(pct()).toBe('50%');
+      expect(within(box).getByRole('button', { name: 'Уменьшить' })).toBeDisabled();
+      await userEvent.click(within(box).getByRole('button', { name: '100%' }));
+      expect(pct()).toBe('100%');
+      await userEvent.keyboard('0');
+      expect(pct()).toBe('50%');
+      await userEvent.keyboard('=');
+      await userEvent.click(within(box).getByRole('button', { name: 'Вписать' }));
+      expect(pct()).toBe('50%');
+    });
+
+    it('zoomed: a drag and ↑ ↓ move the picture within its edges, a swipe does not step, the drag does not close', async () => {
+      await open();
+      await userEvent.click(screen.getByRole('button', { name: '100%' }));
+      expect(transform()).toContain('translate(0px, 0px) scale(1)');
+      swipe(-200, 30);
+      expect(screen.getByRole('dialog', { name: 'Изображение 1 из 4' })).toBeInTheDocument();
+      // 1280 wide at 100 % in 640: up to 320 px each way; 720 high in 360: up to 180 px
+      expect(transform()).toContain('translate(-200px, 30px)');
+      fireEvent.click(document.querySelector('.lb-frame')!);
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      swipe(-500, 0);
+      expect(transform()).toContain('translate(-320px, 30px)');
+      await userEvent.keyboard('{ArrowDown}');
+      // 20 % of the stage height up
+      expect(transform()).toContain('translate(-320px, -42px)');
+      await userEvent.keyboard('{ArrowDown}{ArrowDown}{ArrowDown}');
+      expect(transform()).toContain('translate(-320px, -180px)');
+    });
+
+    it('the wheel zooms at the cursor', async () => {
+      await open();
+      fireEvent.wheel(document.querySelector('.lb-frame')!, { deltaY: -100, clientX: 0, clientY: 0 });
+      expect(Number(pct()!.replace('%', ''))).toBeGreaterThan(50);
+    });
+  });
 });
+
+/** A one-finger gesture on the stage: from (300, 200) by (dx, dy). */
+function swipe(dx: number, dy = 0) {
+  const stage = document.querySelector('.lb-stage')!;
+  fireEvent.pointerDown(stage, { pointerId: 1, button: 0, clientX: 300, clientY: 200 });
+  fireEvent.pointerMove(stage, { pointerId: 1, clientX: 300 + dx, clientY: 200 + dy });
+  fireEvent.pointerUp(stage, { pointerId: 1, clientX: 300 + dx, clientY: 200 + dy });
+}
 
 describe('Markdown images (3.19 web)', () => {
   beforeEach(resetStore);

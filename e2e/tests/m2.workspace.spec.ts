@@ -95,13 +95,13 @@ async function newWindow(browser: Browser): Promise<Page> {
   await ctx.addCookies([{ name: 'ah_session', value: COOKIE, url: BASE, secure: BASE.startsWith('https'), httpOnly: true, sameSite: 'Lax' }]);
   const page = await ctx.newPage();
   await page.goto('/');
-  await expect(page.getByRole('list', { name: 'Машины' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Сессии и проекты' })).toBeVisible();
   return page;
 }
 async function start(page: Page) {
   await page.context().addCookies([{ name: 'ah_session', value: COOKIE, url: BASE, secure: BASE.startsWith('https'), httpOnly: true, sameSite: 'Lax' }]);
   await page.goto('/');
-  await expect(page.getByRole('list', { name: 'Машины' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Сессии и проекты' })).toBeVisible();
 }
 /** What a window shows: tab titles per pane and the selected tab of each pane. */
 async function view(page: Page) {

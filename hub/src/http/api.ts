@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import type { CatalogDetection } from '../projects/detection.js';
 // REST API (design.md D10): sessions, chat history, runners' directories, models, sidebar, layout template.
 // Every query is scoped by req.user.id (Requirement: Данные привязаны к пользователю).
 import type { FastifyInstance, FastifyReply } from 'fastify';
@@ -5,6 +7,9 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import {
   LAYOUT_BODY_LIMIT,
+  allocateProjectColor,
+  projectColorSchema,
+  type ColorKey,
   createSessionRequestSchema,
   createUserProjectSchema,
   patchUserProjectSchema,
@@ -25,6 +30,7 @@ import {
   providerSchema,
   extraProviderSchema,
   wakeRequestSchema,
+  projectSuggestionAnswerSchema,
   type EventsPage,
   type LayoutResponse,
   type ProjectListItem,
@@ -49,6 +55,7 @@ import type { HandoffService } from '../sessions/handoff.js';
 import { getSubagent, listHubChildren, listSubagents, runFile, subagentEventsPage } from '../subagents/repo.js';
 import { listBackground } from '../subagents/background.js';
 import { searchSessions } from '../sessions/search.js';
+import { registerFileRoutes, type FsRouteOptions } from './files.js';
 
 function parse<T extends z.ZodType>(schema: T, v: unknown): z.infer<T> {
   const r = schema.safeParse(v ?? {});
@@ -74,13 +81,21 @@ export function registerApi(
     agents: AgentGateway;
     sessions: SessionService;
     handoff: HandoffService;
+    detection: CatalogDetection;
+    /** Tests: limits and timeouts of the file explorer routes. */
+    files?: Partial<FsRouteOptions>;
     /** The hub's agent build version («устарела», spec runner-enrollment). */ latestAgent: () => string | null;
   },
 ): void {
-  const { db, sessions, handoff, agents, latestAgent } = deps;
+  const { db, sessions, handoff, agents, latestAgent, detection } = deps;
 
   app.setErrorHandler((err, req, reply: FastifyReply) => {
     if (err instanceof HttpError) return reply.code(err.status).send({ ...err.details, error: err.code, message: err.message });
+    if ((err as { code?: string; constraint?: string }).code === '23505' && /^(catalog_projects_active_name|project_bindings_)/.test((err as { constraint?: string }).constraint ?? ''))
+      return reply.code(409).send({
+        error: (err as { constraint?: string }).constraint === 'catalog_projects_active_name' ? 'name_conflict' : 'binding_conflict',
+        message: (err as { constraint?: string }).constraint === 'catalog_projects_active_name' ? 'Название проекта уже используется' : 'Папка уже привязана к другому проекту',
+      });
     const e = err as { statusCode?: number; message?: string };
     if (e.statusCode === 413) return reply.code(413).send({ error: 'too_large', message: 'Тело запроса больше допустимого' });
     if (e.statusCode && e.statusCode < 500) return reply.code(e.statusCode).send({ error: 'invalid_request', message: e.message });
@@ -91,6 +106,7 @@ export function registerApi(
   const visible = (cron: '0' | '1' | undefined) => (cron === '1' ? sql<boolean>`true` : sql<boolean>`s.source <> 'cron'`);
   // hub-subagents D10: a spawned session lives under its parent («Субагенты»), not in the lists of the sidebar
   const notSpawned = sql<boolean>`s.spawned_by IS NULL`;
+  const visibleProject = sql<string | null>`CASE WHEN EXISTS (SELECT 1 FROM hidden_project_groups h WHERE h.user_id=s.user_id AND h.project_id=s.project_id) THEN NULL ELSE s.project_id END`;
   const recency = sql`COALESCE(s.last_event_at, s.created_at)`;
 
   app.get('/api/runners/:runnerId/directories', async req => {
@@ -113,6 +129,16 @@ export function registerApi(
     }
   });
 
+  registerFileRoutes(app, { db, agents, ...(deps.files ? { options: deps.files } : {}) });
+
+  app.post('/api/sessions/:id/project-suggestion', async req => {
+    const { id } = parse(z.object({ id: z.uuid() }), req.params);
+    const answer = parse(projectSuggestionAnswerSchema, req.body);
+    const { created } = await detection.answer(req.user!.id, id, answer);
+    if (created) sessions.projectsChanged(req.user!.id);
+    return { ok: true };
+  });
+
   app.get('/api/preferences/launch', async (req): Promise<{ runnerId: string | null; provider: 'claude' | 'codex' | null }> => {
     const userId = req.user!.id;
     const pref = await db.selectFrom('user_preferences').select(['last_runner_id', 'last_provider']).where('user_id', '=', userId).executeTakeFirst();
@@ -126,13 +152,18 @@ export function registerApi(
   // User-owned project catalog; separate from `projects`, which is synchronized from the legacy vault index.
   app.get('/api/catalog/projects', async (req): Promise<UserProjectView[]> => {
     const userId = req.user!.id;
-    const { sort } = parse(userProjectListQuerySchema, req.query);
+    const { sort, includeArchived } = parse(userProjectListQuerySchema, req.query);
     const [projects, activity] = await Promise.all([
-      db.selectFrom('catalog_projects').selectAll().where('user_id', '=', userId).where('archived', '=', false).execute(),
+      db
+        .selectFrom('catalog_projects')
+        .selectAll()
+        .where('user_id', '=', userId)
+        .where(includeArchived === '1' ? sql<boolean>`true` : sql<boolean>`NOT archived`)
+        .execute(),
       db
         .selectFrom('session_projects as sp')
         .innerJoin('sessions as s', 's.id', 'sp.session_id')
-        .select(['sp.project_id', sql<Date | null>`max(${recency})`.as('last')])
+        .select(['sp.project_id', sql<Date | null>`max(${recency})`.as('last'), sql<string>`count(*)`.as('n')])
         .where('sp.user_id', '=', userId)
         .where('s.user_id', '=', userId)
         .groupBy('sp.project_id')
@@ -145,6 +176,8 @@ export function registerApi(
     return projects.map(p => ({
       id: p.id,
       name: p.name,
+      colorKey: p.color_key,
+      sessionCount: Number(activity.find(a => a.project_id === p.id)?.n ?? 0),
       description: p.description,
       remote: p.remote,
       archived: p.archived,
@@ -159,18 +192,35 @@ export function registerApi(
     if (b.runnerId && !(await db.selectFrom('runners').select('id').where('id', '=', b.runnerId).where('user_id', '=', userId).where('state', '=', 'active').executeTakeFirst()))
       throw new HttpError(404, 'runner_not_found', 'Машина не найдена');
     const p = await db.transaction().execute(async tx => {
+      await sql`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`.execute(tx);
+      const used = await tx.selectFrom('catalog_projects').select('color_key').where('user_id', '=', userId).where('archived', '=', false).execute();
+      const id = randomUUID();
       const created = await tx
         .insertInto('catalog_projects')
-        .values({ user_id: userId, name: b.name, description: b.description ?? '', remote: b.remote ?? null })
+        .values({
+          id,
+          user_id: userId,
+          name: b.name,
+          color_key:
+            b.colorKey ??
+            allocateProjectColor(
+              used.map(p => p.color_key),
+              id,
+            ),
+          description: b.description ?? '',
+          remote: b.remote ?? null,
+        })
         .returningAll()
         .executeTakeFirstOrThrow();
       if (b.runnerId && b.path) await tx.insertInto('project_bindings').values({ user_id: userId, project_id: created.id, runner_id: b.runnerId, path: b.path }).execute();
       return created;
     });
+    sessions.projects?.catalogChanged(userId);
     reply.code(201);
     return {
       id: p.id,
       name: p.name,
+      colorKey: p.color_key,
       description: p.description,
       remote: p.remote,
       archived: p.archived,
@@ -181,29 +231,112 @@ export function registerApi(
   app.patch('/api/catalog/projects/:id', async (req): Promise<{ ok: true }> => {
     const b = parse(patchUserProjectSchema, req.body);
     const { id } = parse(userProjectParamsSchema, req.params);
-    const result = await db
-      .updateTable('catalog_projects')
-      .set({ ...b, updated_at: sql`now()` })
-      .where('id', '=', id)
-      .where('user_id', '=', req.user!.id)
-      .executeTakeFirst();
-    if (Number(result.numUpdatedRows) === 0) throw new HttpError(404, 'not_found', 'Проект не найден');
+    const { colorKey, bindings, ...metadata } = b;
+    const userId = req.user!.id;
+    await db.transaction().execute(async tx => {
+      const own = await tx.selectFrom('catalog_projects').select('id').where('id', '=', id).where('user_id', '=', userId).forUpdate().executeTakeFirst();
+      if (!own) throw new HttpError(404, 'not_found', 'Проект не найден');
+      await tx
+        .updateTable('catalog_projects')
+        .set({ ...metadata, ...(colorKey ? { color_key: colorKey } : {}), updated_at: sql`now()` })
+        .where('id', '=', id)
+        .where('user_id', '=', userId)
+        .execute();
+      for (const binding of bindings ?? []) {
+        const runner = await tx.selectFrom('runners').select(['id', 'state']).where('id', '=', binding.runnerId).where('user_id', '=', userId).forKeyShare().executeTakeFirst();
+        if (!runner || (binding.path !== null && runner.state !== 'active')) throw new HttpError(404, 'not_found', 'Машина не найдена');
+        if (binding.path === null) await tx.deleteFrom('project_bindings').where('user_id', '=', userId).where('project_id', '=', id).where('runner_id', '=', binding.runnerId).execute();
+        else
+          await tx
+            .insertInto('project_bindings')
+            .values({ user_id: userId, project_id: id, runner_id: binding.runnerId, path: binding.path })
+            .onConflict(oc => oc.columns(['user_id', 'project_id', 'runner_id']).doUpdateSet({ path: binding.path! }))
+            .execute();
+      }
+    });
+    sessions.projectsChanged(userId);
+    if (metadata.name) sessions.projects?.catalogChanged(userId);
     return { ok: true };
   });
   app.put('/api/catalog/projects/:id/bindings/:runnerId', async (req): Promise<{ ok: true }> => {
     const b = parse(bindUserProjectSchema, req.body);
     const { id, runnerId } = parse(userProjectBindingParamsSchema, req.params);
     const userId = req.user!.id;
-    const project = await db.selectFrom('catalog_projects').select('id').where('id', '=', id).where('user_id', '=', userId).executeTakeFirst();
-    const runner = await db.selectFrom('runners').select('id').where('id', '=', runnerId).where('user_id', '=', userId).where('state', '=', 'active').executeTakeFirst();
-    if (!project || !runner) throw new HttpError(404, 'not_found', 'Проект или машина не найдены');
-    await db
-      .insertInto('project_bindings')
-      .values({ user_id: userId, project_id: id, runner_id: runnerId, path: b.path })
-      .onConflict(oc => oc.columns(['user_id', 'project_id', 'runner_id']).doUpdateSet({ path: b.path }))
-      .execute();
+    await db.transaction().execute(async tx => {
+      const project = await tx.selectFrom('catalog_projects').select('id').where('id', '=', id).where('user_id', '=', userId).forUpdate().executeTakeFirst();
+      const runner = await tx.selectFrom('runners').select('id').where('id', '=', runnerId).where('user_id', '=', userId).where('state', '=', 'active').forKeyShare().executeTakeFirst();
+      if (!project || !runner) throw new HttpError(404, 'not_found', 'Проект или машина не найдены');
+      await tx
+        .insertInto('project_bindings')
+        .values({ user_id: userId, project_id: id, runner_id: runnerId, path: b.path })
+        .onConflict(oc => oc.columns(['user_id', 'project_id', 'runner_id']).doUpdateSet({ path: b.path }))
+        .execute();
+    });
     return { ok: true };
   });
+  app.delete('/api/catalog/projects/:id/bindings/:runnerId', async req => {
+    const { id, runnerId } = parse(userProjectBindingParamsSchema, req.params);
+    const userId = req.user!.id;
+    const project = await db.selectFrom('catalog_projects').select('id').where('id', '=', id).where('user_id', '=', userId).executeTakeFirst();
+    const runner = await db.selectFrom('runners').select('id').where('id', '=', runnerId).where('user_id', '=', userId).executeTakeFirst();
+    if (!project || !runner) throw new HttpError(404, 'not_found', 'Проект или машина не найдены');
+    await db.deleteFrom('project_bindings').where('user_id', '=', userId).where('project_id', '=', id).where('runner_id', '=', runnerId).execute();
+    return { ok: true };
+  });
+  app.delete('/api/catalog/projects/:id', async req => {
+    const { id } = parse(userProjectParamsSchema, req.params);
+    const linked = await db.transaction().execute(async tx => {
+      const own = await tx.selectFrom('catalog_projects').select('id').where('user_id', '=', req.user!.id).where('id', '=', id).forUpdate().executeTakeFirst();
+      if (!own) throw new HttpError(404, 'not_found', 'Проект не найден');
+      const rows = await tx.selectFrom('session_projects').select('session_id').where('user_id', '=', req.user!.id).where('project_id', '=', id).execute();
+      // Cascades remove only bindings and explicit links; sessions and transcript data are independent.
+      await tx.deleteFrom('catalog_projects').where('user_id', '=', req.user!.id).where('id', '=', id).execute();
+      return rows;
+    });
+    const finish = () => sessions.projectsChanged(req.user!.id);
+    if (sessions.projects)
+      sessions.projects.reclassifyDeleted(
+        linked.map(row => row.session_id),
+        finish,
+      );
+    else setImmediate(finish);
+    return { ok: true };
+  });
+  app.patch('/api/projects/:id/color', async req => {
+    const { id } = parse(userProjectParamsSchema, req.params);
+    const { colorKey } = parse(z.object({ colorKey: projectColorSchema }), req.body);
+    if (!(await sessions.projects?.catalog.setColor(req.user!.id, id, colorKey))) throw new HttpError(404, 'not_found', 'Группа не найдена');
+    sessions.projectsChanged(req.user!.id);
+    return { ok: true };
+  });
+  app.get('/api/projects/hidden', async req => {
+    return db
+      .selectFrom('hidden_project_groups as h')
+      .innerJoin('projects as p', 'p.id', 'h.project_id')
+      .select(['p.id', 'p.title', 'p.color_key as colorKey', 'p.path'])
+      .where('h.user_id', '=', req.user!.id)
+      .where('p.user_id', '=', req.user!.id)
+      .orderBy('p.title')
+      .execute();
+  });
+  const setHidden = async (req: import('fastify').FastifyRequest, hidden: boolean) => {
+    const { id } = parse(userProjectParamsSchema, req.params);
+    const userId = req.user!.id;
+    const own = await db.selectFrom('projects').select('id').where('id', '=', id).where('user_id', '=', userId).executeTakeFirst();
+    if (!own) throw new HttpError(404, 'not_found', 'Группа не найдена');
+    if (hidden)
+      await db
+        .insertInto('hidden_project_groups')
+        .values({ user_id: userId, project_id: id })
+        .onConflict(oc => oc.doNothing())
+        .execute();
+    else await db.deleteFrom('hidden_project_groups').where('user_id', '=', userId).where('project_id', '=', id).execute();
+    sessions.projectsChanged(userId);
+    return { ok: true };
+  };
+  app.put('/api/projects/:id/hidden', req => setHidden(req, true));
+  app.delete('/api/projects/:id/hidden', req => setHidden(req, false));
+  app.delete('/api/projects/:id/group', req => setHidden(req, true));
   app.get('/api/catalog/projects/:id/resolve', async (req): Promise<{ status: 'resolved' | 'needs_binding' | 'unavailable'; path?: string }> => {
     const { id } = parse(userProjectParamsSchema, req.params);
     const { runnerId } = parse(userProjectResolveQuerySchema, req.query);
@@ -283,7 +416,7 @@ export function registerApi(
     const groups = await db
       .selectFrom('sessions as s')
       .select([
-        's.project_id',
+        visibleProject.as('project_id'),
         sql<string>`count(*)`.as('total'),
         sql<string>`count(*) FILTER (WHERE s.status IN ('working', 'waiting', 'permission', 'sleeping'))`.as('live'),
         sql<Date | null>`max(${recency})`.as('last'),
@@ -292,16 +425,17 @@ export function registerApi(
       .where(visible(q.cron))
       .where(notSpawned)
       .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM session_projects sp WHERE sp.user_id = s.user_id AND sp.session_id = s.id)`)
-      .groupBy('s.project_id')
+      .groupBy(visibleProject)
       .execute();
     const ranked = await sql<{ id: string }>`
       SELECT id FROM (
-        SELECT s.id, row_number() OVER (PARTITION BY s.project_id ORDER BY ${recency} DESC) AS n
+        SELECT s.id, row_number() OVER (PARTITION BY ${visibleProject} ORDER BY ${recency} DESC) AS n
           FROM sessions s WHERE s.user_id = ${userId} AND ${visible(q.cron)} AND ${notSpawned}
             AND NOT EXISTS (SELECT 1 FROM session_projects sp WHERE sp.user_id = s.user_id AND sp.session_id = s.id)
       ) x WHERE x.n <= 5`.execute(db);
     const topRows = ranked.rows.length
       ? await selectSessions(db)
+          .select(visibleProject.as('visible_project_id'))
           .where(
             's.id',
             'in',
@@ -310,7 +444,7 @@ export function registerApi(
           .orderBy(recency, 'desc')
           .execute()
       : [];
-    const views = topRows.map(r => ({ projectId: r.project_id, view: sessions.view(r) }));
+    const views = topRows.map(r => ({ projectId: r.visible_project_id, view: sessions.view(r) }));
     const projects = groups
       .map(g => ({
         project: projectRef(sessions.projects?.catalog, g.project_id),
@@ -320,23 +454,19 @@ export function registerApi(
         sessions: views.filter(v => v.projectId === g.project_id).map(v => v.view),
       }))
       .sort((a, b) => (a.project.id === null ? 1 : 0) - (b.project.id === null ? 1 : 0) || (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''));
-    const catalogGroups = await db
-      .selectFrom('session_projects as sp')
-      .innerJoin('catalog_projects as cp', 'cp.id', 'sp.project_id')
-      .innerJoin('sessions as s', 's.id', 'sp.session_id')
-      .select([
-        'cp.id',
-        'cp.name',
-        sql<string>`count(*)`.as('total'),
-        sql<string>`count(*) FILTER (WHERE s.status IN ('working','waiting','permission','sleeping'))`.as('live'),
-        sql<Date | null>`max(${recency})`.as('last'),
-      ])
-      .where('sp.user_id', '=', userId)
-      .where('s.user_id', '=', userId)
-      .where(visible(q.cron))
-      .where(notSpawned)
-      .groupBy(['cp.id', 'cp.name'])
-      .execute();
+    // Every active catalog project is a group, an empty one too (a project created by hand shows at once, fresh ones first).
+    const catalogGroups = (
+      await sql<{ id: string; name: string; color_key: string; total: string; live: string; last: Date | null }>`
+        SELECT cp.id, cp.name, cp.color_key, count(s.id) AS total,
+          count(s.id) FILTER (WHERE s.status IN ('working', 'waiting', 'permission', 'sleeping')) AS live,
+          COALESCE(max(${recency}), cp.created_at) AS last
+        FROM catalog_projects cp
+        LEFT JOIN session_projects sp ON sp.project_id = cp.id AND sp.user_id = cp.user_id
+        LEFT JOIN sessions s ON s.id = sp.session_id AND s.user_id = cp.user_id AND ${visible(q.cron)} AND ${notSpawned}
+        WHERE cp.user_id = ${userId}
+        GROUP BY cp.id, cp.name, cp.color_key, cp.created_at, cp.archived
+        HAVING NOT cp.archived OR count(s.id) > 0`.execute(db)
+    ).rows;
     const catalogRanked = await sql<{
       project_id: string;
       id: string;
@@ -355,7 +485,7 @@ export function registerApi(
       : [];
     projects.push(
       ...catalogGroups.map(g => ({
-        project: { id: g.id, title: g.name, colorKey: 'none' as const, path: '' },
+        project: { id: g.id, title: g.name, colorKey: g.color_key as ColorKey, path: '' },
         live: Number(g.live),
         total: Number(g.total),
         lastActivityAt: g.last ? new Date(g.last).toISOString() : null,
@@ -414,8 +544,18 @@ export function registerApi(
         : [];
       return { sessions: rows.map(r => sessions.view(r)), total: Number(total.n) };
     }
-    const inProject = id === 'none' ? sql<boolean>`s.project_id IS NULL` : sql<boolean>`s.project_id = ${id}`;
-    const rows = await selectSessions(db).where('s.user_id', '=', userId).where(visible(q.cron)).where(notSpawned).where(inProject).orderBy(recency, 'desc').offset(q.offset).limit(q.limit).execute();
+    const noCatalogLink = sql<boolean>`NOT EXISTS (SELECT 1 FROM session_projects sp WHERE sp.user_id=s.user_id AND sp.session_id=s.id)`;
+    const inProject = id === 'none' ? sql<boolean>`${visibleProject} IS NULL` : sql<boolean>`${visibleProject} = ${id}`;
+    const rows = await selectSessions(db)
+      .where('s.user_id', '=', userId)
+      .where(visible(q.cron))
+      .where(notSpawned)
+      .where(noCatalogLink)
+      .where(inProject)
+      .orderBy(recency, 'desc')
+      .offset(q.offset)
+      .limit(q.limit)
+      .execute();
     const c = await db
       .selectFrom('sessions as s')
       .select(sql<string>`count(*)`.as('n'))
@@ -423,6 +563,7 @@ export function registerApi(
       .where(visible(q.cron))
       .where(notSpawned)
       .where(inProject)
+      .where(noCatalogLink)
       .executeTakeFirstOrThrow();
     return { sessions: rows.map(r => sessions.view(r)), total: Number(c.n) };
   });
@@ -431,8 +572,10 @@ export function registerApi(
   app.get('/api/projects', async (req): Promise<ProjectListItem[]> => {
     await sessions.projects?.catalog.ensureUser(req.user!.id);
     const list = sessions.projects?.catalog.list(req.user!.id) ?? [];
+    const curated = await db.selectFrom('catalog_projects').select(['id', 'name']).where('user_id', '=', req.user!.id).where('archived', '=', false).orderBy('name').execute();
     const order = { area: 0, system: 1, project: 2, repo: 3, builtin: 4 } as const;
     return [
+      ...curated.map((p): ProjectListItem => ({ id: p.id, kind: 'project', title: p.name, path: '', areaPath: null, colorKey: 'none', archived: false })),
       ...list
         .map((p): ProjectListItem => {
           const ref = projectRef(sessions.projects?.catalog, p.id);
@@ -456,6 +599,20 @@ export function registerApi(
     const b = parse(setProjectRequestSchema, req.body);
     const s = await sessions.get(userId, id);
     const projectId = b.projectId === 'none' ? null : b.projectId;
+    const catalogProject = projectId
+      ? await db.selectFrom('catalog_projects').select('id').where('user_id', '=', userId).where('id', '=', projectId).where('archived', '=', false).executeTakeFirst()
+      : null;
+    if (catalogProject) {
+      await db.transaction().execute(async tx => {
+        await tx.selectFrom('sessions').select('id').where('id', '=', s.id).where('user_id', '=', userId).forUpdate().executeTakeFirst();
+        await tx
+          .insertInto('session_projects')
+          .values({ user_id: userId, session_id: s.id, project_id: catalogProject.id, source: 'manual', confidence: null, reason_code: 'selected' })
+          .onConflict(oc => oc.columns(['user_id', 'session_id']).doUpdateSet({ project_id: catalogProject.id, source: 'manual', confidence: null, reason_code: 'selected' }))
+          .execute();
+      });
+      return sessions.upsert(s.id);
+    }
     if (projectId && !sessions.projects?.catalog.list(userId).some(p => p.id === projectId)) throw new HttpError(422, 'unknown_project', 'Проекта нет в справочнике');
     return pin(userId, s.id, projectId);
   });
@@ -464,6 +621,11 @@ export function registerApi(
   app.post('/api/sessions/:id/pin', async (req): Promise<SessionView> => {
     const userId = req.user!.id;
     const s = await sessions.get(userId, (req.params as { id: string }).id);
+    const catalog = await db.selectFrom('session_projects').select('project_id').where('user_id', '=', userId).where('session_id', '=', s.id).executeTakeFirst();
+    if (catalog) {
+      await db.updateTable('session_projects').set({ source: 'manual', reason_code: 'selected' }).where('user_id', '=', userId).where('session_id', '=', s.id).execute();
+      return sessions.upsert(s.id);
+    }
     return pin(userId, s.id, s.project_id);
   });
 
@@ -471,6 +633,11 @@ export function registerApi(
   app.delete('/api/sessions/:id/pin', async (req): Promise<SessionView> => {
     const userId = req.user!.id;
     const s = await sessions.get(userId, (req.params as { id: string }).id);
+    const catalog = await db.selectFrom('session_projects').select('source').where('user_id', '=', userId).where('session_id', '=', s.id).executeTakeFirst();
+    if (catalog) {
+      await db.updateTable('session_projects').set({ source: 'auto', reason_code: 'unpinned' }).where('user_id', '=', userId).where('session_id', '=', s.id).execute();
+      return sessions.upsert(s.id);
+    }
     if (s.project_source !== 'manual') throw new HttpError(409, 'not_pinned', 'Сессия не закреплена');
     if (sessions.projects) await sessions.projects.unpin(s.id);
     return sessions.upsert(s.id);
@@ -479,6 +646,8 @@ export function registerApi(
   async function pin(userId: string, sessionId: string, projectId: string | null): Promise<SessionView> {
     const write = () =>
       db.transaction().execute(async tx => {
+        await tx.selectFrom('sessions').select('id').where('id', '=', sessionId).where('user_id', '=', userId).forUpdate().executeTakeFirst();
+        await tx.deleteFrom('session_projects').where('user_id', '=', userId).where('session_id', '=', sessionId).execute();
         await tx.updateTable('sessions').set({ project_id: projectId, project_source: 'manual', secondary_project_id: null, project_evidence: null }).where('id', '=', sessionId).execute();
         await tx
           .insertInto('classification_labels')
@@ -630,6 +799,14 @@ export function registerApi(
   app.patch('/api/sessions/:id', async req => {
     const b = parse(patchSessionRequestSchema, req.body);
     return sessions.patch(req.user!.id, (req.params as { id: string }).id, b);
+  });
+
+  /** A new title from the whole session; written like a manual rename. Requirement (session-title): Перегенерация названия */
+  app.post('/api/sessions/:id/title/regenerate', async req => {
+    const userId = req.user!.id;
+    const s = await sessions.get(userId, (req.params as { id: string }).id);
+    const title = await handoff.suggestTitle(userId, s);
+    return sessions.patch(userId, s.id, { title });
   });
 
   app.post('/api/sessions/:id/permissions/:requestId', async req => {

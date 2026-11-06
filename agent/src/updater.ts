@@ -63,6 +63,8 @@ export const defaultNpmInstall = (dir: string): Promise<void> =>
 
 export class Updater {
   private running: string | null = null;
+  private pending: UpdatePayload | null = null;
+  private acceptingReplacement = false;
   private readonly o: UpdaterOptions;
 
   constructor(o: UpdaterOptions) {
@@ -91,11 +93,17 @@ export class Updater {
   /** Handles agent.update; resolves when the attempt ended (restart requested or failed). */
   async handle(p: UpdatePayload): Promise<void> {
     const { log } = this.o;
-    if (p.version === this.o.currentVersion || this.running) return;
+    if (this.running) {
+      if (this.acceptingReplacement) this.pending = p;
+      return;
+    }
+    if (p.version === this.o.currentVersion) return;
     this.running = p.version;
+    this.acceptingReplacement = true;
+    let offer = p;
     const fail = (error: string, detail?: string) => {
-      log.warn('agent update failed', { version: p.version, error, detail });
-      this.o.send('agent.update.result', { version: p.version, status: 'failed', error: detail ? `${error}: ${detail}`.slice(0, 500) : error });
+      log.warn('agent update failed', { version: offer.version, error, detail });
+      this.o.send('agent.update.result', { version: offer.version, status: 'failed', error: detail ? `${error}: ${detail}`.slice(0, 500) : error });
     };
     try {
       if (!this.o.appDir) return fail('not_supervised', 'the agent is not started by supervisor.mjs; re-run the installer');
@@ -104,29 +112,35 @@ export class Updater {
       let waitingSent = false;
       const idle = async (): Promise<boolean> => {
         if (!this.o.isBusy()) return true;
-        if (!waitingSent) this.o.send('agent.update.result', { version: p.version, status: 'waiting' });
+        if (!waitingSent) this.o.send('agent.update.result', { version: offer.version, status: 'waiting' });
         waitingSent = true;
         while (this.o.isBusy()) {
           if (Date.now() > deadline) return false;
           await new Promise(r => setTimeout(r, this.o.pollMs ?? 5000));
         }
+        if (this.pending) {
+          offer = this.pending;
+          this.pending = null;
+          this.running = offer.version;
+        }
         return true;
       };
       if (!(await idle())) return fail('busy_timeout');
+      this.acceptingReplacement = false;
       let body: Buffer;
       try {
-        const res = await (this.o.fetchImpl ?? fetch)(`${this.o.hubHttp}${p.url}`);
+        const res = await (this.o.fetchImpl ?? fetch)(`${this.o.hubHttp}${offer.url}`);
         if (!res.ok) return fail('download_failed', `hub answered ${res.status}`);
         body = Buffer.from(await res.arrayBuffer());
       } catch (err) {
         return fail('download_failed', (err as Error).message);
       }
       const sha = createHash('sha256').update(body).digest('hex');
-      if (sha !== p.sha256) return fail('sha_mismatch', `expected ${p.sha256}, got ${sha}`);
+      if (sha !== offer.sha256) return fail('sha_mismatch', `expected ${offer.sha256}, got ${sha}`);
 
       const versions = join(this.o.appDir, 'versions');
-      const tmp = join(versions, `${p.version}.tmp`);
-      const dir = join(versions, p.version);
+      const tmp = join(versions, `${offer.version}.tmp`);
+      const dir = join(versions, offer.version);
       try {
         rmSync(tmp, { recursive: true, force: true });
         const files = extractTgz(body, tmp);
@@ -144,12 +158,14 @@ export class Updater {
         rmSync(dir, { recursive: true, force: true });
         return fail('busy_timeout');
       }
-      writeFileSync(join(this.o.appDir, 'next'), p.version);
-      this.o.send('agent.update.result', { version: p.version, status: 'installing' });
-      log.info('agent update staged, restarting', { version: p.version });
+      writeFileSync(join(this.o.appDir, 'next'), offer.version);
+      this.o.send('agent.update.result', { version: offer.version, status: 'installing' });
+      log.info('agent update staged, restarting', { version: offer.version });
       await this.o.restart();
     } finally {
       this.running = null;
+      this.pending = null;
+      this.acceptingReplacement = false;
     }
   }
 }

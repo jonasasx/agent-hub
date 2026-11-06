@@ -33,7 +33,7 @@ async function open(page: Page, theme: 'dark' | 'light', layout?: Json) {
   if (layout) hub.layouts.desktop = { layout, savedLayout: null, openedAt: null, updatedAt: null, clientTs: null };
   await hub.install(page);
   await page.goto('/');
-  await expect(page.getByRole('list', { name: 'Машины' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Сессии и проекты' })).toBeVisible();
   // fonts and the first render settle; animations would only add noise to the contrast check
   await page.addStyleTag({ content: '*, *::before, *::after { animation: none !important; transition: none !important; }' });
   await page.waitForTimeout(300);
@@ -89,7 +89,7 @@ async function gateProjectColors(page: Page, theme: string) {
       const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
       return (x! + 0.05) / (y! + 0.05);
     };
-    const side = rgb(getComputedStyle(document.querySelector('.side')!).backgroundColor);
+    const side = rgb(getComputedStyle(document.querySelector('.side, .tw-sess')!).backgroundColor);
     const surface = rgb('var(--surface)');
     const fg = rgb('var(--fg)');
     const out: string[] = [];

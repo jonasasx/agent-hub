@@ -32,8 +32,8 @@ async function openNewSession(page: Page) {
     });
   });
   await page.goto('/');
-  await expect(page.locator('.side button.btn.primary')).toBeVisible();
-  await page.locator('.side button.btn.primary').click();
+  await expect(page.getByRole('button', { name: 'Новая сессия' }).first()).toBeVisible();
+  await page.getByRole('button', { name: 'Новая сессия' }).first().click();
   return { hub, dialog: page.locator('.modal[role=dialog]').first() };
 }
 

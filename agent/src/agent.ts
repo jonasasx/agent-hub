@@ -17,6 +17,7 @@ import { PeersClient } from './peers/client.js';
 import { Replicator } from './transcripts/replicator.js';
 import { httpBase, restoreFile } from './transcripts/restore.js';
 import { readImageFile } from './sessions/images.js';
+import { FsError, listFolder, readFileForView } from './fs/browse.js';
 import { ClaudeProvider } from './providers/claude.js';
 import { ProviderRouter } from './providers/router.js';
 import { findCodexBin, type CodexBin } from './providers/codex/bin.js';
@@ -28,6 +29,10 @@ import { McpGateway } from './mcp/gateway.js';
 import { McpDraftClient } from './mcp/draftClient.js';
 import { McpImportPreviewer } from './mcp/importPreview.js';
 import { McpOAuthManager } from './mcp/oauth.js';
+import { McpRegistryQueue } from './mcp/registryQueue.js';
+import { RegistryCacheWriter } from './mcp/registryCacheWriter.js';
+
+const MAX_MESSAGES_BEFORE_WELCOME = 256;
 
 export interface AgentOptions {
   hubUrl: string;
@@ -51,6 +56,8 @@ export interface AgentOptions {
   replHistoryInflight?: number;
   /** ~/.agent-hub: local replication state. */
   stateDir?: string;
+  /** Tests may inject a delayed cache to verify registry command ordering. */
+  registryCache?: RegistryCache;
   /** Use fs.watch (tests may turn it off). */
   watch?: boolean;
   /** 1.5: Claude login and macOS protected folders for hello (mutated on an authorization failure). */
@@ -126,7 +133,9 @@ export function createAgent(o: AgentOptions): Agent {
   // the protocol of the hub's last welcome: limits.event only to a hub of 1.6+ (subscription-limits L3)
   let hubProtocol: string | null = null;
   let runnerId: string | null = null;
-  const registryCache = new RegistryCache(o.stateDir ?? join(homedir(), '.agent-hub'));
+  const registryCache = o.registryCache ?? new RegistryCache(o.stateDir ?? join(homedir(), '.agent-hub'));
+  const registryQueue = new McpRegistryQueue();
+  const registryCacheWriter = new RegistryCacheWriter(registryCache, log);
   let registry: RegistrySnapshot | null = null;
   const gateway = new McpGateway(log, payload => (runnerId ? client.send('mcp.gateway.status', { ...(payload as Record<string, unknown>), machineId: runnerId }) : false));
   const mcpOAuth = new McpOAuthManager(
@@ -211,20 +220,30 @@ export function createAgent(o: AgentOptions): Agent {
 
   const handle = (m: HubMessage): Promise<unknown> => {
     if (m.type === 'mcp.registry.sync') {
-      return registryCache.write(m.payload).then(() => {
+      return registryQueue.enqueue(async () => {
         registry = m.payload;
         gateway.setRegistry(m.payload);
+        registryCacheWriter.enqueue(m.payload);
         return { revision: m.payload.revision, applied: true };
       });
     }
     if (m.type === 'mcp.secrets.deliver') {
-      const accepted = gateway.setSecretDelivery(m.payload.serverId, m.payload.revision, m.payload.secrets);
-      return Promise.resolve({ delivered: accepted, revision: m.payload.revision });
+      return registryQueue.enqueue(async () => {
+        const accepted = gateway.setSecretDelivery(m.payload.serverId, m.payload.revision, m.payload.secrets);
+        return { delivered: accepted, revision: m.payload.revision };
+      });
     }
     if (m.type === 'mcp.gateway.start') {
-      return gateway
-        .startManaged(m.payload.serverId, m.payload.sessionId ?? 'machine', m.payload.bearerToken)
-        .then(endpoint => ({ serverId: m.payload.serverId, sessionId: m.payload.sessionId, endpoint }));
+      const sessionId = m.payload.sessionId ?? 'machine';
+      let previousBearer: string | undefined;
+      return registryQueue.enqueue(
+        async () => {
+          previousBearer = gateway.managedBearer(m.payload.serverId, sessionId);
+          const endpoint = await gateway.startManaged(m.payload.serverId, sessionId, m.payload.bearerToken);
+          return { serverId: m.payload.serverId, sessionId: m.payload.sessionId, endpoint };
+        },
+        () => gateway.stopTimedOutStart(m.payload.serverId, sessionId, m.payload.revision, m.payload.bearerToken, previousBearer),
+      );
     }
     if (m.type === 'mcp.registry.validate') {
       return gateway.validate(m.payload).then(result => {
@@ -234,15 +253,19 @@ export function createAgent(o: AgentOptions): Agent {
       });
     }
     if (m.type === 'mcp.gateway.stop') {
-      if (m.payload.sessionId) gateway.stopManaged(m.payload.serverId, m.payload.sessionId);
-      else gateway.stopServer(m.payload.serverId);
-      return Promise.resolve({ stopped: true });
+      return registryQueue.enqueue(async () => {
+        if (m.payload.sessionId) gateway.stopManaged(m.payload.serverId, m.payload.sessionId);
+        else gateway.stopServer(m.payload.serverId);
+        return { stopped: true };
+      });
     }
     if (m.type === 'mcp.oauth.start') return mcpOAuth.begin(m.payload);
     if (m.type === 'mcp.oauth.callback') return mcpOAuth.callback(m.payload);
     if (m.type === 'mcp.oauth.credentials') {
-      mcpOAuth.receiveCredentials(m.payload);
-      return Promise.resolve({ received: true });
+      return registryQueue.enqueue(async () => {
+        mcpOAuth.receiveCredentials(m.payload);
+        return { received: true };
+      });
     }
     if (m.type === 'mcp.oauth.revoke') return Promise.resolve(mcpOAuth.revoke(m.payload.serverId, m.payload.machineId));
     if (m.type === 'mcp.import.preview') {
@@ -269,28 +292,12 @@ export function createAgent(o: AgentOptions): Agent {
     ...o.updaterDeps,
   });
 
-  client.on('welcome', w => {
-    hubProtocol = w.protocol;
-    runnerId = w.runnerId;
-    mcpOAuth.setMachine(w.runnerId);
-    replicator.onWelcome(w.cursors, w.protocol);
-    updater.reportPending();
-    providers.onWelcome();
-    // agent-providers D10: the sign-in of the machine's other providers, then every 10 minutes
-    if (codex) void codex.service.refresh().catch(() => undefined);
-    o.onWelcome?.();
-  });
-  client.on('disconnected', () => {
-    hubProtocol = null;
-    peers.failAll('связь с хабом потеряна');
-    mcpDraft.failAll();
-    replicator.onDisconnected();
-  });
-  client.on('message', (m: HubMessage) => {
+  let hubWelcomed = false;
+  const messagesBeforeWelcome: HubMessage[] = [];
+  const dispatchHubMessage = (m: HubMessage): void => {
     if (m.type === 'repl.ack') return replicator.onAck(m.payload);
     if (m.type === 'side.ack') return replicator.onSideAck(m.payload);
     if (m.type === 'side.reject') return replicator.onSideReject(m.payload);
-    if (m.type === 'welcome') return;
     if (m.type === 'peers.reply') return peers.onReply(m.re, m.payload);
     if (m.type === 'mcp.draft.result') return mcpDraft.onResult(m.payload);
     if (m.type === 'agent.update') {
@@ -298,6 +305,26 @@ export function createAgent(o: AgentOptions): Agent {
       return;
     }
     const id = m.id;
+    if (m.type === 'fs.list' || m.type === 'fs.read') {
+      // Read-only file explorer (tool-windows-file-explorer). A failure carries a protocol code and no path.
+      const failed = (err: unknown): void => {
+        const code = err instanceof FsError ? err.code : 'io_error';
+        if (id) client.send('cmd.error', { code, message: code }, { re: id });
+      };
+      if (m.type === 'fs.list') {
+        listFolder(m.payload.path, m.payload.root, m.payload.showHidden === true).then(result => {
+          if (id) client.send('cmd.ok', { result }, { re: id });
+        }, failed);
+        return;
+      }
+      readFileForView(m.payload.path, m.payload.root).then(answer => {
+        if (!id) return;
+        client.send('cmd.ok', { result: answer.result }, { re: id });
+        // image / pdf bytes follow cmd.ok {binary: true} as a binary frame, like fs.read_image
+        if (answer.data) client.sendBinary(answer.data);
+      }, failed);
+      return;
+    }
     if (m.type === 'fs.read_image') {
       // Bytes go in a binary frame right after cmd.ok {binary: true} (D19), not as base64 in JSON.
       readImageFile(m.payload.path).then(
@@ -325,6 +352,56 @@ export function createAgent(o: AgentOptions): Agent {
         if (id) client.send('cmd.error', { code, message, ...(failure ? { failure } : {}) }, { re: id });
       },
     );
+  };
+  client.on('welcome', w => {
+    hubProtocol = w.protocol;
+    runnerId = w.runnerId;
+    hubWelcomed = true;
+    try {
+      mcpOAuth.setMachine(w.runnerId);
+      replicator.onWelcome(w.cursors, w.protocol);
+      updater.reportPending();
+      providers.onWelcome();
+      // agent-providers D10: the sign-in of the machine's other providers, then every 10 minutes
+      if (codex) void codex.service.refresh().catch(() => undefined);
+      o.onWelcome?.();
+    } finally {
+      for (const message of messagesBeforeWelcome.splice(0)) {
+        try {
+          dispatchHubMessage(message);
+        } catch (error) {
+          const id = message.id;
+          if (id) {
+            client.send('cmd.error', { code: 'error', message: 'command failed after hub welcome' }, { re: id });
+          }
+          log.warn('buffered hub message failed after welcome', {
+            type: message.type,
+            errorClass: error instanceof Error ? error.name : 'unknown',
+          });
+        }
+      }
+    }
+  });
+  client.on('disconnected', () => {
+    hubProtocol = null;
+    hubWelcomed = false;
+    const droppedMessages = messagesBeforeWelcome.splice(0);
+    // The hub expires outstanding command IDs on its own timeout.
+    if (droppedMessages.length) log.warn('dropping buffered hub messages after disconnect', { count: droppedMessages.length });
+    peers.failAll('связь с хабом потеряна');
+    mcpDraft.failAll();
+    replicator.onDisconnected();
+  });
+  client.on('message', (m: HubMessage) => {
+    if (!hubWelcomed) {
+      if (messagesBeforeWelcome.length >= MAX_MESSAGES_BEFORE_WELCOME) {
+        log.warn('dropping hub message while waiting for welcome', { type: m.type, limit: MAX_MESSAGES_BEFORE_WELCOME });
+        return;
+      }
+      messagesBeforeWelcome.push(m);
+      return;
+    }
+    dispatchHubMessage(m);
   });
 
   const codexTimer = codex ? setInterval(() => void codex.service.refresh().catch(() => undefined), 10 * 60_000) : null;
@@ -354,6 +431,9 @@ export function createAgent(o: AgentOptions): Agent {
       await replicator.tick();
       replicator.stop();
       await client.stop();
+      if (!(await registryCacheWriter.flush(5000))) {
+        log.warn('MCP registry cache writes remained pending during shutdown');
+      }
       turns.dispose();
       caffeinator.setBusy(false);
     },

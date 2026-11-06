@@ -1,3 +1,5 @@
+import { CatalogDetection } from './projects/detection.js';
+import { SubscriptionProjectClassifier, type ProjectClassifier } from './projects/haiku.js';
 import { existsSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -68,7 +70,9 @@ export interface HubDeps {
   /** Tests: statfs of the data volume, the Telegram sender and the disk check period (default 10 min; 0 — off). */
   ops?: { stat?: StatFn; send?: SendTelegram; diskCheckMs?: number };
   /** Tests: the catalogue check period (default 60 s; 0 — loaded once) and the recompute debounce (default 2 s). */
-  projects?: { catalogCheckMs?: number; debounceMs?: number };
+  projects?: { catalogCheckMs?: number; debounceMs?: number; classifier?: ProjectClassifier };
+  /** Tests: limits and timeouts of the file explorer routes (tool-windows-file-explorer). */
+  files?: Partial<import('./http/files.js').FsRouteOptions>;
   /** Tests: how long handoff.generate may take (default 120 s). */
   handoffTimeoutMs?: number;
   /** Tests: the limits scheduler (subscription-limits L5): tick period (0 — no timer), jitter, clock. */
@@ -143,6 +147,8 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
           .replace(/\/invite\/[^/?#]+/, '/invite/[code]')
           .replace(/%2Finvite%2F[^&#]+/gi, '%2Finvite%2F[code]')
           .replace(/([?&]invite=)[^&#]+/, '$1[code]')
+          // tool-windows-file-explorer: the paths of the machine's files are not logged
+          .replace(/^(\/api\/runners\/[^/?#]+\/fs\/(?:list|file))\?.*$/, '$1?[redacted]')
           // mcp-management: the provider's code in the MCP sign-in address (and in the login's return to it)
           .replace(/^(\/mcp\/oauth\/callback)\?.*$/, '$1?[redacted]')
           .replace(/(return=%2Fmcp%2Foauth%2Fcallback)[^&#]*/i, '$1[redacted]'),
@@ -196,7 +202,7 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
     db,
     bus,
     log: app.log.child({ part: 'ui' }),
-    publicOrigin: config.publicOrigin,
+    publicOrigins: config.publicOrigins,
     parseCookie: h => app.parseCookie(h),
     ...(deps.uiPingIntervalMs ? { pingIntervalMs: deps.uiPingIntervalMs } : {}),
     onPresence: (userId, ids) => void sessions.markRead(userId, ids).catch((err: unknown) => app.log.warn({ err }, 'mark read failed')),
@@ -235,6 +241,19 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
       for (const u of userIds) ui.broadcast(u, { type: 'projects.changed' });
     },
   });
+  // the classifier runs on the utility runner through the handoff one-shot; `handoff` is created further below
+  const handoffRef: { current?: HandoffService } = {};
+  const classifier =
+    deps.projects?.classifier ??
+    new SubscriptionProjectClassifier(
+      (userId, p) => {
+        if (!handoffRef.current) throw new Error('classifier_not_ready');
+        return handoffRef.current.oneShot(userId, p);
+      },
+      { model: config.PROJECT_CLASSIFIER_MODEL, timeoutMs: config.PROJECT_CLASSIFIER_TIMEOUT_MS },
+    );
+  const detection = new CatalogDetection({ db, config, projects, classifier, changed: id => sessions.upsert(id), log: app.log.child({ part: 'projects' }) });
+  projects.setCatalogDetection(detection);
   await catalog.start(deps.projects?.catalogCheckMs ?? 60_000);
   // claude-subscriptions: the registry of subscriptions (tokens decrypted only to build a command to an agent)
   const subscriptions = new SubscriptionService({
@@ -298,9 +317,12 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
     subscriptions,
     log: app.log.child({ part: 'handoff' }),
     model: config.HANDOFF_MODEL,
+    titleModel: config.PROJECT_CLASSIFIER_MODEL,
+    titleTimeoutMs: config.SESSION_TITLE_TIMEOUT_MS,
     ...(deps.handoffTimeoutMs ? { timeoutMs: deps.handoffTimeoutMs } : {}),
   });
-  registerApi(app, { db, sessions, handoff, agents, latestAgent: () => agentBuild.latest?.version ?? null });
+  handoffRef.current = handoff;
+  registerApi(app, { db, sessions, handoff, agents, detection, latestAgent: () => agentBuild.latest?.version ?? null, ...(deps.files ? { files: deps.files } : {}) });
   // subscription-limits (L5): probe turns under subscription tokens and limits.event of sessions
   const limitsSvc = new LimitsService({
     db,
@@ -363,7 +385,7 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
 
   // Content-Security-Policy for the web app (D19): own scripts (plus the inline theme script by its hash), Google Fonts,
   // images from the hub and blob:/data: previews only — a Markdown image with an external URL is not loaded.
-  const csp = cspProvider(config.publicOrigin, config.WEB_DIST_DIR);
+  const csp = cspProvider(config.publicOrigins, config.WEB_DIST_DIR);
   app.addHook('onSend', async (_req, reply, payload) => {
     const type = String(reply.getHeader('content-type') ?? '');
     if (type.startsWith('text/html') && !reply.getHeader('content-security-policy')) {
@@ -552,6 +574,7 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
       clearInterval(merge);
       catalog.stop();
       projects.stop();
+      await projects.flush();
       if (diskTimer) clearInterval(diskTimer);
       clearInterval(cleanup);
       limits.stop();

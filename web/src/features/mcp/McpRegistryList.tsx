@@ -2,10 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import type { McpImportPreviewResponse, McpProjectOverride, McpRegistryDraftView, McpRegistryResponse, McpRegistryServerUpdate, McpRegistryStatus } from '../../api/mcpRegistryTypes';
 import { api } from '../../api/client';
 import type { UserProjectView } from '../../api/types';
+import { McpSegment } from './McpSegment';
+import { MCP_MODE_LABELS, mcpStatusLabel, mcpStatusTone } from './mcpLabels';
 
 interface MachineOption {
   id: string;
   name: string;
+  online: boolean;
 }
 
 interface McpRegistryListProps {
@@ -69,6 +72,9 @@ export function McpRegistryList(props: McpRegistryListProps) {
         <button className="btn primary" onClick={onAdd}>
           Добавить сервер
         </button>
+      </div>
+      <details className="mcp-import-section">
+        <summary>Импортировать конфигурацию</summary>
         <ImportFields
           machines={machines}
           projects={projects}
@@ -78,7 +84,7 @@ export function McpRegistryList(props: McpRegistryListProps) {
           onProjectChange={onImportProjectChange}
           onPreview={onImportPreview}
         />
-      </div>
+      </details>
       <MachineRegistryList agents={status.agents} onToggle={onMachineRegistryToggle} />
       <ServerList
         servers={registry.servers}
@@ -167,35 +173,39 @@ function ImportFields({
   onPreview: () => void;
 }) {
   const availableProjects = projects.filter(project => project.bindings.some(binding => binding.runnerId === machineId));
+  const canImport = machines.some(machine => machine.id === machineId && machine.online);
 
   return (
-    <div className="mcp-import-controls">
-      <label>
-        Машина для импорта
-        <select className="input" value={machineId} onChange={event => onMachineChange(event.target.value)}>
-          <option value="">Выберите машину</option>
-          {machines.map(machine => (
-            <option key={machine.id} value={machine.id}>
-              {machine.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Проект для импорта
-        <select className="input" value={projectId} onChange={event => onProjectChange(event.target.value)} disabled={!machineId}>
-          <option value="">Выберите проект</option>
-          {availableProjects.map(project => (
-            <option key={project.id} value={project.id}>
-              {project.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <button className="btn" disabled={!machineId || !projectId} onClick={onPreview}>
-        Предпросмотр импорта
-      </button>
-    </div>
+    <>
+      {!machineId && <p className="mcp-field-hint">Выберите онлайн-машину для импорта.</p>}
+      <div className="mcp-import-controls">
+        <McpSegment
+          label="Машина для импорта"
+          value={machineId}
+          options={machines.map(machine => ({
+            value: machine.id,
+            label: machine.name,
+            description: machine.online ? 'В сети' : 'Не в сети',
+            disabled: !machine.online,
+          }))}
+          onChange={onMachineChange}
+        />
+        <label>
+          Проект для импорта
+          <select className="input" value={projectId} onChange={event => onProjectChange(event.target.value)} disabled={!machineId}>
+            <option value="">Выберите проект</option>
+            {availableProjects.map(project => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button className="btn" disabled={!canImport || !projectId} onClick={onPreview}>
+          Предпросмотр импорта
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -281,10 +291,16 @@ function ServerRow({
     <article className="mcp-row">
       <div className="mcp-r-top">
         <strong>{server.name}</strong>
-        <span className="mcp-st">{server.enabled ? 'включён' : 'выключен'}</span>
+        <span className={`pill mcp-status-pill ${mcpStatusTone(server.enabled ? 'enabled' : 'disabled')}`}>{mcpStatusLabel(server.enabled ? 'enabled' : 'disabled')}</span>
       </div>
       <p className="mcp-meta">
-        {server.transport} · {server.mode} · {server.machineScope.allMachines ? 'все машины' : server.machineScope.machineIds.join(', ')}
+        {[
+          server.transport === 'stdio' ? '\u041a\u043e\u043c\u0430\u043d\u0434\u0430 (stdio)' : '\u0423\u0434\u0430\u043b\u0451\u043d\u043d\u044b\u0439 HTTP',
+          MCP_MODE_LABELS[server.mode],
+          server.machineScope.allMachines ? '\u0432\u0441\u0435 \u043c\u0430\u0448\u0438\u043d\u044b' : server.machineScope.machineIds.join(', '),
+        ]
+          .filter(Boolean)
+          .join(' \u00b7 ')}
       </p>
       {server.url && <code className="mcp-target">{server.url}</code>}
       <SecretList secrets={server.secrets} />
@@ -299,7 +315,7 @@ function ServerRow({
         <button className="btn ghost" onClick={rename}>
           Переименовать
         </button>
-        <button className="btn ghost" onClick={remove}>
+        <button className="btn danger" onClick={remove}>
           Удалить
         </button>
       </div>
@@ -411,7 +427,7 @@ function RegistryOAuthControl({
       </label>
       {eligibleAgents.length === 0 && <small role="note">Нет доступной онлайн-машины с поддержкой MCP OAuth.</small>}
       <p className="mcp-meta" role="status">
-        {oauthStatusLabel(displayedState)}
+        <span className={`pill mcp-status-pill ${mcpStatusTone(displayedState)}`}>{oauthStatusLabel(displayedState)}</span>
         {selectedStatus?.expiresAt && selectedStatus.state !== 'needs-login' ? ` · срок токена: ${new Date(selectedStatus.expiresAt).toLocaleString()}` : ''}
       </p>
       {selectedStatus?.error && (
@@ -448,22 +464,7 @@ function RegistryOAuthControl({
 }
 
 function oauthStatusLabel(state: McpRegistryStatus['oauth'][number]['state']): string {
-  switch (state) {
-    case 'needs-login':
-      return 'Нужен вход';
-    case 'pending':
-      return 'Выполняется вход';
-    case 'signed-in':
-      return 'Вход выполнен';
-    case 'refresh-error':
-      return 'Ошибка обновления токена';
-    case 'expired':
-      return 'Срок входа истёк';
-    case 'failed':
-      return 'Ошибка входа';
-    case 'not-required':
-      return 'Вход не требуется';
-  }
+  return mcpStatusLabel(state);
 }
 
 function ServerConfigEditor({ server, machines, onSave }: { server: McpRegistryResponse['servers'][number]; machines: MachineOption[]; onSave: McpRegistryListProps['onUpdateServer'] }) {
@@ -497,14 +498,16 @@ function ServerConfigEditor({ server, machines, onSave }: { server: McpRegistryR
   return (
     <details className="mcp-server-editor">
       <summary>Изменить режим и доступ по машинам</summary>
-      <label>
-        Режим запуска
-        <select className="input" value={mode} onChange={event => setMode(event.target.value as typeof mode)}>
-          <option value="remote">remote</option>
-          <option value="machine-shared">machine-shared</option>
-          <option value="per-session">per-session</option>
-        </select>
-      </label>
+      <McpSegment
+        label="Режим запуска"
+        value={mode}
+        options={[
+          { value: 'remote', label: MCP_MODE_LABELS.remote, description: 'Подключение к удалённому серверу' },
+          { value: 'machine-shared', label: MCP_MODE_LABELS['machine-shared'], description: 'Один процесс для машины' },
+          { value: 'per-session', label: MCP_MODE_LABELS['per-session'], description: 'Отдельный процесс для сессии' },
+        ]}
+        onChange={setMode}
+      />
       <label>
         <input className="mcp-checkbox" type="checkbox" checked={allMachines} onChange={event => setAllMachines(event.target.checked)} />
         Все машины
@@ -515,7 +518,7 @@ function ServerConfigEditor({ server, machines, onSave }: { server: McpRegistryR
           {machines.map(machine => (
             <label key={machine.id}>
               <input className="mcp-checkbox" type="checkbox" checked={machineIds.includes(machine.id)} onChange={() => toggleMachine(machine.id)} />
-              {machine.name}
+              {machine.name} {!machine.online && <small>Не в сети</small>}
             </label>
           ))}
         </fieldset>
@@ -635,7 +638,7 @@ function GatewayList({ serverId, status }: { serverId: string; status: McpRegist
 
     return (
       <p className={`mcp-meta ${hasProblem ? 'bad' : ''}`} key={`${gateway.machineId}:${gateway.sessionId ?? ''}`}>
-        {machineName}: {gateway.status}
+        {machineName}: <span className={`pill mcp-status-pill ${mcpStatusTone(gateway.status)}`}>{mcpStatusLabel(gateway.status)}</span>
         {gateway.error ? ` — ${gateway.error}` : ''}
       </p>
     );
@@ -648,9 +651,12 @@ function DraftList({ drafts, onContinue }: { drafts: McpRegistryResponse['drafts
     <section aria-label="Черновики">
       <h3>Черновики от агента и мастера</h3>
       {drafts.map(draft => (
-        <div className="mcp-row" key={draft.draftId}>
-          <b>{draft.server.name}</b> · {draft.state}{' '}
-          <button className="btn primary" onClick={() => onContinue(draft)}>
+        <div className="mcp-row mcp-draft-row" key={draft.draftId}>
+          <div className="mcp-draft-summary">
+            <b>{draft.server.name}</b>
+            <span className={`pill mcp-status-pill ${mcpStatusTone(draft.state)}`}>{mcpStatusLabel(draft.state)}</span>
+          </div>
+          <button className="btn" onClick={() => onContinue(draft)}>
             Продолжить и подключить
           </button>
         </div>

@@ -48,6 +48,20 @@ export function decideNavigation(raw: string, publicOrigin: string): NavigationD
   return { kind: 'deny' };
 }
 
+/**
+ * «Открыть оригинал» of the lightbox (change image-viewer, D4): a stored image of the hub, `/api/blobs/<hex>` of its own
+ * origin. It opens in a window of its own instead of replacing the app in the main window.
+ */
+export function isImageViewerUrl(raw: string, publicOrigin: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  return u.origin === publicOrigin && /^\/api\/blobs\/[0-9a-f]+$/i.test(u.pathname);
+}
+
 /** Permissions the page may get (D2): everything else — including `notifications` — is refused. */
 export const ALLOWED_PERMISSIONS: ReadonlySet<string> = new Set(['clipboard-sanitized-write', 'fullscreen']);
 

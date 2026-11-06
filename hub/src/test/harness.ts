@@ -60,7 +60,7 @@ export async function startTestHub(
     keycloak?: boolean;
     /** Rate limits of the spec (default: raised — many logins from 127.0.0.1 in one test file). */
     limits?: Partial<Record<keyof typeof LIMITS, number>> | 'spec';
-  } & Pick<HubDeps, 'listenClientFactory' | 'listenRetryBaseMs' | 'uiPingIntervalMs' | 'sessions' | 'ops' | 'projects' | 'voice' | 'limitsProbe' | 'mcp' | 'mcpRegistry' | 'peers'> = {},
+  } & Pick<HubDeps, 'listenClientFactory' | 'listenRetryBaseMs' | 'uiPingIntervalMs' | 'sessions' | 'ops' | 'projects' | 'voice' | 'limitsProbe' | 'mcp' | 'mcpRegistry' | 'peers' | 'files'> = {},
 ): Promise<TestHub> {
   const tdb = await createTestDb();
   const store = opts.store ?? new MemoryStore();
@@ -102,6 +102,7 @@ export async function startTestHub(
     mcp: { sweepMs: 0, ...opts.mcp },
     ...(opts.mcpRegistry ? { mcpRegistry: opts.mcpRegistry } : {}),
     ...(opts.peers ? { peers: opts.peers } : {}),
+    ...(opts.files ? { files: opts.files } : {}),
     // subscription-limits: no scheduler timer (and no probes on hello) unless a test asks; tests call limits.tick()
     limitsProbe: { tickMs: 0, jitterMs: 0, ...opts.limitsProbe },
     store,
@@ -115,8 +116,8 @@ export async function startTestHub(
   const port = (hub.app.server.address() as AddressInfo).port;
   const loginResponse: TestHub['loginResponse'] = async (identity = {}, o = {}) => {
     const q = new URLSearchParams({ return: '/s/abc' });
-    // with Keycloak on, /auth/login without a provider is the choice page: Google unless asked
-    const asked = o.provider ?? (keycloak && !o.invite ? 'google' : undefined);
+    // /auth/login without a provider is the choice page: Google unless an invite decides
+    const asked = o.provider ?? (!o.invite ? 'google' : undefined);
     if (asked) q.set('provider', asked);
     if (o.invite) q.set('invite', o.invite);
     const start = await hub.app.inject({ method: 'GET', url: `/auth/login?${q.toString()}` });

@@ -133,6 +133,22 @@ describe('Updater (Requirement: Самообновление агента)', () 
     expect(restarts).toHaveLength(1);
   });
 
+  it('uses the latest offer received while busy, including a rebuilt archive with the same version', async () => {
+    let busy = true;
+    const secondTgz = makeTgz({ ...BUILD, 'agent.mjs': 'console.log("rebuilt")' });
+    const { u, appDir, sent, restarts, sha: secondSha } = setup({ tgz: secondTgz, busy: () => busy });
+    const firstSha = createHash('sha256').update(makeTgz(BUILD)).digest('hex');
+    const first = u.handle({ version: '0.2.0', sha256: firstSha, url: '/agent/agent-0.2.0.tgz' });
+    await new Promise(r => setTimeout(r, 30));
+    await u.handle({ version: '0.2.0', sha256: secondSha, url: '/agent/agent-0.2.0.tgz' });
+    busy = false;
+    await first;
+    expect(readFileSync(join(appDir!, 'versions', '0.2.0', 'agent.mjs'), 'utf8')).toContain('rebuilt');
+    expect(sent.map(s => s.status)).toEqual(['waiting', 'installing']);
+    expect(sent.some(s => s.error?.startsWith('sha_mismatch'))).toBe(false);
+    expect(restarts).toHaveLength(1);
+  });
+
   it('a turn started during the download/npm install: waits again before the restart, next is written after it', async () => {
     let busy = false;
     const { u, appDir, sent, restarts, sha } = setup({ busy: () => busy, onNpm: () => (busy = true) });

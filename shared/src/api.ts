@@ -1,6 +1,7 @@
 // Hub <-> web contracts (design.md D10). M1 + M2 subset; later milestones extend it.
 import { z } from 'zod';
 import type { SubagentStatus } from './subagents.js';
+import type { FsAgentErrorCode, FsEntry } from './files.js';
 import { LOCAL_PATH_MESSAGE, isAbsoluteLocalPath } from './paths.js';
 import { mcpActionSchema, providerSchema, subscriptionTokenSchema, type ClaudeLogin, type McpServerSnapshot, type Provider, type ProviderLoginStart, type ProviderStatus } from './protocol.js';
 
@@ -86,10 +87,27 @@ export interface MeResponse {
   voiceInput: boolean;
 }
 
+export const PROJECT_COLORS = ['scanner', 'platform', 'customers', 'support', 'infra', 'tools', 'org', 'ext', 'personal', 'rose', 'lime', 'slate'] as const;
+export type ProjectColorKey = (typeof PROJECT_COLORS)[number];
+export const projectColorSchema = z.enum(PROJECT_COLORS);
+
+/** Assign once; palette order breaks ties independently of project ordering. */
+export function allocateProjectColor(used: readonly string[], identity = ''): ProjectColorKey {
+  const hash = (key: string) => {
+    let n = 2166136261;
+    for (const ch of `${identity}:${key}`) n = Math.imul(n ^ ch.charCodeAt(0), 16777619);
+    return n >>> 0;
+  };
+  const count = (key: string) => used.filter(c => c === key).length;
+  return [...PROJECT_COLORS].sort((a, b) => count(a) - count(b) || (identity ? hash(a) - hash(b) : PROJECT_COLORS.indexOf(a) - PROJECT_COLORS.indexOf(b)))[0]!;
+}
+
 /** Manually curated project catalog (projects-catalog 1.12). Paths are returned only in runner-specific binding data. */
 export interface UserProjectView {
   id: string;
   name: string;
+  colorKey: ProjectColorKey;
+  sessionCount?: number;
   description: string;
   remote: string | null;
   archived: boolean;
@@ -97,7 +115,13 @@ export interface UserProjectView {
   bindings: Array<{ runnerId: string; path: string }>;
 }
 export const createUserProjectSchema = z.object({
-  name: z.string().trim().min(1).max(120),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(120)
+    .transform(v => v.normalize('NFC')),
+  colorKey: projectColorSchema.optional(),
   description: z.string().max(2000).optional(),
   remote: z.string().max(2000).nullable().optional(),
   path: z.string().min(1).max(4096).refine(isAbsoluteLocalPath, LOCAL_PATH_MESSAGE).optional(),
@@ -105,10 +129,26 @@ export const createUserProjectSchema = z.object({
 });
 export type CreateUserProject = z.infer<typeof createUserProjectSchema>;
 export const patchUserProjectSchema = z
-  .object({ name: z.string().trim().min(1).max(120).optional(), description: z.string().max(2000).optional(), remote: z.string().max(2000).nullable().optional(), archived: z.boolean().optional() })
+  .object({
+    bindings: z
+      .array(z.object({ runnerId: z.string().min(1).max(200), path: z.string().min(1).max(4096).refine(isAbsoluteLocalPath, LOCAL_PATH_MESSAGE).nullable() }))
+      .max(100)
+      .optional(),
+    colorKey: projectColorSchema.optional(),
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(120)
+      .transform(v => v.normalize('NFC'))
+      .optional(),
+    description: z.string().max(2000).optional(),
+    remote: z.string().max(2000).nullable().optional(),
+    archived: z.boolean().optional(),
+  })
   .refine(v => Object.keys(v).length > 0);
 export const bindUserProjectSchema = z.object({ path: z.string().min(1).max(4096).refine(isAbsoluteLocalPath, LOCAL_PATH_MESSAGE) });
-export const userProjectListQuerySchema = z.object({ sort: z.enum(['recent', 'name']).default('recent') });
+export const userProjectListQuerySchema = z.object({ sort: z.enum(['recent', 'name']).default('recent'), includeArchived: z.enum(['0', '1']).default('0') });
 export const userProjectParamsSchema = z.object({ id: z.guid() });
 export const userProjectBindingParamsSchema = z.object({ id: z.guid(), runnerId: z.string().trim().min(1).max(200) });
 export const userProjectResolveQuerySchema = z.object({ runnerId: z.string().trim().min(1).max(200).optional() });
@@ -137,7 +177,7 @@ export type DisplayStatus = SessionStatus | 'offline' | 'external';
 export type SessionSource = 'hub' | 'terminal' | 'orca' | 'desktop' | 'sdk' | 'cron' | 'drive_import';
 
 /** Colour key of a vault area (D9 p.5). */
-export type ColorKey = 'scanner' | 'platform' | 'customers' | 'support' | 'infra' | 'tools' | 'org' | 'ext' | 'personal' | 'none';
+export type ColorKey = 'scanner' | 'platform' | 'customers' | 'support' | 'infra' | 'tools' | 'org' | 'ext' | 'personal' | 'rose' | 'lime' | 'slate' | 'none';
 
 /** Kind of a catalogue element (D9): area of the vault, system, project, code clone, built-in «Vault»/«Знания». */
 export type ProjectKind = 'area' | 'system' | 'project' | 'repo' | 'builtin';
@@ -201,6 +241,9 @@ export interface SessionView {
   project: ProjectRef;
   /** User-owned project catalog link; when present it is the session's visible project. */
   catalogProject?: { id: string; name: string } | null;
+  catalogProjectSource?: 'explicit' | 'auto' | 'manual' | null;
+  catalogProjectReason?: string | null;
+  projectSuggestion?: ProjectSuggestionView | null;
   projectSource: 'auto' | 'manual' | 'inherited' | 'none';
   /**
    * The line under the chat head (D9 p. 6): «2 правки и 5 чтений в 05-agent-hub», «каталог запуска в X», «git remote g/r»
@@ -658,6 +701,8 @@ export const wakeRequestSchema = z.object({ force: z.boolean().optional() });
 
 export const patchSessionRequestSchema = z
   .object({
+    /** Manual rename (spec session-title): the title becomes `custom` and is no longer replaced by the transcript. */
+    title: z.string().trim().min(1).max(200).optional(),
     permissionMode: uiMode.optional(),
     model: z.string().min(1).max(200).optional(),
     idleTimeoutMin: z
@@ -1461,3 +1506,99 @@ export const MCP_TEXTS = {
   machineHint: 'Войти — в панели MCP любой сессии на этой машине',
   probeWarning: 'Проверка запускает локальные MCP-серверы машины',
 } as const;
+
+/** projects-catalog: the card of an unconfident classification — up to 3 projects, a new project by name, «Без проекта». */
+export interface ProjectSuggestionView {
+  inputHash: string;
+  options: Array<{ projectId: string; name: string; colorKey: ProjectColorKey }>;
+  newProjectName: string | null;
+}
+export const projectSuggestionAnswerSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('accept'), projectId: z.uuid(), inputHash: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+  z
+    .object({
+      action: z.literal('create'),
+      name: z
+        .string()
+        .trim()
+        .min(1)
+        .max(120)
+        .transform(v => v.normalize('NFC')),
+      inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+    })
+    .strict(),
+  z.object({ action: z.literal('dismiss'), inputHash: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+]);
+export type ProjectSuggestionAnswer = z.infer<typeof projectSuggestionAnswerSchema>;
+
+// ---------- file explorer (change `tool-windows-file-explorer`, design D3) ----------
+
+/** Errors of GET /api/runners/:runnerId/fs/list and fs/file: the agent's codes plus the hub's own. */
+export const FS_HUB_ERROR_CODES = [
+  'invalid_request',
+  'forbidden_origin',
+  'runner_not_found',
+  'runner_offline',
+  'root_unknown',
+  'capability_unavailable',
+  'too_many_requests',
+  'agent_timeout',
+] as const;
+export type FsErrorCode = FsAgentErrorCode | (typeof FS_HUB_ERROR_CODES)[number];
+/** HTTP status of each code. */
+export const FS_ERROR_STATUS: Record<FsErrorCode, number> = {
+  invalid_request: 400,
+  invalid_path: 400,
+  forbidden_origin: 403,
+  restricted: 403,
+  outside_root: 403,
+  runner_not_found: 404,
+  not_found: 404,
+  runner_offline: 409,
+  root_unknown: 409,
+  capability_unavailable: 409,
+  too_large: 413,
+  not_directory: 422,
+  not_file: 422,
+  too_many_requests: 429,
+  io_error: 502,
+  agent_timeout: 504,
+  permission_denied: 403,
+  unsupported: 415,
+};
+
+/**
+ * Query of GET /api/runners/:runnerId/fs/list. No `root`: the hub takes the session cwd (with sessionId) or the machine home.
+ * `path` is absolute and defaults to the root; `hidden` shows dotfiles.
+ */
+export const fsListQuerySchema = z.object({
+  path: z.string().min(1).max(4096).optional(),
+  sessionId: z.uuid().optional(),
+  hidden: z.enum(['0', '1']).optional(),
+});
+export type FsListQuery = z.infer<typeof fsListQuerySchema>;
+export const fsFileQuerySchema = z.object({ path: z.string().min(1).max(4096), sessionId: z.uuid().optional() });
+export type FsFileQuery = z.infer<typeof fsFileQuerySchema>;
+
+/** 200 of fs/list. */
+export interface FsListResponse {
+  /** realpath of the listed folder */
+  path: string;
+  entries: FsEntry[];
+  truncated: boolean;
+  total: number;
+}
+/** Error body of both fs routes (the usual `{ error, message }` of the hub). */
+export interface FsErrorResponse {
+  error: FsErrorCode;
+  message?: string;
+}
+/** 415 of fs/file for a file of class `binary`: nothing is sent, only what the viewer shows. */
+export interface FsUnsupportedResponse {
+  error: 'unsupported';
+  kind: 'binary';
+  size: number;
+  mime: string;
+}
+/** Headers of 200 of fs/file besides Content-Type: X-File-Kind is an FsFileKind, X-File-Size the size in bytes. */
+export const FS_FILE_HEADERS = { kind: 'x-file-kind', size: 'x-file-size' } as const;

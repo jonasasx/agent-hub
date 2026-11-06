@@ -7,7 +7,7 @@ async function start(page: Page, tabs: number[] = [1, 4]) {
   const hub = new MockHub({ tabs });
   await hub.install(page);
   await page.goto('/');
-  await expect(page.getByRole('list', { name: 'Машины' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Сессии и проекты' })).toBeVisible();
   return hub;
 }
 

@@ -10,12 +10,6 @@ import { reasonText, windowText } from './limitTexts';
 
 export const LIMIT_WARN = 80;
 export const LIMIT_CRIT = 95;
-/** The block becomes one summary row from this many active subscriptions (Ivan, 2026-10-27). */
-export const LIMITS_COLLAPSE_PHONE = 3;
-export const LIMITS_COLLAPSE_DESKTOP = 4;
-
-export const collapseFrom = (device: 'phone' | 'desktop') => (device === 'phone' ? LIMITS_COLLAPSE_PHONE : LIMITS_COLLAPSE_DESKTOP);
-
 export type Level = 'ok' | 'warn' | 'crit' | 'full';
 /** The badge of a row: a level, or a state without a level. */
 export type Badge = Level | 'nodata' | 'quiet' | 'neutral';
@@ -215,17 +209,6 @@ export function rowModel(sub: SubscriptionView, lim: SubscriptionLimitsView | un
 
 /** «82», «82.5»: one decimal at most, no trailing zero. */
 export const fmtPct = (n: number) => String(Math.round(n * 10) / 10);
-
-const RANK: Record<Badge, number> = { full: 5, crit: 4, warn: 3, ok: 2, quiet: 1, neutral: 0, nodata: 0 };
-
-/** The subscription of the summary: the highest level, then the highest percent; the registry order breaks ties. */
-export function worst<T extends { row: RowModel }>(rows: T[]): T | null {
-  let best: T | null = null;
-  for (const r of rows) {
-    if (!best || RANK[r.row.badge] > RANK[best.row.badge] || (RANK[r.row.badge] === RANK[best.row.badge] && (r.row.pct ?? -1) > (best.row.pct ?? -1))) best = r;
-  }
-  return best;
-}
 
 /** Seconds until «Обновить» is allowed again; 0 — now. */
 export function refreshLeft(lim: Pick<SubscriptionLimitsView, 'refreshableAt'> | undefined, now: number): number {

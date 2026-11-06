@@ -1,6 +1,6 @@
 // Requirements: Навигация и внешние ссылки; Изоляция окна (design D3, D2).
 import { describe, expect, it } from 'vitest';
-import { decideNavigation, isPermissionAllowed, isPermissionCheckAllowed, safeReturnPath } from './navigation.js';
+import { decideNavigation, isImageViewerUrl, isPermissionAllowed, isPermissionCheckAllowed, safeReturnPath } from './navigation.js';
 
 const HUB = 'https://hub.example.com';
 const ID = 'dd346743-9bbb-5c33-a0c4-38db15ed5df6';
@@ -117,5 +117,21 @@ describe('permissions', () => {
       expect(isPermissionAllowed('clipboard-sanitized-write', d)).toBe(true);
       expect(isPermissionAllowed('fullscreen', d)).toBe(true);
     });
+  });
+});
+
+describe('isImageViewerUrl (image-viewer D4)', () => {
+  const SHA = 'ab'.repeat(32);
+  it('a stored image of the hub opens in the image window', () => {
+    expect(isImageViewerUrl(`${HUB}/api/blobs/${SHA}`, HUB)).toBe(true);
+    expect(isImageViewerUrl(`${HUB}/api/blobs/${SHA}?retry=1`, HUB)).toBe(true);
+  });
+  it('other hub pages, nested paths and foreign origins do not', () => {
+    expect(isImageViewerUrl(`${HUB}/s/${ID}`, HUB)).toBe(false);
+    expect(isImageViewerUrl(`${HUB}/api/blobs/${SHA}/x`, HUB)).toBe(false);
+    expect(isImageViewerUrl(`${HUB}/api/blobs/`, HUB)).toBe(false);
+    expect(isImageViewerUrl(`${HUB}/api/blobs/../auth/login`, HUB)).toBe(false);
+    expect(isImageViewerUrl(`https://evil.example.com/api/blobs/${SHA}`, HUB)).toBe(false);
+    expect(isImageViewerUrl('not a url', HUB)).toBe(false);
   });
 });

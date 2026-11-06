@@ -14,7 +14,7 @@ async function openWindow(ctx: BrowserContext, hub: MockHub): Promise<Page> {
   const page = await ctx.newPage();
   await hub.install(page);
   await page.goto('/');
-  await expect(page.getByRole('list', { name: 'Машины' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Сессии и проекты' })).toBeVisible();
   return page;
 }
 

@@ -1,6 +1,19 @@
 // Sessions, chat items and their views (design.md D6, D10).
 import { sql, type Selectable } from 'kysely';
-import type { ColorKey, HubEvent, PermissionView, ProjectKind, ProjectRef, SessionView, SubscriptionMode, SubscriptionNote, UiPermissionMode, PermissionKind, QuestionView } from '@agent-hub/shared';
+import type {
+  ColorKey,
+  HubEvent,
+  PermissionView,
+  ProjectKind,
+  ProjectRef,
+  SessionView,
+  SubscriptionMode,
+  SubscriptionNote,
+  UiPermissionMode,
+  PermissionKind,
+  ProjectSuggestionView,
+  QuestionView,
+} from '@agent-hub/shared';
 import { supportsSubscriptions } from '../subscriptions/repo.js';
 import { evidenceOf } from '../projects/service.js';
 import type { Db, PermissionRequestsTable, SessionsTable } from '../db/db.js';
@@ -30,8 +43,13 @@ export type SessionRow = Selectable<SessionsTable> & {
   subscription_name?: string | null;
   active_subscriptions?: string | number | null;
   runner_protocol?: string | null;
+  catalog_project_color?: ColorKey | null;
+  hidden_project?: boolean;
   catalog_project_id?: string | null;
   catalog_project_name?: string | null;
+  catalog_project_source?: 'explicit' | 'auto' | 'manual' | null;
+  catalog_project_reason?: string | null;
+  project_suggestion?: ProjectSuggestionView | null;
 };
 
 /**
@@ -115,8 +133,11 @@ export function toSessionView(r: SessionRow, defaults: TimeoutDefaults, projects
     remoteControl: r.remote_control,
     isDriveImport: r.is_drive_import,
     readOnlyReason: r.read_only_reason,
-    project: catalogProject ? { id: catalogProject.id, title: catalogProject.name, colorKey: 'none', path: '' } : projectRef(projects, r.project_id),
-    ...(catalogProject ? { catalogProject } : {}),
+    project: catalogProject
+      ? { id: catalogProject.id, title: catalogProject.name, colorKey: r.catalog_project_color ?? 'none', path: '' }
+      : projectRef(projects, r.hidden_project ? null : r.project_id),
+    ...(catalogProject ? { catalogProject, catalogProjectSource: r.catalog_project_source, catalogProjectReason: r.catalog_project_reason } : {}),
+    ...(r.project_suggestion ? { projectSuggestion: r.project_suggestion } : {}),
     projectSource: r.project_source,
     projectEvidence: evidenceOf(r.project_source, r.project_evidence),
     secondaryProject: r.secondary_project_id ? projectRef(projects, r.secondary_project_id) : null,
@@ -193,11 +214,26 @@ export function selectSessions(db: Db) {
         + (SELECT count(*) FROM sessions c WHERE c.spawned_by = s.id AND ${hubChildAlive}))`.as('children_working'),
       // change `background-tasks`: monitors and background commands shown in the list (started ones)
       sql<string>`(SELECT count(*) FROM background_tasks b WHERE b.session_id = s.id AND b.state != 'pending')`.as('background_total'),
+      sql<boolean>`EXISTS (SELECT 1 FROM hidden_project_groups h WHERE h.user_id=s.user_id AND h.project_id=s.project_id)`.as('hidden_project'),
+      sql<ColorKey | null>`(SELECT cp.color_key FROM session_projects sp JOIN catalog_projects cp ON cp.id=sp.project_id AND cp.user_id=sp.user_id WHERE sp.session_id=s.id AND sp.user_id=s.user_id)`.as(
+        'catalog_project_color',
+      ),
       sql<string | null>`(SELECT p.tool_name FROM permission_requests p WHERE p.session_id = s.id AND p.resolved_at IS NULL ORDER BY p.created_at LIMIT 1)`.as('pending_tool'),
       // claude-subscriptions (P8): the head of the tab
       sql<string | null>`(SELECT sub.name FROM subscriptions sub WHERE sub.id = s.subscription_id)`.as('subscription_name'),
       sql<string>`(SELECT count(*) FROM subscriptions sub WHERE sub.user_id = s.user_id AND sub.retired_at IS NULL)`.as('active_subscriptions'),
       sql<string | null>`(SELECT r.protocol_version FROM runners r WHERE r.id = s.runner_id)`.as('runner_protocol'),
+      sql<'explicit' | 'auto' | 'manual' | null>`(SELECT sp.source FROM session_projects sp WHERE sp.session_id=s.id AND sp.user_id=s.user_id)`.as('catalog_project_source'),
+      sql<string | null>`(SELECT sp.reason_code FROM session_projects sp WHERE sp.session_id=s.id AND sp.user_id=s.user_id)`.as('catalog_project_reason'),
+      // the card: options in the classifier's order, only active projects of the owner; nothing to offer — no card
+      sql<ProjectSuggestionView | null>`(SELECT json_build_object(
+          'inputHash', ps.input_hash,
+          'newProjectName', ps.new_project_name,
+          'options', COALESCE((SELECT json_agg(json_build_object('projectId', p.id, 'name', p.name, 'colorKey', p.color_key) ORDER BY o.n)
+            FROM unnest(ps.options) WITH ORDINALITY o(id, n) JOIN catalog_projects p ON p.id = o.id AND p.user_id = ps.user_id AND NOT p.archived), '[]'::json))
+        FROM project_suggestions ps
+        WHERE ps.user_id = s.user_id AND ps.session_id = s.id AND ps.state = 'pending' AND s.project_source <> 'manual'
+          AND NOT EXISTS (SELECT 1 FROM session_projects sp WHERE sp.session_id = s.id AND sp.user_id = s.user_id))`.as('project_suggestion'),
       sql<
         string | null
       >`(SELECT cp.id FROM session_projects sp JOIN catalog_projects cp ON cp.id = sp.project_id AND cp.user_id = sp.user_id WHERE sp.session_id = s.id AND sp.user_id = s.user_id)`.as(

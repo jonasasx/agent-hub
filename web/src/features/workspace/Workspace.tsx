@@ -7,10 +7,15 @@
 import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import { useStore } from '../../store';
 import { Chat, SubagentChat, ModeModelMenu } from '../chat/Chat';
+import { SessionTitle } from '../chat/SessionTitle';
 import { Glyph } from '../sessions/Glyph';
 import { colorVar, displayStatus, runnerIndex, statusText, tabNeedsGlyph } from '../sessions/status';
-import { insertSlot, leaves, slotTarget, topRight, zoneBox, zoneHint, zoneOf, type InsertSlot, type LayoutNode, type Zone } from '../layout/layout';
-import { activateTab, closePane, closeTab, dropSplit, dropToPane, focusPane, setRatio, toggleSingle } from './actions';
+import { insertSlot, isFileTab, leaves, parseFileTabId, slotTarget, topRight, zoneBox, zoneHint, zoneOf, type InsertSlot, type LayoutNode, type Zone } from '../layout/layout';
+import { FileIcon, nameKind } from '../files/fileIcons';
+import { FileViewer } from '../files/FileViewer';
+import { useFiles } from '../files/filesStore';
+import { baseName, parentOf } from '../files/paths';
+import { activateTab, closePane, closeTab, dropSplit, dropToPane, focusPane, pinFileTab, setRatio, toggleSingle } from './actions';
 import { backToList } from './phoneHistory';
 import { SUBAGENT_STATUS_LABEL, subStatus, subTitle } from '../subagents/model';
 import { SubStatusDot } from '../subagents/SubagentViews';
@@ -52,7 +57,14 @@ function Tab({ sid, paneId, index, active, keyed, dropCls }: { sid: string; pane
   const idx = runnerIndex(runners);
   const st = s ? displayStatus(s, idx) : null;
   // a subagent's tab (change `subagents` S9): «Субагент · <описание>»
-  const title = isSub ? (sub ? `Субагент · ${subTitle(sub)}` : 'Субагент…') : (s?.title ?? 'Загрузка…');
+  // a file tab (change tool-windows-file-explorer): the file name, italic while it is a preview
+  const file = parseFileTabId(sid);
+  const preview = useFiles(f => !!file && !f.pinned.includes(sid));
+  const fileMachine = useStore(st => (file ? st.runners.find(r => r.id === file.runnerId)?.name : undefined));
+  // two open files with one name: the name of the folder helps to tell them apart
+  const sameName = useStore(st => !!file && Object.values(st.ws.panes).some(p => p.tabs.some(t => t !== sid && baseName(parseFileTabId(t)?.path ?? '') === baseName(file.path))));
+  const title = file ? baseName(file.path) : isSub ? (sub ? `Субагент · ${subTitle(sub)}` : 'Субагент…') : (s?.title ?? 'Загрузка…');
+  const fileHint = file && sameName ? baseName(parentOf(file.path) ?? '') : '';
   const close = (e: MouseEvent) => {
     e.stopPropagation();
     closeTab(sid);
@@ -68,7 +80,7 @@ function Tab({ sid, paneId, index, active, keyed, dropCls }: { sid: string; pane
   };
   return (
     <div
-      className={`tab${active ? ' active' : ''}${s?.spawnedBy ? ' hub-child' : ''}${dropCls}`}
+      className={`tab${active ? ' active' : ''}${s?.spawnedBy ? ' hub-child' : ''}${file ? ' file' : ''}${file && preview ? ' preview' : ''}${dropCls}`}
       role="tab"
       tabIndex={0}
       aria-selected={active}
@@ -79,8 +91,15 @@ function Tab({ sid, paneId, index, active, keyed, dropCls }: { sid: string; pane
       onDragStart={e => startTabDrag(e, sid)}
       onDragEnd={() => useStore.setState({ dragSid: null })}
       style={{ '--gc': colorVar((s ?? parent)?.project.colorKey) } as CSSProperties}
-      title={s && st ? `${s.title} · ${s.project.title} · ${statusText(s, st)}${s.spawnedBy ? ` · субагент сессии «${s.spawnedBy.title}»` : ''}` : title}
+      title={
+        file
+          ? `${fileMachine ?? file.runnerId} · ${file.path}${preview ? ' — предпросмотр, двойной клик закрепит' : ''}`
+          : s && st
+            ? `${s.title} · ${s.project.title} · ${statusText(s, st)}${s.spawnedBy ? ` · субагент сессии «${s.spawnedBy.title}»` : ''}`
+            : title
+      }
       onClick={() => activateTab(paneId, sid)}
+      onDoubleClick={file ? () => pinFileTab(sid) : undefined}
       onKeyDown={onKey}
       // Requirement: Мои вкладки — scenario «Закрытие вкладки колёсиком»: no autoscroll, the session is not opened.
       onMouseDown={e => {
@@ -95,8 +114,11 @@ function Tab({ sid, paneId, index, active, keyed, dropCls }: { sid: string; pane
     >
       {s && st && tabNeedsGlyph(s, idx) && <Glyph status={st} unread={s.unread} label={statusText(s, st)} />}
       {subGlyph && subSt && <SubStatusDot status={subSt} />}
-      <span className="pdot" />
-      <span className="t-title">{title}</span>
+      {file ? <FileIcon kind={nameKind(file.path)} /> : <span className="pdot" />}
+      <span className="t-title">
+        {title}
+        {fileHint ? <span className="fx-tab-hint"> {fileHint}</span> : null}
+      </span>
       {keyed && index < 8 && <span className="t-key">{index + 1}</span>}
       <button type="button" className="t-close" aria-label={`Убрать из вкладок: ${title}`} tabIndex={-1} onClick={close}>
         ×
@@ -181,6 +203,7 @@ function Leaf({ paneId, multi, phone }: { paneId: string; multi: boolean; phone:
   const pane = useStore(st => st.ws.panes[paneId]);
   const focused = useStore(st => st.ws.focus === paneId);
   const session = useStore(st => (pane?.active && !st.tabKinds[pane.active] ? st.sessions[pane.active] : undefined));
+  const fileId = pane?.active && isFileTab(pane.active) ? pane.active : null;
   const subId = useStore(st => (pane?.active && st.tabKinds[pane.active] === 'subagent' ? pane.active : null));
   const dragSid = useStore(st => st.dragSid);
   const paneCount = useStore(st => leaves(st.ws.layout).length);
@@ -218,7 +241,9 @@ function Leaf({ paneId, multi, phone }: { paneId: string; multi: boolean; phone:
       onDrop={onDrop}
     >
       {!phone && <TabBar paneId={paneId} multi={multi} />}
-      {subId ? (
+      {fileId ? (
+        <FileViewer key={fileId} tabId={fileId} />
+      ) : subId ? (
         <SubagentChat key={subId} id={subId} />
       ) : session ? (
         <Chat key={session.id} session={session} paneId={paneId} />
@@ -310,6 +335,9 @@ function PhoneBar() {
   });
   const runners = useStore(st => st.runners);
   const st = s ? displayStatus(s, runnerIndex(runners)) : null;
+  // a file over the list (task 7.2): the file name, the machine under it
+  const activeId = useStore(st => st.ws.panes[st.ws.focus]?.active);
+  const file = activeId ? parseFileTabId(activeId) : null;
   // UI review M10: status as a glyph next to the title, mode and model behind «⋯»; the fork button comes with M4
   return (
     <div className="mbar">
@@ -318,7 +346,19 @@ function PhoneBar() {
       </button>
       <span className="mt">
         {s && st && <Glyph status={st} unread={s.unread} />}
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub ? `Субагент · ${subTitle(sub)}` : (s?.title ?? '')}</span>
+        {file ? (
+          <>
+            <FileIcon kind={nameKind(file.path)} />
+            <span className="fx-mt-file">
+              <span className="nm">{baseName(file.path)}</span>
+              <small>{runners.find(r => r.id === file.runnerId)?.name ?? file.runnerId} · только чтение</small>
+            </span>
+          </>
+        ) : s && !sub ? (
+          <SessionTitle sessionId={s.id} title={s.title} />
+        ) : (
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub ? `Субагент · ${subTitle(sub)}` : ''}</span>
+        )}
       </span>
       {s && !sub && <ModeModelMenu s={s} />}
     </div>

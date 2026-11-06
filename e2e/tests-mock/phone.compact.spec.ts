@@ -7,7 +7,7 @@ async function open(page: Page, title: string) {
   const hub = new MockHub({ tabs: [1], projects: true });
   await hub.install(page);
   await page.goto('/');
-  await expect(page.getByRole('list', { name: 'Машины' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Сессии и проекты' })).toBeVisible();
   await page.getByRole('button', { name: 'Найти сессию' }).click();
   await page.getByRole('combobox', { name: 'Сессия или проект' }).fill(title);
   await page

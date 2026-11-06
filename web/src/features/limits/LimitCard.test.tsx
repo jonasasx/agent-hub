@@ -1,14 +1,14 @@
-// Tasks 6.2 and 6.4: the limits store/actions and the components (block, row, summary, card, chip).
+// Tasks 6.2 and 6.4: the limits store/actions and the components (card, chip). The old block of rows in the left panel is
+// gone (tool-windows-file-explorer): the card is opened here by a test-local button, as the row did.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { SessionView, SubscriptionLimitsView, SubscriptionView } from '../../api/types';
 import { useStore } from '../../store';
 import { mockFetch, resetStore, runner, session } from '../../test/factories';
-import { Sidebar } from '../sidebar/Sidebar';
 import { Chat } from '../chat/Chat';
 import { handleServerMessage } from '../workspace/actions';
-import { SUB_A, SUB_B, SUB_C, subView, subsResponse } from '../subscriptions/fixtures';
+import { SUB_A, SUB_B, subView, subsResponse } from '../subscriptions/fixtures';
 import { clock } from '../subscriptions/model';
 import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -16,8 +16,7 @@ import { useDialog } from '../ui/a11y';
 import { LimitCard } from './LimitCard';
 import { LimitChip } from './LimitChip';
 import { limitsClock } from './parts';
-import { SubscriptionLimits } from './SubscriptionLimits';
-import { loadLimits } from './actions';
+import { loadLimits, openLimitCard } from './actions';
 import { limResponse, limView, win } from './fixtures';
 
 const at = (min: number) => new Date(Date.now() + min * 60_000).toISOString();
@@ -50,10 +49,24 @@ function setup(
   useStore.setState({ runners: R16, subs: subsResponse({ subscriptions: subs }), limits: limResponse(limits) });
 }
 
+/** What opens the card in these tests: one button per subscription (the name starts like the old row's). */
+function Openers() {
+  const subs = useStore(st => st.subs?.subscriptions ?? []);
+  return (
+    <>
+      {subs.map(sub => (
+        <button key={sub.id} type="button" data-sub={sub.id} data-lim-trigger="" onClick={() => openLimitCard(sub.id, 'row')}>
+          {sub.name}: карточка
+        </button>
+      ))}
+    </>
+  );
+}
+
 function block() {
   return render(
     <>
-      <SubscriptionLimits />
+      <Openers />
       <button type="button">снаружи</button>
       <LimitCard />
     </>,
@@ -62,108 +75,20 @@ function block() {
 
 const rowOf = (name: string) => screen.getByRole('button', { name: new RegExp(`^${name}: `) });
 
-describe('the block «Лимиты»', () => {
-  beforeEach(resetStore);
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.useRealTimers();
-  });
-
-  it('Блок виден над подвалом: in the panel between the projects and the machines footer, outside the scroll', () => {
-    setup();
-    mockFetch({});
-    const { container } = render(<Sidebar onLogout={vi.fn()} />);
-    const section = screen.getByRole('region', { name: 'Лимиты подписок' });
-    expect(section.nextElementSibling).toHaveClass('side-bottom');
-    expect(section.closest('.side-scroll')).toBeNull();
-    expect(container.querySelector('.side-scroll')!.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  it('rows: the accessible name has the window, the percent, the level and the reset; the bar inside the button is decorative (review A7)', () => {
-    setup();
-    block();
-    const row = rowOf('Max личная');
-    expect(row).toHaveAccessibleName(`Max личная: 5 часов, 82%, близко к лимиту, сброс ${clock(at(130))}. Подробнее`);
-    expect(row).toHaveTextContent(`близко · 5 ч · 82% · ${clock(at(130))}`);
-    expect(within(row).queryByRole('progressbar')).toBeNull();
-    const bar = row.querySelector('.lbar')!;
-    expect(bar).toHaveAttribute('aria-hidden', 'true');
-    expect(bar).toHaveAttribute('data-value', '82');
-    expect(bar).toHaveClass('warn');
-    expect(rowOf('Pro рабочая')).toHaveTextContent('5 ч · 11%');
-  });
-
-  it('Нет подписок: empty registry, tokens not kept or no limits API — no block', () => {
-    setup([], []);
-    const { container, rerender } = block();
-    expect(container.querySelector('.lim')).toBeNull();
-    useStore.setState({ subs: subsResponse({ enabled: false }), limits: limResponse([live()]) });
-    rerender(<SubscriptionLimits />);
-    expect(container.querySelector('.lim')).toBeNull();
-    useStore.setState({ subs: subsResponse(), limits: null });
-    rerender(<SubscriptionLimits />);
-    expect(container.querySelector('.lim')).toBeNull();
-  });
-
-  it('Много подписок: five on the desktop fold into the worst one, a click unfolds them, the header folds back', async () => {
-    const five = ['A', 'B', 'C', 'D', 'E'].map((n, i) => subView({ id: `00000000-0000-4000-a000-00000000010${i}`, name: `Подписка ${n}`, position: i }));
-    setup(
-      five,
-      five.map((s, i) => live({ subscriptionId: s.id, windows: [win({ utilization: [20, 97, 50, 85, 10][i]!, resetsAt: at(100) })] })),
-    );
-    block();
-    const sum = screen.getByRole('button', { name: /^Лимиты, худшая подписка Подписка B: .*97%.*Развернуть 5$/ });
-    expect(sum).toHaveTextContent('худшая: Подписка B 97%');
-    expect(sum).toHaveTextContent('почти');
-    await userEvent.click(sum);
-    expect(screen.getAllByRole('button', { name: /Подробнее$/ })).toHaveLength(5);
-    await userEvent.click(screen.getByRole('button', { name: 'свернуть' }));
-    expect(screen.queryAllByRole('button', { name: /Подробнее$/ })).toHaveLength(0);
-  });
-
-  it('the threshold: three subscriptions — rows on the desktop, the summary on the phone', () => {
-    const three = [subView(), subView({ id: SUB_B, name: 'Pro рабочая', position: 1 }), subView({ id: SUB_C, name: 'Третья', position: 2 })];
-    setup(three, [live(), live({ subscriptionId: SUB_B }), live({ subscriptionId: SUB_C })]);
-    const { rerender } = block();
-    expect(screen.getAllByRole('button', { name: /Подробнее$/ })).toHaveLength(3);
-    act(() => useStore.setState({ device: 'phone' }));
-    rerender(<SubscriptionLimits />);
-    expect(screen.getByRole('button', { name: /^Лимиты, худшая подписка/ })).toBeInTheDocument();
-  });
-
-  it('«нет данных» with reasons, «ниже порога · проверено», «исчерпана до»', () => {
-    const subs = [
-      subView(),
-      subView({ id: SUB_B, name: 'Pro рабочая', position: 1, tokenRejected: true }),
-      subView({ id: SUB_C, name: 'Третья', position: 2, limitResetsAt: at(90), limitKind: 'seven_day' }),
-    ];
-    setup(subs, [limView({ windows: [], lastOkAt: null, quietAt: at(-12) }), live({ subscriptionId: SUB_B }), live({ subscriptionId: SUB_C })]);
-    useStore.setState({ limitsCollapsed: false });
-    block();
-    expect(rowOf('Max личная')).toHaveTextContent(`ниже порога · проверено ${clock(at(-12))}`);
-    expect(within(rowOf('Max личная')).queryByRole('progressbar')).toBeNull();
-    expect(rowOf('Pro рабочая')).toHaveTextContent('нет данных: токен отклонён');
-    expect(rowOf('Третья')).toHaveTextContent(`исчерпана до ${clock(at(90))}`);
-  });
-
-  it('agent_outdated: the row shows the short form, the accessible name and the card name the machine (QA 8.1)', async () => {
-    setup([subView()], [limView({ state: 'unavailable', reason: 'agent_outdated', windows: [] })]);
-    useStore.setState({ runners: [runner({ name: 'HP', protocolVersion: '1.5' })] });
-    mockFetch({});
-    block();
-    const row = rowOf('Max личная');
-    expect(row.querySelector('.ll')).toHaveTextContent(/^нет данных: обновите агента$/);
-    expect(row).toHaveAccessibleName(/нет данных: обновите агента на HP/);
-    await userEvent.click(row);
-    expect(within(screen.getByRole('dialog', { name: /Max личная/ })).getByText(/Нет данных: обновите агента на HP\./)).toBeInTheDocument();
-  });
-});
-
 describe('the card', () => {
   beforeEach(resetStore);
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
+  });
+
+  it('agent_outdated: the card names the machine (QA 8.1)', async () => {
+    setup([subView()], [limView({ state: 'unavailable', reason: 'agent_outdated', windows: [] })]);
+    useStore.setState({ runners: [runner({ name: 'HP', protocolVersion: '1.5' })] });
+    mockFetch({});
+    block();
+    await userEvent.click(rowOf('Max личная'));
+    expect(within(screen.getByRole('dialog', { name: /Max личная/ })).getByText(/Нет данных: обновите агента на HP\./)).toBeInTheDocument();
   });
 
   it('opening shows windows with descriptions and makes no refresh request; Esc closes and returns the focus', async () => {
@@ -263,19 +188,17 @@ describe('the card', () => {
     expect(n).toBe(1);
   });
 
-  it('a window below the threshold older than the quiet check — the row says «ниже порога», the card the last known value without a level', async () => {
+  it('a window below the threshold older than the quiet check — the card shows the last known value without a level', async () => {
     setup([subView()], [live({ windows: [win({ utilization: 26, status: 'allowed', resetsAt: at(130), observedAt: at(-40) })], lastOkAt: at(-40), quietAt: at(-5) })]);
     mockFetch({});
     block();
-    const row = rowOf('Max личная');
-    expect(row).toHaveTextContent(`ниже порога · проверено ${clock(at(-5))}`);
-    await userEvent.click(row);
+    await userEvent.click(rowOf('Max личная'));
     const card = screen.getByRole('dialog', { name: /Max личная/ });
     expect(within(card).getByText(`Последнее известное значение 26% от ${clock(at(-40))}; проверка в ${clock(at(-5))} — ниже порога предупреждения.`)).toBeInTheDocument();
     expect(within(card).getByText(/Ниже порога предупреждения/)).toBeInTheDocument();
   });
 
-  it('fix 2026-10-29: a quiet check does not hide 97% — «почти» in the row, the level and «ход прошёл» in the card, no «ниже порога»', async () => {
+  it('fix 2026-10-29: a quiet check does not hide 97% — the level and «ход прошёл» in the card, no «ниже порога»', async () => {
     const lim = live({
       windows: [
         win({ utilization: 26, status: 'allowed', resetsAt: at(150), observedAt: at(-4) }),
@@ -287,10 +210,7 @@ describe('the card', () => {
     setup([subView()], [lim]);
     mockFetch({});
     block();
-    const row = rowOf('Max личная');
-    expect(row).toHaveTextContent(`почти · 7 дн · 97% · данные от ${clock(at(-4))}`);
-    expect(row).not.toHaveTextContent('ниже порога');
-    await userEvent.click(row);
+    await userEvent.click(rowOf('Max личная'));
     const card = screen.getByRole('dialog', { name: /Max личная/ });
     expect(within(card).queryByText(/Ниже порога предупреждения/)).toBeNull();
     expect(within(card).getByText(`Ход в ${clock(at(0))} прошёл, лимит не исчерпан.`)).toBeInTheDocument();
@@ -317,7 +237,7 @@ describe('the card', () => {
       const [open, setOpen] = useState(false);
       return (
         <div className="app">
-          <SubscriptionLimits />
+          <Openers />
           <button type="button" onClick={() => setOpen(true)} data-lim-trigger="">
             диалог
           </button>
@@ -349,7 +269,7 @@ describe('the card', () => {
     expect(useStore.getState().limitCard).toBeNull();
   });
 
-  it('review A7: the block, the chip and the card share one clock — one subscription set, one interval', async () => {
+  it('review A7: the chip and the card share one clock — one subscription set, one interval', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true, now: Date.now() }); // keep the test clock, fake the timers too
     setup();
     mockFetch({});
@@ -358,14 +278,14 @@ describe('the card', () => {
     useStore.setState({ sessions: { [s.id]: s } });
     render(
       <>
-        <SubscriptionLimits />
+        <Openers />
         <LimitChip s={s} />
         <LimitCard />
       </>,
     );
     expect(document.querySelector('.lchip')).toHaveTextContent('82% · 5 ч');
     await userEvent.click(rowOf('Max личная'));
-    expect(limitsClock.subscribers).toBeGreaterThanOrEqual(3);
+    expect(limitsClock.subscribers).toBeGreaterThanOrEqual(2);
     expect(spy.mock.calls.filter(c => c[1] === 30_000)).toHaveLength(1);
     const before = limitsClock.get();
     await act(async () => vi.advanceTimersByTime(30_000));

@@ -1,3 +1,4 @@
+import type { CatalogDetection } from './detection.js';
 // Path signals and project decisions of sessions (design D9 p. 5–6, 9; tasks 4.4, 4.5, 4.7): touches extracted in the
 // transaction that stores the events (replication and import), the start directory and its remote, a debounced
 // recompute (2 s per session) with the toast «Проект определён», re-matching after a catalogue change without parsing
@@ -88,6 +89,26 @@ export function runnerPaths(r: Pick<RunnerRow, 'home_dir' | 'vault_root'> | null
 }
 
 export class ProjectService {
+  private detection?: CatalogDetection;
+  setCatalogDetection(detection: CatalogDetection): void {
+    this.detection = detection;
+  }
+  catalogChanged(userId: string): void {
+    const detection = this.detection;
+    const key = `catalog:${userId}`;
+    if (detection)
+      this.track(
+        key,
+        this.serialized(key, () => detection.catalogChanged(userId)),
+      );
+  }
+  detectCatalog(sessionId: string, firstMessage: string): void {
+    if (this.detection) this.track(sessionId, this.detection.evaluate(sessionId, firstMessage));
+  }
+  private async recomputeWithCatalog(sessionId: string): Promise<void> {
+    await this.recompute(sessionId, { toast: true });
+    await this.detection?.evaluate(sessionId);
+  }
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly pending = new Map<string, Promise<void>>();
   private readonly serial = new KeyedSerial();
@@ -149,7 +170,7 @@ export class ProjectService {
     if (t) clearTimeout(t);
     const timer = setTimeout(() => {
       this.timers.delete(sessionId);
-      this.track(sessionId, this.recompute(sessionId, { toast: true }));
+      this.track(sessionId, this.recomputeWithCatalog(sessionId));
     }, this.o.debounceMs ?? 2000);
     timer.unref();
     this.timers.set(sessionId, timer);
@@ -166,12 +187,26 @@ export class ProjectService {
     });
   }
 
+  /** Deletion has committed. Reuse stored signals quietly and notify once after the batch. */
+  reclassifyDeleted(ids: string[], done: () => void): void {
+    const run = new Promise<void>(resolve => setImmediate(resolve)).then(async () => {
+      for (const id of ids) {
+        const fail = (err: unknown) => this.o.log.warn({ err, sessionId: id }, 'deleted project reclassification failed');
+        await this.recompute(id, { fresh: true, quiet: true, skipStart: true }).catch(fail);
+        // Path and remote rules of the remaining catalog projects, never the model.
+        await this.detection?.evaluate(id, undefined, true).catch(fail);
+      }
+      done();
+    });
+    this.track(`deleted:${ids.join(',')}`, run);
+  }
+
   /** Waits for scheduled recomputes (tests, shutdown). */
   async flush(): Promise<void> {
     for (const [id, t] of this.timers) {
       clearTimeout(t);
       this.timers.delete(id);
-      this.track(id, this.recompute(id, { toast: true }));
+      this.track(id, this.recomputeWithCatalog(id));
     }
     await Promise.all(this.pending.values());
   }

@@ -92,6 +92,8 @@ function Picker({ s, onDone }: { s: SessionView; onDone: () => void }) {
   );
 }
 
+const AUTO_REASON: Record<string, string> = { cwd: 'рабочая папка', remote: 'Git remote', changed_files: 'изменённые файлы', unpinned: 'выбор без закрепления' };
+
 /** `note` replaces the evidence on the phone (the state of the session), `noteTitle` is its whole text. */
 export function ProjectLine({ s, note, noteTitle }: { s: SessionView; note?: string; noteTitle?: string }) {
   const [menu, setMenu] = useState<null | 'menu' | 'move'>(null);
@@ -108,8 +110,15 @@ export function ProjectLine({ s, note, noteTitle }: { s: SessionView; note?: str
     if (menu) box.current?.querySelector<HTMLElement>(menu === 'menu' ? '[role="menuitem"]' : 'input')?.focus();
   }, [menu]);
   const project = s.project as ProjectInfo;
-  const pinned = s.projectSource === 'manual';
-  const evidence = evidenceText(s);
+  const pinned = s.catalogProject ? s.catalogProjectSource !== 'auto' : s.projectSource === 'manual';
+  const evidence =
+    s.catalogProjectSource === 'auto'
+      ? s.catalogProjectReason === 'classifier'
+        ? 'Определено по первому сообщению'
+        : `Автоматически: ${AUTO_REASON[s.catalogProjectReason ?? ''] ?? 'проект определён'}`
+      : s.catalogProject
+        ? 'закреплено вручную'
+        : evidenceText(s);
   const second = secondaryProject(s);
   return (
     <>
@@ -171,6 +180,11 @@ export function ProjectLine({ s, note, noteTitle }: { s: SessionView; note?: str
       <span className="evidence" title={note ? `${noteTitle ?? note}\nПроект: ${evidence}` : evidence}>
         {note ?? evidence}
       </span>
+      {!note && s.catalogProjectSource === 'auto' && (
+        <button type="button" className="evidence-change" onClick={() => setMenu('move')}>
+          изменить
+        </button>
+      )}
       {second && (
         <span className="pill gp sec" style={{ '--gc': colorVar(second.colorKey) } as CSSProperties} title={`Второй проект: ${second.path || second.title}`}>
           + {second.title}

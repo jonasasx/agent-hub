@@ -353,7 +353,9 @@ describe('Chat: banners, header and composer', () => {
 
   it('header: title, machine and cwd, status, model by display name, bypassPermissions highlighted', () => {
     show(session({ title: 'Заголовок' }), []);
-    expect(screen.getByText('X1 · C:\\Users\\alice\\vault')).toBeInTheDocument();
+    expect(document.querySelector('.chat-title .sub')).toHaveTextContent('X1 · C:\\Users\\alice\\vault');
+    // the folder is an entry into the «Файлы» window (change tool-windows-file-explorer, task 6.7)
+    expect(screen.getByRole('button', { name: 'C:\\Users\\alice\\vault' })).toHaveAttribute('title', 'Показать папку сессии в «Файлах»');
     expect(screen.getByRole('combobox', { name: 'Модель' })).toHaveValue('opus');
     expect(document.querySelector('.composer .mono')).toHaveTextContent('Opus 5.5');
     expect(document.querySelector('.pill.bypass')).toHaveTextContent('bypass');

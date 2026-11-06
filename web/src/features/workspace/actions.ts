@@ -13,6 +13,8 @@ import { readyRefs, sent as attachmentsSent, setNote, settleOptimistic, useAttac
 import type { UiSocket } from '../../api/uiSocket';
 import { projectKey, useStore, type ChatLog, type PendingResume } from '../../store';
 import * as L from '../layout/layout';
+import { useFiles } from '../files/filesStore';
+import { baseName } from '../files/paths';
 import { parseSnapshot, readWindow, toIso, toMs, writeWindow } from './windowState';
 import { projectItems } from '../projects/projects';
 import { draftArrived } from '../fork/drafts';
@@ -145,6 +147,8 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 /** loadWorkspace is waiting for the template: sessions opened meanwhile are applied on top of the loaded layout. */
 let loading = false;
 let openedWhileLoading: string[] = [];
+/** File tabs opened while the layout loads: they go through `openFileTab` (never through the session fetch). */
+let filesOpenedWhileLoading: Array<{ runnerId: string; path: string; opts: { pin?: boolean; sessionId?: string } }> = [];
 /** Generation of loadWorkspace calls: only the result of the latest call is applied. */
 let loadGen = 0;
 /** Window clock (ms) of the last change in this window — `clientTs` of the PUT, so a late PUT cannot win (D10). */
@@ -160,7 +164,9 @@ function applyLoaded(patch: Partial<ReturnType<typeof useStore.getState>>) {
 }
 
 function snapshotBody() {
-  const { device, ws, openedAt } = get();
+  const { device, openedAt } = get();
+  // file tabs are local to the window: they never go to the server (spec file-explorer «Файловые вкладки»)
+  const ws = L.stripFileTabs(get().ws);
   return {
     device,
     layout: { layout: ws.layout, panes: ws.panes, focus: ws.focus, seq: ws.seq },
@@ -219,19 +225,22 @@ export async function loadWorkspace(device: Device = currentDevice()): Promise<v
   const queued = openedWhileLoading;
   openedWhileLoading = [];
   for (const sid of queued) openSession(sid);
+  const queuedFiles = filesOpenedWhileLoading;
+  filesOpenedWhileLoading = [];
+  for (const q of queuedFiles) openFileTab(q.runnerId, q.path, q.opts);
   await dropVanishedTabs();
 }
 
 /** The sessions of the open tabs fetched again (their project may have changed with the catalogue). */
 async function refreshTabSessions() {
-  const ids = L.allTabs(get().ws).filter(id => !get().tabKinds[id]);
+  const ids = L.allTabs(get().ws).filter(id => !get().tabKinds[id] && !L.isFileTab(id));
   const got = await Promise.all(ids.map(id => api.session(id).catch(() => null)));
   get().upsertSessions(got.filter((s): s is SessionView => !!s));
 }
 
 /** Tabs whose session the hub no longer knows (404) are removed — an automatic change of this window. */
 async function dropVanishedTabs() {
-  const missing = L.allTabs(get().ws).filter(id => !get().sessions[id] && !get().subagents[id]);
+  const missing = L.allTabs(get().ws).filter(id => !L.isFileTab(id) && !get().sessions[id] && !get().subagents[id]);
   if (!missing.length) return;
   const gone = (err: unknown) => err instanceof ApiError && err.status === 404;
   // a subagent tab (change `subagents` S9): its row; a tab of unknown kind that is not a session may be a subagent too
@@ -324,6 +333,11 @@ function clearUnread(sid: string) {
 
 /** The toast names the evicted session; a card not loaded yet is fetched first (UI review M3b). */
 function evictToast(sid: string) {
+  if (L.isFileTab(sid)) {
+    const f = L.parseFileTabId(sid);
+    get().pushToast({ title: 'Вкладка убрана из полосы', text: `Файл ${f ? baseName(f.path) : ''} можно открыть заново в «Файлах»`, color: 'var(--accent)' });
+    return;
+  }
   // a subagent tab: its title from the registry, no session card fetch, and it is not in the left panel
   if (get().tabKinds[sid] === 'subagent') {
     const v = get().subagents[sid];
@@ -343,6 +357,17 @@ function evictToast(sid: string) {
   );
 }
 
+/** A file tab that left the window (closed, evicted, replaced) takes its pin and its session with it. */
+function forgetLostFileTabs(before: L.Workspace, after: L.Workspace) {
+  const kept = new Set(L.allTabs(after));
+  const files = useFiles.getState();
+  for (const t of L.allTabs(before)) {
+    if (!L.isFileTab(t) || kept.has(t)) continue;
+    files.unpin(t);
+    files.rememberSession(t, undefined);
+  }
+}
+
 function tabsFullToast() {
   get().pushToast({ title: 'Все 8 вкладок открыты в панелях — закройте одну', text: '', color: 'var(--warn)' });
 }
@@ -357,7 +382,7 @@ function commitWithTab(next: L.Workspace, sid: string, wasTab: boolean, extra: P
   let ws = next;
   let evicted: string | null = null;
   if (!wasTab) {
-    const lim = L.enforceLimit(next, sid, openedAt, get().ws);
+    const lim = L.enforceLimit(next, sid, openedAt, get().ws, new Set(useFiles.getState().pinned));
     if (lim.full) {
       tabsFullToast();
       return false;
@@ -366,10 +391,14 @@ function commitWithTab(next: L.Workspace, sid: string, wasTab: boolean, extra: P
     evicted = lim.evicted;
   }
   if (evicted) delete openedAt[evicted];
+  const before = get().ws;
   set({ ws, openedAt, ...extra });
+  forgetLostFileTabs(before, ws);
   if (evicted) evictToast(evicted);
-  clearUnread(sid);
-  ensureLog(sid);
+  if (!L.isFileTab(sid)) {
+    clearUnread(sid);
+    ensureLog(sid);
+  }
   return true;
 }
 
@@ -552,6 +581,8 @@ export function openSubagent(v: SubagentView | string): void {
 }
 
 export async function ensureSession(sid: string): Promise<void> {
+  // a file tab has no session card: `GET /api/sessions/file:…` is a 404 that would close the tab
+  if (L.isFileTab(sid)) return;
   if (get().sessions[sid] || get().tabKinds[sid] || sessionInFlight.has(sid)) return;
   sessionInFlight.add(sid);
   try {
@@ -581,13 +612,56 @@ export function openSession(sid: string): void {
 
 /** Closing a tab does not stop the session and does not touch other windows. */
 export function closeTab(sid: string) {
-  set({ ws: L.closeTab(get().ws, sid) });
+  const before = get().ws;
+  const ws = L.closeTab(before, sid);
+  set({ ws });
+  forgetLostFileTabs(before, ws);
 }
 
 export function activateTab(pid: string, sid: string) {
   set({ ws: L.activateTab(get().ws, pid, sid), openedAt: { ...get().openedAt, [sid]: Date.now() }, inChat: true });
+  if (L.isFileTab(sid)) return;
   clearUnread(sid);
   ensureLog(sid);
+}
+
+/**
+ * A file as a tab of the active pane (spec file-explorer «Файловые вкладки»): a single click opens a preview that
+ * replaces the previous preview, a double click (or `pin`) keeps the tab; a file open already is activated, not
+ * duplicated. `sessionId` is the session whose folder the file was opened from (the hub reads by its folder).
+ */
+export function openFileTab(runnerId: string, path: string, opts: { pin?: boolean; sessionId?: string } = {}): void {
+  const id = L.fileTabId(runnerId, path);
+  const files = useFiles.getState();
+  if (loading) {
+    filesOpenedWhileLoading.push({ runnerId, path, opts });
+    set({ modal: null, inChat: true });
+    return;
+  }
+  const ws0 = get().ws;
+  const pane = Object.values(ws0.panes).find(p => p.tabs.includes(id));
+  if (pane) {
+    if (opts.sessionId) files.rememberSession(id, opts.sessionId);
+    if (opts.pin) files.pin(id);
+    activateTab(pane.id, id);
+    return;
+  }
+  // a new preview takes the place of the previous one
+  let ws = ws0;
+  if (!opts.pin) {
+    const pinned = new Set(files.pinned);
+    for (const t of L.allTabs(ws0)) if (L.isFileTab(t) && !pinned.has(t)) ws = L.closeTab(ws, t);
+  }
+  set({ modal: null });
+  // the pin and the session are kept only for a tab that really opened (the limit may refuse it)
+  if (!commitWithTab(L.openSession(ws, id), id, false, { inChat: true })) return;
+  if (opts.sessionId) files.rememberSession(id, opts.sessionId);
+  if (opts.pin) files.pin(id);
+}
+
+/** Keeps a preview file tab (double click on the tab or on the file). */
+export function pinFileTab(id: string): void {
+  useFiles.getState().pin(id);
 }
 
 export function focusPane(pid: string) {
@@ -763,7 +837,7 @@ export async function loadOlder(sid: string): Promise<void> {
 
 // ---------- session commands ----------
 
-function applySession(s: SessionView | undefined) {
+export function applySession(s: SessionView | undefined) {
   if (s) get().upsertSessions([s]);
   scheduleSidebarRefresh();
 }
@@ -933,6 +1007,29 @@ export async function patchSession(sid: string, body: PatchSessionRequest): Prom
   }
 }
 
+/** Manual rename (spec session-title). False when the hub refused (the toast says why). */
+export async function renameSession(sid: string, title: string): Promise<boolean> {
+  try {
+    applySession(await api.patchSession(sid, { title }));
+    return true;
+  } catch (err) {
+    toastError('Название не изменено', err, 'Хаб не ответил. Попробуйте ещё раз.');
+    return false;
+  }
+}
+
+/** «Перегенерировать название»: the hub reads the whole session, writes the new title itself. Null when it failed (toast). */
+export async function regenerateSessionTitle(sid: string): Promise<string | null> {
+  try {
+    const s = await api.regenerateSessionTitle(sid);
+    applySession(s);
+    return s.title;
+  } catch (err) {
+    toastError('Название не сгенерировано', err, 'Хаб не ответил. Попробуйте ещё раз.');
+    return null;
+  }
+}
+
 export function idleLabel(min: number): string {
   if (min === 0) return 'не усыплять';
   return min < 60 ? `${min} мин` : `${min / 60} ч`;
@@ -1007,9 +1104,9 @@ export function visibleSessionIds(): string[] {
   const { ws, device, inChat } = get();
   if (device === 'phone') {
     const a = L.activeSession(ws);
-    return inChat && a ? [a] : [];
+    return inChat && a && !L.isFileTab(a) ? [a] : [];
   }
-  return L.leaves(ws.layout).flatMap(pid => (ws.panes[pid]?.active ? [ws.panes[pid]!.active!] : []));
+  return L.leaves(ws.layout).flatMap(pid => (ws.panes[pid]?.active && !L.isFileTab(ws.panes[pid]!.active!) ? [ws.panes[pid]!.active!] : []));
 }
 
 /** Sends subscribe/presence when they change (and always after a reconnect). */

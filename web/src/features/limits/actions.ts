@@ -64,7 +64,7 @@ export async function refreshLimits(id: string): Promise<RefreshResult> {
   }
 }
 
-export function openLimitCard(subscriptionId: string, from: 'row' | 'chip' | 'summary'): void {
+export function openLimitCard(subscriptionId: string, from: 'row' | 'chip'): void {
   const cur = useStore.getState().limitCard;
   useStore.setState({ limitCard: cur?.subscriptionId === subscriptionId && cur.from === from ? null : { subscriptionId, from } });
 }

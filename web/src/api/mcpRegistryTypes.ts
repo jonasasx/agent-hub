@@ -39,6 +39,7 @@ export type McpRegistryDraftView = Omit<McpRegistryDraft, 'validation'> & {
 export type McpRegistrySnapshot = Infer<typeof mcpRegistrySnapshotSchema>;
 export type McpGatewayStatus = Infer<typeof mcpGatewayStatusSchema>;
 export type McpDraftCreateRequest = Infer<typeof mcpDraftCreateSchema>;
+export type McpRegistryCreateRequest = McpDraftCreateRequest & { sessionId?: string };
 export type McpDraftUpdateRequest = Infer<typeof mcpDraftUpdateSchema>;
 export type McpDraftValidateRequest = Infer<typeof mcpDraftValidateSchema>;
 export type McpDraftConnectRequest = Infer<typeof mcpDraftConnectSchema>;

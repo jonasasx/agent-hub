@@ -10,7 +10,7 @@ async function start(page: Page, theme: 'dark' | 'light' = 'dark', hub = new Moc
   await page.addInitScript(t => localStorage.setItem('ah-theme', t), theme);
   await hub.install(page);
   await page.goto('/');
-  await expect(page.getByRole('list', { name: 'Машины' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Сессии и проекты' })).toBeVisible();
   return hub;
 }
 
@@ -94,7 +94,7 @@ test('N1: Esc в меню «⋯» строки реестра закрывает
 test('P12: «⚙» в подвале нет; адреса /settings/subscriptions и /settings/usage открывают разделы, «Назад» закрывает настройки', async ({ page }) => {
   await start(page);
   await expect(page.getByRole('button', { name: 'Подписки Claude' })).toHaveCount(0);
-  await expect(page.locator('.side-bottom button')).toHaveCount(0);
+  await expect(page.locator('.side-bottom')).toHaveCount(0);
   await page.goto('/settings/subscriptions');
   const set = page.getByRole('region', { name: 'Настройки' });
   await expect(set.getByRole('heading', { level: 2, name: 'Подписки' })).toBeVisible();

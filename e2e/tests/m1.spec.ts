@@ -16,7 +16,7 @@ test('API without a session answers 401', async ({ request }) => {
 test('signed in: machines footer and theme switch', async ({ page }) => {
   test.skip(!devLogin, 'needs AUTH_DEV_EMAIL on the hub');
   await page.goto('/auth/dev-login?return=/');
-  const machines = page.getByRole('list', { name: 'Машины' });
+  const machines = page.getByRole('complementary', { name: 'Сессии и проекты' });
   await expect(machines).toBeVisible();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await page.getByRole('button', { name: 'Светлая тема' }).click();

@@ -55,7 +55,7 @@ describe('logger', () => {
 describe('hello payload', () => {
   it('describes this machine with protocol and versions', () => {
     const h = buildHello({ vaultRoot: 'C:\\vault' });
-    expect(h.protocol).toBe('1.13');
+    expect(h.protocol).toBe('1.14');
     expect(h.capabilities).toContain('fs.list-dirs');
     expect(h.agentVersion).toMatch(/^\d+\.\d+\.\d+$/);
     expect(h.sdkVersion).toBe('0.3.310');

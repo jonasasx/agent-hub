@@ -142,12 +142,12 @@ test('no loop: the shell stays old after a silent reload — no second automatic
   await expect(banner(page)).toBeVisible();
 });
 
-test('machines footer: an outdated agent of an online machine, «обновляется» while it updates', async ({ page }) => {
+test('machines window: an outdated agent of an online machine, «обновляется» while it updates', async ({ page }) => {
   await start(page, hub => {
     hub.runnerPatch = { vm: { agentVersion: '0.1.2', outdated: true }, x1: { agentVersion: '0.1.2', outdated: true, update: { version: '0.2.0', status: 'installing', error: null, at: '' } } };
   });
-  const foot = page.getByRole('list', { name: 'Машины' });
-  await expect(foot.getByRole('listitem', { name: /^ВМ \.3: в сети, агент устарел\./ })).toContainText('ВМ .3 · агент устарел');
-  await expect(foot.getByRole('listitem', { name: /^X1: в сети, обновляется\./ })).toContainText('X1 · обновляется');
-  await expect(foot.getByRole('listitem', { name: /^ВМ \.3/ })).toHaveAttribute('title', /агент 0\.1\.2/);
+  const line = page.getByRole('list', { name: 'Машины' });
+  await expect(line.getByRole('button', { name: /^ВМ \.3: агент устарел/ })).toContainText('ВМ .3 · агент устарел');
+  await expect(line.getByRole('button', { name: /^X1: обновляется/ })).toContainText('X1 · обновляется');
+  await expect(line.getByRole('button', { name: /^ВМ \.3/ })).toHaveAttribute('title', /агент 0\.1\.2/);
 });

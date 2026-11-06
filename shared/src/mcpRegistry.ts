@@ -178,7 +178,7 @@ export const mcpGatewayStopSchema = z.object({ serverId: id, sessionId: id.optio
 export const mcpCapabilitiesSchema = z.object({ protocol: z.literal(MCP_REGISTRY_PROTOCOL_VERSION), capabilities: z.array(z.enum(MCP_REGISTRY_CAPABILITIES)).max(MCP_REGISTRY_CAPABILITIES.length) });
 export const mcpDraftCreateSchema = z
   .object({
-    server: mcpServerConfigInputBaseSchema.omit({ revision: true, secrets: true }),
+    server: mcpServerConfigInputBaseSchema.omit({ id: true, revision: true, secrets: true }).extend({ id: id.optional() }),
     secrets: mcpSecretInputSchema.optional(),
   })
   .superRefine((input, ctx) => validateInputConfig(input.server as z.infer<typeof mcpServerConfigInputBaseSchema>, ctx));
@@ -196,17 +196,36 @@ export const mcpDraftSaveUncheckedSchema = z.object({ revision: z.number().int()
 export const mcpDraftRequestPayload = z.discriminatedUnion('op', [
   z.object({ requestId: id, sessionId: id, op: z.literal('add'), payload: mcpDraftCreateSchema }),
   z.object({ requestId: id, sessionId: id, op: z.literal('list'), payload: z.object({ includeDrafts: z.boolean().default(true) }) }),
-  z.object({ requestId: id, sessionId: id, op: z.literal('update'), payload: z.object({ draftId: id, update: mcpDraftUpdateSchema }) }),
+  z.object({
+    requestId: id,
+    sessionId: id,
+    op: z.literal('update'),
+    payload: z.union([z.object({ draftId: id, update: mcpDraftUpdateSchema }), z.object({ serverId: id, update: mcpDraftUpdateSchema })]),
+  }),
 ]);
+export const mcpDraftValidationResultSchema = z.object({
+  ok: z.boolean(),
+  status: z.enum(['checked', 'validation-failed', 'needs-secret', 'needs_auth', 'timeout']),
+  tools: z.array(z.object({ name, description: z.string().max(200).optional() })).max(100),
+  truncated: z.boolean().optional(),
+  error: safeText.optional(),
+  oauthRequired: z.boolean(),
+});
 export const mcpDraftResultSchema = z
   .object({
     servers: z.array(mcpServerConfigSchema).max(1000).optional(),
     drafts: z.array(mcpRegistryDraftSchema).max(1000).optional(),
     draft: mcpRegistryDraftSchema.optional(),
+    draftId: id.optional(),
+    revision: z.number().int().nonnegative().optional(),
+    validation: mcpDraftValidationResultSchema.optional(),
+    confirmationUrl: z.string().max(2048).optional(),
     message: safeText.optional(),
   })
   .superRefine((result, ctx) => {
-    if (!result.servers && !result.drafts && !result.draft && !result.message) ctx.addIssue({ code: 'custom', message: 'result must contain a safe draft API result' });
+    if (!result.servers && !result.drafts && !result.draft && !result.draftId && !result.message) {
+      ctx.addIssue({ code: 'custom', message: 'result must contain a safe draft API result' });
+    }
   });
 export const mcpDraftResultPayload = z
   .object({
@@ -316,6 +335,8 @@ export const mcpRegistryValidatePayload = z.object({
   draftId: id,
   revision: z.number().int().nonnegative(),
   machineId,
+  /** Persistent identity used only to look up OAuth credentials during isolated draft validation. */
+  oauthServerId: id.optional(),
   server: mcpServerConfigSchema,
   secretDelivery: mcpSecretDeliverySchema.optional(),
 });

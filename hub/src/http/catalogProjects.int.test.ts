@@ -1,5 +1,5 @@
-import { beforeAll, afterAll, describe, expect, it } from 'vitest';
-import { autoReply, connectFakeAgent, NO_AUTO_REPLY, PUBLIC_URL, startTestHub, type FakeAgent, type TestHub } from '../test/harness.js';
+import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest';
+import { autoReply, connectFakeAgent, connectUi, NO_AUTO_REPLY, PUBLIC_URL, startTestHub, waitFor, type FakeAgent, type TestHub } from '../test/harness.js';
 
 describe('projects-catalog HTTP (integration)', () => {
   let t: TestHub;
@@ -11,7 +11,7 @@ describe('projects-catalog HTTP (integration)', () => {
   let holdPickerReply = false;
   const logs: string[] = [];
   const commands: Array<{ type: string; payload: Record<string, unknown> }> = [];
-  const api = (method: 'GET' | 'POST' | 'PATCH' | 'PUT', url: string, payload?: unknown) =>
+  const api = (method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', url: string, payload?: unknown) =>
     t.hub.app.inject({ method, url, cookies: { ah_session: cookie }, headers: { origin: PUBLIC_URL }, ...(payload !== undefined ? { payload: payload as object } : {}) });
   beforeAll(async () => {
     t = await startTestHub({ logStream: { write: line => logs.push(line) } });
@@ -40,6 +40,165 @@ describe('projects-catalog HTTP (integration)', () => {
     agent?.ws.close();
     pickerAgent?.ws.close();
     await t.close();
+  });
+
+  it('persists colors, handles concurrent normalized conflicts, and deletes only links', async () => {
+    const created = (await api('POST', '/api/catalog/projects', { name: 'Color retention', colorKey: 'rose' })).json<{ id: string; colorKey: string }>();
+    expect(created.colorKey).toBe('rose');
+    const peer = (await api('POST', '/api/catalog/projects', { name: 'Color peer' })).json<{ id: string }>();
+    const list = () => api('GET', '/api/catalog/projects?sort=name');
+    expect((await list()).json<Array<{ id: string; colorKey: string }>>().find(p => p.id === created.id)?.colorKey).toBe('rose');
+    expect((await api('PATCH', `/api/catalog/projects/${created.id}`, { colorKey: 'invalid' })).statusCode).toBe(400);
+    expect((await api('PATCH', `/api/catalog/projects/${created.id}`, { name: '  COLOR PEER  ' })).statusCode).toBe(409);
+    const conflicts = await Promise.all([api('POST', '/api/catalog/projects', { name: 'Concurrent E' }), api('POST', '/api/catalog/projects', { name: ' concurrent e ' })]);
+    expect(conflicts.map(r => r.statusCode).sort()).toEqual([201, 409]);
+    const unicode = (await api('POST', '/api/catalog/projects', { name: 'Caf\u00e9 E' })).json<{ id: string }>();
+    expect((await api('POST', '/api/catalog/projects', { name: 'Cafe\u0301 E' })).statusCode).toBe(409);
+    await api('DELETE', `/api/catalog/projects/${unicode.id}`);
+    await api('DELETE', `/api/catalog/projects/${peer.id}`);
+    expect((await list()).json<Array<{ id: string; colorKey: string }>>().find(p => p.id === created.id)?.colorKey).toBe('rose');
+    expect((await api('PUT', `/api/catalog/projects/${created.id}/bindings/hp`, { path: 'C:\\work\\colors' })).statusCode).toBe(200);
+    expect((await api('DELETE', `/api/catalog/projects/${created.id}/bindings/${foreignRunner}`)).statusCode).toBe(404);
+    expect((await api('DELETE', `/api/catalog/projects/${created.id}/bindings/hp`)).statusCode).toBe(200);
+    await api('PUT', `/api/catalog/projects/${created.id}/bindings/hp`, { path: 'C:\\work\\colors' });
+    const launched = await api('POST', '/api/sessions', { runnerId: 'hp', cwd: 'C:\\work', provider: 'claude', projectId: created.id, prompt: 'Keep this session', model: 'haiku' });
+    expect(launched.statusCode).toBe(201);
+    const sid = launched.json<{ id: string }>().id;
+    const ui = connectUi(t.wsBase, cookie);
+    await ui.open;
+    expect((await api('PATCH', `/api/catalog/projects/${created.id}`, { colorKey: 'lime' })).statusCode).toBe(200);
+    await waitFor(() => ui.received.some(message => message.type === 'projects.changed'));
+    ui.ws.close();
+    expect((await api('GET', `/api/sessions/${sid}`)).json()).toMatchObject({ project: { colorKey: 'lime' } });
+    const file = (
+      await t.tdb.pool.query(
+        `INSERT INTO transcript_files(user_id,session_id,runner_id,claude_session_id,rel_key,rel_path,kind) SELECT user_id,id,runner_id,claude_session_id,'e/retained.jsonl','e/retained.jsonl','main' FROM sessions WHERE id=$1 RETURNING id`,
+        [sid],
+      )
+    ).rows[0].id;
+    await t.tdb.pool.query(`INSERT INTO events(file_id,generation,line_no,session_id,type,ts,payload) VALUES ($1,0,0,$2,'user',now(),'{"type":"user","message":{"content":"Retained transcript"}}')`, [
+      file,
+      sid,
+    ]);
+    const counts = async () =>
+      (await t.tdb.pool.query(`SELECT (SELECT count(*) FROM sessions) sessions, (SELECT count(*) FROM events) events, (SELECT count(*) FROM transcript_files) transcripts`)).rows[0];
+    const before = await counts();
+    const [edited, deleted] = await Promise.all([api('PATCH', `/api/catalog/projects/${created.id}`, { description: 'Concurrent edit' }), api('DELETE', `/api/catalog/projects/${created.id}`)]);
+    expect([200, 404]).toContain(edited.statusCode);
+    expect(deleted.statusCode).toBe(200);
+    await t.hub.projects.flush();
+    expect((await api('GET', `/api/sessions/${sid}`)).json()).toMatchObject({ project: { id: null } });
+    expect(await counts()).toEqual(before);
+    expect((await api('GET', `/api/sessions/${sid}`)).statusCode).toBe(200);
+    await t.hub.projects.flush();
+    const legacy = (await t.tdb.pool.query(`SELECT id, user_id FROM projects ORDER BY id LIMIT 1`)).rows[0];
+    await t.tdb.pool.query(`UPDATE sessions SET project_id=$1 WHERE id=$2`, [legacy.id, sid]);
+    expect((await api('DELETE', `/api/projects/${legacy.id}/group`)).statusCode).toBe(200);
+    expect((await api('GET', `/api/sessions/${sid}`)).json()).toMatchObject({ project: { id: null } });
+    const sidebar = (await api('GET', '/api/sidebar')).json<{ projects: Array<{ project: { id: string | null }; sessions: Array<{ id: string }> }> }>();
+    expect(sidebar.projects.some(p => p.project.id === legacy.id)).toBe(false);
+    expect(sidebar.projects.find(p => p.project.id === null)?.sessions.some(s => s.id === sid)).toBe(true);
+    expect((await t.tdb.pool.query(`SELECT 1 FROM projects WHERE id=$1`, [legacy.id])).rowCount).toBe(1);
+    expect((await api('GET', '/api/projects/hidden')).json()).toEqual(expect.arrayContaining([expect.objectContaining({ id: legacy.id })]));
+    expect((await api('DELETE', `/api/projects/${legacy.id}/hidden`)).statusCode).toBe(200);
+    expect((await api('GET', `/api/sessions/${sid}`)).json()).toMatchObject({ project: { id: legacy.id } });
+    expect((await api('PUT', `/api/projects/${legacy.id}/hidden`)).statusCode).toBe(200);
+    await api('DELETE', `/api/projects/${legacy.id}/hidden`);
+    expect((await api('PATCH', `/api/projects/${legacy.id}/color`, { colorKey: 'rose' })).statusCode).toBe(200);
+    await t.hub.projects.catalog.reload(true);
+    expect(t.hub.projects.catalog.row(legacy.id)?.colorKey).toBe('rose');
+    expect((await t.tdb.pool.query(`SELECT 1 FROM session_projects WHERE project_id=$1`, [created.id])).rowCount).toBe(0);
+    expect((await t.tdb.pool.query(`SELECT 1 FROM project_bindings WHERE project_id=$1`, [created.id])).rowCount).toBe(0);
+    expect((await api('DELETE', `/api/catalog/projects/${created.id}`)).statusCode).toBe(404);
+    // Keep other existing tests independent of the active catalog.
+    await t.tdb.pool.query(`DELETE FROM catalog_projects WHERE name IN ('Concurrent E','concurrent e')`);
+  });
+
+  it('allocates distinct stable colors in consecutive POSTs and sidebar reloads; atomic edits roll back', async () => {
+    const first = (await api('POST', '/api/catalog/projects', { name: 'Palette first' })).json<{ id: string; colorKey: string }>();
+    const second = (await api('POST', '/api/catalog/projects', { name: 'Palette second' })).json<{ id: string; colorKey: string }>();
+    expect(first.colorKey).not.toBe(second.colorKey);
+    const third = (await api('POST', '/api/catalog/projects', { name: 'Palette third' })).json<{ id: string; colorKey: string }>();
+    for (const p of [first, second]) {
+      const sid = (
+        await t.tdb.pool.query(
+          `INSERT INTO sessions(user_id,runner_id,claude_session_id,source,status) SELECT user_id,'hp',gen_random_uuid(),'hub','closed' FROM catalog_projects WHERE id=$1 RETURNING id`,
+          [p.id],
+        )
+      ).rows[0].id;
+      await t.tdb.pool.query(`INSERT INTO session_projects(user_id,session_id,project_id) SELECT user_id,$2,id FROM catalog_projects WHERE id=$1`, [p.id, sid]);
+    }
+    const colors = async () =>
+      (await api('GET', '/api/sidebar'))
+        .json<{ projects: Array<{ project: { id: string; colorKey: string } }> }>()
+        .projects.filter(p => [first.id, second.id].includes(p.project.id))
+        .map(p => [p.project.id, p.project.colorKey])
+        .sort();
+    expect(await colors()).toEqual(
+      [
+        [first.id, first.colorKey],
+        [second.id, second.colorKey],
+      ].sort(),
+    );
+    await api('DELETE', `/api/catalog/projects/${third.id}`);
+    expect(await colors()).toEqual(
+      [
+        [first.id, first.colorKey],
+        [second.id, second.colorKey],
+      ].sort(),
+    );
+    expect((await api('PATCH', `/api/catalog/projects/${first.id}`, { name: 'Must roll back', bindings: [{ runnerId: foreignRunner, path: '/secret' }] })).statusCode).toBe(404);
+    expect((await t.tdb.pool.query(`SELECT name FROM catalog_projects WHERE id=$1`, [first.id])).rows[0].name).toBe('Palette first');
+    await api('DELETE', `/api/catalog/projects/${first.id}`);
+    await api('DELETE', `/api/catalog/projects/${second.id}`);
+    await t.hub.projects.flush();
+  });
+
+  it('returns deletion before quiet reclassification and restores the stored path group with one notification', async () => {
+    await t.hub.projects.flush();
+    const project = (await api('POST', '/api/catalog/projects', { name: 'Background fallback' })).json<{ id: string }>();
+    const legacy = (await t.tdb.pool.query(`SELECT id,path FROM projects ORDER BY id LIMIT 1`)).rows[0];
+    const sid = (
+      await t.tdb.pool.query(
+        `INSERT INTO sessions(user_id,runner_id,claude_session_id,source,status) SELECT user_id,'hp',gen_random_uuid(),'hub','closed' FROM catalog_projects WHERE id=$1 RETURNING id`,
+        [project.id],
+      )
+    ).rows[0].id;
+    const file = (
+      await t.tdb.pool.query(
+        `INSERT INTO transcript_files(user_id,session_id,runner_id,claude_session_id,rel_key,rel_path,kind) SELECT user_id,id,runner_id,claude_session_id,'e/background.jsonl','e/background.jsonl','main' FROM sessions WHERE id=$1 RETURNING id`,
+        [sid],
+      )
+    ).rows[0].id;
+    await t.tdb.pool.query(`INSERT INTO path_touches(session_id,file_id,line_no,op,path_norm,project_id) VALUES ($1,$2,0,'cwd',$3,$4)`, [sid, file, legacy.path, legacy.id]);
+    await t.tdb.pool.query(`INSERT INTO session_projects(user_id,session_id,project_id) SELECT user_id,$2,id FROM catalog_projects WHERE id=$1`, [project.id, sid]);
+    const original = t.hub.projects.recompute.bind(t.hub.projects);
+    let release!: () => void;
+    const barrier = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    const recompute = vi.spyOn(t.hub.projects, 'recompute').mockImplementation(async (id, options) => {
+      await barrier;
+      return original(id, options);
+    });
+    const ui = connectUi(t.wsBase, cookie);
+    await ui.open;
+    try {
+      expect((await api('DELETE', `/api/catalog/projects/${project.id}`)).statusCode).toBe(200);
+      await waitFor(() => recompute.mock.calls.length === 1);
+      expect(recompute.mock.calls[0]).toEqual([sid, { fresh: true, quiet: true, skipStart: true }]);
+      expect(ui.received.filter(message => message.type === 'projects.changed')).toHaveLength(0);
+      release();
+      await t.hub.projects.flush();
+      await waitFor(() => ui.received.some(message => message.type === 'projects.changed'));
+      expect(ui.received.filter(message => message.type === 'projects.changed')).toHaveLength(1);
+      expect(ui.received.filter(message => message.type === 'session.upsert')).toHaveLength(0);
+      expect((await api('GET', `/api/sessions/${sid}`)).json()).toMatchObject({ project: { id: legacy.id } });
+    } finally {
+      release();
+      recompute.mockRestore();
+      ui.ws.close();
+    }
   });
 
   it('lists directories through the owning negotiated agent and rejects old, foreign, offline, and invalid requests', async () => {
@@ -92,6 +251,10 @@ describe('projects-catalog HTTP (integration)', () => {
     expect(created.statusCode).toBe(201);
     const id = created.json<{ id: string }>().id;
     expect(created.json()).toMatchObject({ id, name: 'Zeta', description: 'notes', remote: 'https://example.test/zeta.git', bindings: [] });
+    type Sidebar = { projects: Array<{ project: { id: string | null; title: string }; total: number; sessions: unknown[] }> };
+    const group = async () => (await api('GET', '/api/sidebar')).json<Sidebar>().projects.find(p => p.project.id === id);
+    // a project without sessions is a group at once, so a project created by hand is visible
+    expect(await group()).toMatchObject({ project: { title: 'Zeta' }, total: 0, sessions: [] });
     expect((await api('PUT', `/api/catalog/projects/${id}/bindings/hp`, { path: 'relative/path' })).statusCode).toBe(400);
     expect((await api('PUT', `/api/catalog/projects/${id}/bindings/hp`, { path: 'C:\\work\\zeta' })).statusCode).toBe(200);
     expect((await api('PUT', `/api/catalog/projects/${id}/bindings/vm`, { path: '/home/ubuntu/zeta' })).statusCode).toBe(200);
@@ -110,6 +273,7 @@ describe('projects-catalog HTTP (integration)', () => {
     expect((await api('PATCH', '/api/catalog/projects/not-a-uuid', { archived: true })).statusCode).toBe(400);
     expect((await api('PATCH', `/api/catalog/projects/${id}`, { archived: true })).statusCode).toBe(200);
     expect((await api('GET', '/api/catalog/projects')).json()).toEqual([]);
+    expect(await group()).toBeUndefined();
   });
 
   it("rejects a binding to another user's runner and reports an offline owned runner as unavailable", async () => {

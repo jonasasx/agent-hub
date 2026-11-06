@@ -17,7 +17,7 @@ describe('loadConfig', () => {
     expect(c.OIDC_GOOGLE_ISSUER).toBe('https://accounts.google.com');
     expect(c.OIDC_ALLOWED_EMAILS).toEqual(['jonasasx@gmail.com', 'other@example.com']);
     expect(c.PUBLIC_URL).toBe('https://hub.internal.example.com');
-    expect(c.publicOrigin).toBe('https://hub.internal.example.com');
+    expect(c.publicOrigins).toEqual(['https://hub.internal.example.com']);
   });
 
   it('rejects a short cookie secret and a missing client secret', () => {
@@ -111,5 +111,25 @@ describe('loadConfig', () => {
     // review A2: below the agent's own 55 s the hub would give up on answers still coming
     expect(() => loadConfig({ ...base, LIMITS_PROBE_TIMEOUT_SEC: '59' })).toThrow(/LIMITS_PROBE_TIMEOUT_SEC/);
     expect(loadConfig({ ...base, LIMITS_PROBE_TIMEOUT_SEC: '60' }).LIMITS_PROBE_TIMEOUT_SEC).toBe(60);
+  });
+});
+
+describe('Keycloak public addresses', () => {
+  it('empty list offers Keycloak everywhere', () => {
+    expect(loadConfig(base).keycloakOrigins).toEqual([]);
+    expect(loadConfig({ ...base, OIDC_KEYCLOAK_PUBLIC_URLS: '' }).keycloakOrigins).toEqual([]);
+  });
+
+  it('normalizes URLs and compares origins, preserving configured order', () => {
+    const c = loadConfig({
+      ...base,
+      EXTRA_PUBLIC_URLS: 'https://second.example/',
+      OIDC_KEYCLOAK_PUBLIC_URLS: ' https://second.example///, https://hub.internal.example.com/path/, ',
+    });
+    expect(c.keycloakOrigins).toEqual(['https://second.example', 'https://hub.internal.example.com']);
+  });
+
+  it.each(['https://foreign.example', 'not a URL'])('rejects an invalid address: %s', value => {
+    expect(() => loadConfig({ ...base, OIDC_KEYCLOAK_PUBLIC_URLS: value })).toThrow(/OIDC_KEYCLOAK_PUBLIC_URLS/);
   });
 });

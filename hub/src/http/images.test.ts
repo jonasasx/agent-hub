@@ -254,7 +254,7 @@ describe('images (integration)', () => {
     const r = await t.hub.app.inject({ method: 'GET', url: '/auth/callback' });
     expect(String(r.headers['content-type'])).toMatch(/^text\/html/);
     expect(r.headers['content-security-policy']).toContain("img-src 'self' blob: data:");
-    const csp = contentSecurityPolicy('https://hub.internal.example.com', ["'sha256-abc'"]);
+    const csp = contentSecurityPolicy(['https://hub.internal.example.com'], ["'sha256-abc'"]);
     expect(csp).toContain("script-src 'self' 'sha256-abc'");
     expect(csp).toContain("connect-src 'self' wss://hub.internal.example.com");
     expect(csp).toContain("frame-ancestors 'none'");
@@ -262,7 +262,7 @@ describe('images (integration)', () => {
     // A new web build without a hub restart: the hash follows index.html.
     const dir = mkdtempSync(join(tmpdir(), 'agenthub-csp-'));
     try {
-      const policy = cspProvider('https://hub.internal.example.com', dir);
+      const policy = cspProvider(['https://hub.internal.example.com'], dir);
       expect(policy()).toContain("script-src 'self';");
       writeFileSync(join(dir, 'index.html'), '<html><script>var a=1</script></html>');
       const h1 = inlineScriptHashes(dir)[0]!;

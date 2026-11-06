@@ -1,6 +1,6 @@
 // Login of the desktop app through the system browser (change desktop-app, capability desktop-auth, design.md D9, D10).
 // /auth/login, /auth/callback and /auth/logout (auth.ts) are untouched; every new route is under /auth/desktop/.
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { desktopExchangeRequestSchema, type DesktopExchangeResponse } from '@agent-hub/shared';
 import type { Config } from '../config.js';
 import type { Db } from '../db/db.js';
@@ -9,7 +9,7 @@ import type { OidcChecks } from '../auth/oidc.js';
 import { SESSION_COOKIE, SESSION_TTL_MS, createSession, findSessionUser } from '../auth/sessions.js';
 import { DesktopCodeStore } from '../auth/desktopCodes.js';
 import { desktopBadLinkPage, desktopChooseProviderPage, desktopReturnPage, loginErrorPage, providerLabel } from './pages.js';
-import { enabledProviders, type OidcProviders } from './auth.js';
+import { providersFor, requestPublicUrl, type OidcProviders } from './auth.js';
 import { admit, logSecurity } from '../users/repo.js';
 import type { HubLimits } from './limits.js';
 
@@ -37,8 +37,7 @@ export function desktopReturnLink(code: string, state: string): string {
 export function registerDesktopAuth(app: FastifyInstance, deps: { config: Config; db: Db; oidc: OidcProviders; limits: HubLimits; codes?: DesktopCodeStore }): DesktopCodeStore {
   const { config, db, oidc, limits } = deps;
   const codes = deps.codes ?? new DesktopCodeStore();
-  const redirectUri = `${config.PUBLIC_URL}/auth/desktop/callback`;
-  const providers = enabledProviders(oidc);
+  const redirectUri = (req: FastifyRequest) => `${requestPublicUrl(req, config)}/auth/desktop/callback`;
   /** The user of a code is still active (disabled between the browser step and the exchange → forbidden_account). */
   const active = async (userId: string) => Boolean(await db.selectFrom('users').select('id').where('id', '=', userId).where('status', '=', 'active').executeTakeFirst());
   const html = (reply: FastifyReply, code: number, body: string) => reply.code(code).type('text/html; charset=utf-8').send(body);
@@ -72,6 +71,7 @@ export function registerDesktopAuth(app: FastifyInstance, deps: { config: Config
 
     if (!limits.loginStart.hit(req.ip)) return html(reply, 429, loginErrorPage('Слишком много попыток входа. Подождите минуту.'));
     // Change multi-user: `provider`; without it — the choice, when Keycloak is configured.
+    const providers = providersFor(req, config, oidc);
     let provider: LoginProvider | null = q.provider === 'google' || q.provider === 'keycloak' ? q.provider : null;
     if (provider && !providers.includes(provider)) provider = null;
     if (!provider) {
@@ -84,7 +84,7 @@ export function registerDesktopAuth(app: FastifyInstance, deps: { config: Config
     const client = provider === 'keycloak' ? oidc.keycloak! : oidc.google;
     let started;
     try {
-      started = await client.start({ redirectUri });
+      started = await client.start({ redirectUri: redirectUri(req) });
     } catch (err) {
       req.log.error({ err, provider }, 'oidc discovery failed');
       return html(reply, 502, loginErrorPage(`Сервис входа ${providerLabel(provider)} недоступен.`));
@@ -130,7 +130,7 @@ export function registerDesktopAuth(app: FastifyInstance, deps: { config: Config
 
     let identity;
     try {
-      identity = await client.finish(new URL(req.url, config.PUBLIC_URL), checks);
+      identity = await client.finish(new URL(req.url, requestPublicUrl(req, config)), checks);
     } catch (err) {
       req.log.warn({ err: (err as Error).message, provider }, 'desktop oidc code exchange failed');
       return html(reply, 400, loginErrorPage(`${providerLabel(provider)} не подтвердил вход. Начните вход заново из приложения.`));

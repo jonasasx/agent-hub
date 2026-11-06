@@ -7,7 +7,7 @@ import { stat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { sql } from 'kysely';
-import type { ColorKey } from '@agent-hub/shared';
+import { allocateProjectColor, PROJECT_COLORS, type ColorKey } from '@agent-hub/shared';
 import type { Db } from '../db/db.js';
 import { buildCatalog, builtins, normalizeRemote, PathMatcher, translateLegacy, VAULT_BUILTIN, type Catalog, type CatalogItem } from './catalog.js';
 import type { ItemInfo } from './classify.js';
@@ -126,6 +126,7 @@ export class ProjectCatalog {
     for (const userId of users) {
       const had = await this.o.db.selectFrom('projects').selectAll().where('user_id', '=', userId).execute();
       const byPath = new Map(had.map(r => [r.path, r]));
+      const usedColors = had.map(r => r.color_key);
       const wanted = new Map(this.catalog.items.map(i => [i.path, i]));
       let userChanged = false;
       // An element that moved inside its area with the same slug (projects/99-archive) keeps its id.
@@ -147,17 +148,18 @@ export class ProjectCatalog {
           title: item.title,
           summary: item.summary,
           archived: item.archived,
-          color_key: item.colorKey,
+          color_key: PROJECT_COLORS.includes(byPath.get(item.path)?.color_key as (typeof PROJECT_COLORS)[number]) ? byPath.get(item.path)!.color_key : allocateProjectColor(usedColors, item.path),
           git_remotes: item.gitRemotes,
           clone_paths: item.clonePaths,
           origin: item.origin,
         };
         const cur = byPath.get(item.path);
         if (!cur) {
+          usedColors.push(values.color_key);
           await this.o.db
             .insertInto('projects')
             .values({ user_id: userId, path: item.path, ...values })
-            .onConflict(oc => oc.columns(['user_id', 'path']).doUpdateSet(values))
+            .onConflict(oc => oc.columns(['user_id', 'path']).doUpdateSet({ ...values, color_key: sql<string>`projects.color_key` }))
             .execute();
           userChanged = true;
         } else if (
@@ -165,7 +167,7 @@ export class ProjectCatalog {
           cur.archived !== item.archived ||
           cur.kind !== item.kind ||
           cur.summary !== item.summary ||
-          cur.color_key !== item.colorKey ||
+          cur.color_key !== values.color_key ||
           cur.git_remotes.join() !== item.gitRemotes.join() ||
           cur.clone_paths.join() !== item.clonePaths.join() ||
           cur.area_path !== item.areaPath
@@ -281,6 +283,14 @@ export class ProjectCatalog {
   /** The catalogue of the user for GET /api/projects. */
   list(userId: string): ProjectRow[] {
     return [...this.ids.entries()].filter(([k]) => k.startsWith(`${userId}:`)).map(([, id]) => this.rows.get(id)!);
+  }
+
+  /** Per-user legacy color override, preserved by catalogue synchronization. */
+  async setColor(userId: string, id: string, colorKey: ColorKey): Promise<boolean> {
+    const result = await this.o.db.updateTable('projects').set({ color_key: colorKey }).where('id', '=', id).where('user_id', '=', userId).executeTakeFirst();
+    if (!Number(result.numUpdatedRows)) return false;
+    await this.refreshIds();
+    return true;
   }
 
   /** The catalogue as built (tests). */

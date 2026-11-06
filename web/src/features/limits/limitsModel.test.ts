@@ -4,21 +4,7 @@ import { clock } from '../subscriptions/model';
 import { subView } from '../subscriptions/fixtures';
 import { runner } from '../../test/factories';
 import { NOW, isoAt, limView, win } from './fixtures';
-import {
-  LIMITS_COLLAPSE_DESKTOP,
-  LIMITS_COLLAPSE_PHONE,
-  beforeQuiet,
-  collapseFrom,
-  effectivePct,
-  heldOverQuiet,
-  outdatedMachines,
-  refreshLeft,
-  relIn,
-  rowModel,
-  topWindow,
-  windowLevel,
-  worst,
-} from './limitsModel';
+import { beforeQuiet, effectivePct, heldOverQuiet, outdatedMachines, refreshLeft, relIn, rowModel, topWindow, windowLevel } from './limitsModel';
 import { reasonText, windowText } from './limitTexts';
 
 const hm = (iso: string) => clock(iso, new Date(NOW));
@@ -152,23 +138,6 @@ describe('«нет данных», «ниже порога», stale (Requirement
 });
 
 describe('summary, time, refresh', () => {
-  it('the summary threshold: 3 on the phone, 4 on the desktop', () => {
-    expect(LIMITS_COLLAPSE_PHONE).toBe(3);
-    expect(LIMITS_COLLAPSE_DESKTOP).toBe(4);
-    expect(collapseFrom('phone')).toBe(3);
-    expect(collapseFrom('desktop')).toBe(4);
-  });
-  it('worst: the level first, then the percent; stale and «нет данных» rank last', () => {
-    const rows = [
-      { id: 'a', row: rowModel(subView(), limView({ state: 'stale', windows: [win({ utilization: 99 })] }), NOW) },
-      { id: 'b', row: rowModel(subView(), limView({ windows: [win({ utilization: 82 })] }), NOW) },
-      { id: 'c', row: rowModel(subView(), limView({ windows: [win({ utilization: 96 })] }), NOW) },
-      { id: 'd', row: rowModel(subView(), undefined, NOW) },
-    ];
-    expect(worst(rows)?.id).toBe('c');
-    expect(worst([rows[0]!, rows[3]!])?.id).toBe('a');
-    expect(worst([])).toBeNull();
-  });
   it('relative time', () => {
     expect(relIn(isoAt(130), NOW)).toBe('через 2 ч 10 мин');
     expect(relIn(isoAt(128), NOW)).toBe('через 2 ч 8 мин');

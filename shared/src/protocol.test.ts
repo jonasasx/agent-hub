@@ -15,6 +15,9 @@ import {
   mcpProbeResultSchema,
   limitsProbeResultSchema,
   PROTOCOL_VERSION,
+  FILES_PROTOCOL,
+  AGENT_CAPABILITIES,
+  HUB_CAPABILITIES,
   SUBSCRIPTIONS_PROTOCOL,
   TURN_FAILURE_KINDS,
   envelope,
@@ -137,6 +140,8 @@ const validHub: Array<[string, unknown, { id?: string }?]> = [
   ['file.restore', { sessionId: SID, cwd: '/x', url: '/agent-api/restore/abc_DEF-1', sha256: SHA }, { id: 'c9' }],
   ['fs.stat', { path: 'C:\\Users' }, { id: 'c10' }],
   ['fs.list-dirs', { path: 'C:\\Users', showHidden: false }, { id: 'c10b' }],
+  ['fs.list', { path: '/home/a', root: '/home/a', showHidden: false }, { id: 'c10c' }],
+  ['fs.read', { path: '/home/a/x.md', root: '/home/a' }, { id: 'c10d' }],
   ['handoff.generate', { transcript: 't', model: 'sonnet', systemPrompt: 's' }, { id: 'c11' }],
   ['agent.update', { version: '0.2.0', sha256: SHA, url: '/agent/agent-0.2.0.tgz' }],
   ['limits.probe', { subscription: { id: '3a7c1e2d-5b4f-4a6e-9c8d-7e6f5a4b3c2d', token: 'sk-ant-oat01-' + 'Ab9_-'.repeat(16) }, model: 'haiku' }, { id: 'c14' }],
@@ -199,8 +204,18 @@ describe('protocol version', () => {
     expect(parseHubMessage(JSON.stringify(envelope('welcome', { runnerId: 'hp', protocol: '1.13', cursors: [], capabilities: ['fs.list-dirs'] }))).ok).toBe(true);
     expect(parseHubMessage(JSON.stringify(envelope('fs.list-dirs', { path: '/tmp', showHidden: true }, { id: 'browse' }))).ok).toBe(true);
   });
-  it('is 1.13 with close codes 4401/4409/4426; subscriptions need 1.4, agent.update 1.5, limits 1.6, MCP 1.7, MCP sign-out 1.8, Codex subscriptions 1.11', () => {
-    expect(PROTOCOL_VERSION).toBe('1.13');
+  it('negotiates fs.browse in 1.14 and still accepts a 1.13 hello without it', () => {
+    expect(FILES_PROTOCOL).toBe('1.14');
+    expect(AGENT_CAPABILITIES).toContain('fs.browse');
+    expect(HUB_CAPABILITIES).toContain('fs.browse');
+    expect(parseAgentMessage(JSON.stringify(envelope('hello', { ...hello, protocol: '1.14', capabilities: ['fs.browse'] }))).ok).toBe(true);
+    expect(parseAgentMessage(JSON.stringify(envelope('hello', { ...hello, protocol: '1.13', capabilities: ['fs.list-dirs'] }))).ok).toBe(true);
+    expect(parseHubMessage(JSON.stringify(envelope('welcome', { runnerId: 'hp', protocol: '1.14', cursors: [], capabilities: ['fs.browse'] }))).ok).toBe(true);
+    expect(isCompatibleProtocol('1.13')).toBe(true);
+    expect(parseHubMessage(JSON.stringify(envelope('fs.read', { path: '/a', root: '' }, { id: 'bad' }))).ok).toBe(false);
+  });
+  it('is 1.14 with close codes 4401/4409/4426; subscriptions need 1.4, agent.update 1.5, limits 1.6, MCP 1.7, MCP sign-out 1.8, Codex subscriptions 1.11', () => {
+    expect(PROTOCOL_VERSION).toBe('1.14');
     expect(isCompatibleProtocol('1.11')).toBe(true); // project launch adds only optional HTTP fields; agent commands remain 1.12-compatible
     expect(MCP_PROTOCOL).toBe('1.7');
     expect(MCP_AUTH_CONTROLS_PROTOCOL).toBe('1.8');

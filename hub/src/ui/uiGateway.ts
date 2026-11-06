@@ -36,7 +36,7 @@ export class UiGateway {
       db: Db;
       bus: HubBus;
       log: FastifyBaseLogger;
-      publicOrigin: string;
+      publicOrigins: string[];
       parseCookie: (header: string) => Record<string, string | undefined>;
       pingIntervalMs?: number;
       /** A client reported what it shows: the hub clears «unread» of visible active sessions. */
@@ -64,7 +64,7 @@ export class UiGateway {
       .then(session => {
         if (!session) return reject(401, 'Unauthorized');
         // Cross-site WebSocket hijacking guard: browsers always send Origin on WebSocket handshakes.
-        if (req.headers.origin !== this.opts.publicOrigin) return reject(403, 'Forbidden');
+        if (!this.opts.publicOrigins.includes(req.headers.origin ?? '')) return reject(403, 'Forbidden');
         const kind = parseUiClientKind(new URL(req.url ?? '/', 'http://x').searchParams.get('client'));
         this.wss.handleUpgrade(req, socket, head, ws => this.onConnection(ws, session.user.id, session.idHash, session.expiresAt, kind));
       })

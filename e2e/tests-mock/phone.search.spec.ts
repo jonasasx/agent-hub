@@ -6,7 +6,7 @@ test('Поиск на телефоне: the search button, a hit by reply text, 
   const hub = new MockHub({ tabs: [1] });
   await hub.install(page);
   await page.goto('/');
-  await expect(page.getByRole('list', { name: 'Машины' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Сессии и проекты' })).toBeVisible();
   await page.getByRole('button', { name: /Найти сессию/ }).click();
   const dialog = page.getByRole('dialog', { name: 'Быстрый переход' });
   await dialog.getByRole('combobox').fill('таймаута keycloak');

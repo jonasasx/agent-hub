@@ -343,6 +343,11 @@ export class SessionService {
     this.o.ui.broadcast(userId, msg);
   }
 
+  /** Refresh project labels and open session views in every window of the owner. */
+  projectsChanged(userId: string): void {
+    this.o.ui.broadcast(userId, { type: 'projects.changed' });
+  }
+
   view(r: SessionRow): SessionView {
     const v = toSessionView(r, this.defaults, this.o.projects?.catalog, this.now().getTime(), this.o.subscriptions?.enabled ?? false);
     // the countdown follows the sleep rule, an MCP sign-in hold included
@@ -631,6 +636,7 @@ export class SessionService {
     // an explicit choice in the form is the last choice; the default one stays as it is
     if (cred && b.subscriptionId) await this.o.subscriptions!.setLastChoice(userId, cred.id);
     this.rememberMessage(id, b.prompt, b.attachments);
+    this.o.projects?.detectCatalog(id, b.prompt);
     const view = await this.upsert(id);
     this.launch(conn, id, 'session.start', {
       sessionId: id,
@@ -957,6 +963,7 @@ export class SessionService {
     await this.o.db
       .updateTable('sessions')
       .set({
+        ...(b.title !== undefined ? { title: b.title, title_source: 'custom' as const } : {}),
         ...(b.permissionMode !== undefined ? { permission_mode: b.permissionMode } : {}),
         ...(b.model !== undefined ? { model: b.model } : {}),
         ...(b.idleTimeoutMin !== undefined ? { idle_timeout_min: b.idleTimeoutMin } : {}),

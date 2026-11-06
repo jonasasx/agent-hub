@@ -49,7 +49,7 @@ import type {
 } from './types';
 import type {
   McpDraftConnectRequest,
-  McpDraftCreateRequest,
+  McpRegistryCreateRequest,
   McpDraftSaveUncheckedRequest,
   McpDraftUpdateRequest,
   McpDraftValidateRequest,
@@ -162,16 +162,27 @@ export interface HandoffDraft {
 }
 
 export const api = {
+  answerProjectSuggestion: (id: string, answer: import('@agent-hub/shared').ProjectSuggestionAnswer) => request<{ ok: true }>(`/api/sessions/${enc(id)}/project-suggestion`, json('POST', answer)),
   me: () => request<MeResponse>('/api/me'),
   sidebar: (cron = false) => request<SidebarResponse>(`/api/sidebar?cron=${cron ? 1 : 0}`),
   logout: () => request<void>('/auth/logout', { method: 'POST' }),
   projectSessions: (projectId: string | null, offset: number, limit: number, cron: boolean) =>
     request<ProjectSessionsResponse>(`/api/projects/${enc(projectId ?? 'none')}/sessions?offset=${offset}&limit=${limit}&cron=${cron ? 1 : 0}`),
   models: () => request<ModelOption[]>('/api/models'),
-  catalogProjects: (sort: 'recent' | 'name' = 'recent') => request<UserProjectView[]>(`/api/catalog/projects?sort=${sort}`),
+  catalogProjects: (sort: 'recent' | 'name' = 'recent', includeArchived = false) => request<UserProjectView[]>(`/api/catalog/projects?sort=${sort}${includeArchived ? '&includeArchived=1' : ''}`),
   launchPreferences: () => request<{ runnerId: string | null; provider: Provider | null }>('/api/preferences/launch'),
-  createCatalogProject: (body: { name: string; description?: string; remote?: string | null; runnerId?: string; path?: string }) =>
+  createCatalogProject: (body: { name: string; description?: string; remote?: string | null; runnerId?: string; path?: string; colorKey?: UserProjectView['colorKey'] }) =>
     request<UserProjectView>('/api/catalog/projects', json('POST', body)),
+  patchCatalogProject: (
+    id: string,
+    body: { name?: string; colorKey?: UserProjectView['colorKey']; description?: string; remote?: string | null; bindings?: Array<{ runnerId: string; path: string | null }> },
+  ) => request<{ ok: true }>(`/api/catalog/projects/${enc(id)}`, json('PATCH', body)),
+  deleteCatalogProject: (id: string) => request<{ ok: true }>(`/api/catalog/projects/${enc(id)}`, { method: 'DELETE' }),
+  patchProjectGroupColor: (id: string, colorKey: UserProjectView['colorKey']) => request<{ ok: true }>(`/api/projects/${enc(id)}/color`, json('PATCH', { colorKey })),
+  hiddenProjectGroups: () => request<import('./types').ProjectRef[]>('/api/projects/hidden'),
+  hideProjectGroup: (id: string, hidden: boolean) => request<{ ok: true }>(`/api/projects/${enc(id)}/hidden`, { method: hidden ? 'PUT' : 'DELETE' }),
+  deleteProjectGroup: (id: string) => request<{ ok: true }>(`/api/projects/${enc(id)}/hidden`, { method: 'PUT' }),
+  unbindCatalogProject: (id: string, runnerId: string) => request<{ ok: true }>(`/api/catalog/projects/${enc(id)}/bindings/${enc(runnerId)}`, { method: 'DELETE' }),
   bindCatalogProject: (id: string, runnerId: string, path: string) => request<{ ok: true }>(`/api/catalog/projects/${enc(id)}/bindings/${enc(runnerId)}`, json('PUT', { path })),
   runnerDirectories: (runnerId: string, path?: string, showHidden = false) =>
     request<{ path: string; parent: string | null; directories: { name: string; path: string }[] }>(
@@ -207,6 +218,7 @@ export const api = {
   wake: (id: string, force = false) => request<{ session: SessionView }>(`/api/sessions/${enc(id)}/wake`, json('POST', force ? { force: true } : {})),
   interrupt: (id: string) => request<{ session: SessionView }>(`/api/sessions/${enc(id)}/interrupt`, json('POST', {})),
   patchSession: (id: string, body: PatchSessionRequest) => request<SessionView>(`/api/sessions/${enc(id)}`, json('PATCH', body)),
+  regenerateSessionTitle: (id: string) => request<SessionView>(`/api/sessions/${enc(id)}/title/regenerate`, json('POST', {})),
   /** `extra`: the answers of an AskUserQuestion card, the comment of «Продолжить планирование» (M4b contract). */
   decide: (id: string, requestId: string, decision: PermissionDecision, extra: DecideExtra = {}) =>
     request<{ request: PermissionView }>(`/api/sessions/${enc(id)}/permissions/${enc(requestId)}`, json('POST', { decision, ...extra })),
@@ -263,7 +275,7 @@ export const api = {
 
   // MCP registry (protocol 1.13; openspec mcp-registry design §§3, 11–12).
   mcpRegistry: () => request<McpRegistryResponse>('/api/mcp/registry'),
-  mcpRegistryCreate: (body: McpDraftCreateRequest) => request<McpRegistryDraftView>('/api/mcp/registry/drafts', json('POST', body)),
+  mcpRegistryCreate: (body: McpRegistryCreateRequest) => request<McpRegistryDraftView>('/api/mcp/registry/drafts', json('POST', body)),
   mcpRegistryDraft: (id: string) => request<McpRegistryDraftView>(`/api/mcp/registry/drafts/${enc(id)}`),
   mcpRegistryUpdate: (id: string, body: McpDraftUpdateRequest) => request<McpRegistryDraftView>(`/api/mcp/registry/drafts/${enc(id)}`, json('PATCH', body)),
   mcpRegistryValidate: (id: string, body: McpDraftValidateRequest) => request<McpRegistryDraftView>(`/api/mcp/registry/drafts/${enc(id)}/validate`, json('POST', body)),

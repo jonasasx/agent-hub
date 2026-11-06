@@ -59,6 +59,9 @@ describe('MCP registry protocol 1.13 contracts', () => {
       ],
     };
     expect(mcpDraftCreateSchema.parse(input).server.env?.API_KEY).toEqual({ kind: 'secret-name', name: 'API_KEY' });
+    const { id: _id, ...serverWithoutId } = input.server;
+    const withoutAgentInventedId = { ...input, server: serverWithoutId };
+    expect(mcpDraftCreateSchema.parse(withoutAgentInventedId).server).not.toHaveProperty('id');
     expect(mcpDraftUpdateSchema.parse({ revision: 1, server: { env: input.server.env }, secrets: input.secrets }).server.env?.API_KEY).toEqual({
       kind: 'secret-name',
       name: 'API_KEY',
@@ -275,9 +278,25 @@ describe('MCP registry protocol 1.13 contracts', () => {
   it('defines owner-scoped draft messages with safe results and one-time import secret values', () => {
     const requestId = '00000000-0000-4000-8000-000000000003';
     expect(mcpDraftRequestPayload.parse({ requestId, sessionId: machineId, op: 'list', payload: {} })).toMatchObject({ op: 'list', sessionId: machineId });
+    expect(mcpDraftRequestPayload.parse({ requestId, sessionId: machineId, op: 'update', payload: { serverId, update: { revision: 4, server: { enabled: false } } } })).toMatchObject({
+      op: 'update',
+      payload: { serverId, update: { revision: 4 } },
+    });
     const noCallerIdentity = mcpDraftRequestPayload.parse({ requestId, sessionId: machineId, userId: machineId, op: 'list', payload: {} });
     expect(noCallerIdentity).not.toHaveProperty('userId'); // the hub derives ownership from sessionId
     expect(mcpDraftResultPayload.safeParse({ requestId, ok: false, error: { code: 'forbidden', message: 'not allowed' } }).success).toBe(true);
+    expect(
+      mcpDraftResultPayload.safeParse({
+        requestId,
+        ok: true,
+        result: {
+          draftId: requestId,
+          revision: 1,
+          validation: { ok: false, status: 'needs-secret', tools: [], error: 'A secret is required', oauthRequired: false },
+          confirmationUrl: `/s/${machineId}?mcp=1`,
+        },
+      }).success,
+    ).toBe(true);
     const safeResult = mcpDraftResultPayload.parse({ requestId, ok: true, result: { message: 'added', secretValues: [{ value: 'must-not-return' }] } }); // unknown result field is stripped
     expect(JSON.stringify(safeResult)).not.toContain('must-not-return');
     const imported = mcpImportPreviewResultPayload.parse({

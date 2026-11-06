@@ -31,6 +31,12 @@ import { SwitchConfirm } from './features/subscriptions/SwitchConfirm';
 import { trackCtrlKey } from './features/ui/a11y';
 import { Lightbox } from './features/images/ImagePreview';
 import { startPhoneHistory } from './features/workspace/phoneHistory';
+import { Rail } from './features/toolwindows/Rail';
+import { Column } from './features/toolwindows/Column';
+import { DropOverlay } from './features/toolwindows/DropOverlay';
+import { PhoneWindow } from './features/toolwindows/PhoneWindow';
+import { useDock } from './features/toolwindows/useDock';
+import { usePhone } from './features/toolwindows/usePhone';
 import {
   dropSubagentLists,
   PHONE_QUERY,
@@ -119,6 +125,12 @@ export function App() {
   const setAuth = useStore(s => s.setAuth);
   const modal = useStore(s => s.modal);
   const inChat = useStore(s => s.inChat);
+  const phone = usePhone();
+  const rightUsed = useDock(s => s.dock.right.length > 0);
+  // opening a session on the phone leaves the tool window shown over the home screen
+  useEffect(() => {
+    if (inChat) useDock.getState().setPhoneWin(null);
+  }, [inChat]);
   const settings = useStore(s => s.settings);
   const hasMachines = useStore(s => s.runners.some(usableRunner) || Object.keys(s.sessions).length > 0);
 
@@ -287,14 +299,28 @@ export function App() {
         <Welcome onLogout={() => void logout()} />
       ) : (
         <div className={`app${inChat ? ' in-chat' : ''}`}>
-          <Sidebar onLogout={() => void logout()} />
+          {phone ? (
+            <Sidebar onLogout={() => void logout()} />
+          ) : (
+            <>
+              <Rail side="left" onLogout={() => void logout()} />
+              <Column side="left" />
+            </>
+          )}
           {settings ? <Settings /> : <Workspace />}
+          {!phone && rightUsed && (
+            <>
+              <Column side="right" />
+              <Rail side="right" />
+            </>
+          )}
           {modal?.type === 'new' && <NewSessionModal key={modal.runnerId ?? ''} preset={modal} onClose={closeModal} />}
           {modal?.type === 'search' && <QuickSearch onClose={closeModal} />}
           {modal?.type === 'fork' && <ForkModal key={modal.sessionId} sessionId={modal.sessionId} initialMode={modal.mode} onClose={closeModal} />}
           <SwitchConfirm />
           <LimitCard />
           <Lightbox />
+          {phone ? <PhoneWindow /> : <DropOverlay />}
         </div>
       )}
       {modal?.type === 'enroll' && <EnrollModal key={modal.runnerId ?? 'new'} runnerId={modal.runnerId} onClose={closeModal} />}

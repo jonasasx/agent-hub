@@ -135,10 +135,10 @@ describe('App', () => {
     mockFetch(signedIn);
     render(<App />);
     const hp = await screen.findByText('HP');
-    expect(hp.querySelector('.dot')).toHaveClass('bad');
+    expect(hp.querySelector('.tw-st')).toHaveClass('bad');
     await waitFor(() => expect(FakeSocket.last).not.toBeNull());
     act(() => FakeSocket.last!.emit({ type: 'runner.status', runner: runner({ id: 'hp', name: 'HP', online: true }) }));
-    expect(screen.getByText('HP').querySelector('.dot')).toHaveClass('ok');
+    expect(screen.getByText('HP').querySelector('.tw-st')).toHaveClass('ok');
     expect(screen.getByText('HP снова в сети')).toBeInTheDocument();
     expect(screen.getByText('Сессии на HP можно продолжать')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Закрыть' }));
@@ -151,7 +151,7 @@ describe('App', () => {
     await screen.findByText('X1');
     await waitFor(() => expect(FakeSocket.last).not.toBeNull());
     act(() => FakeSocket.last!.emit({ type: 'runner.status', runner: runner({ online: false }) }));
-    expect(screen.getByText('X1').querySelector('.dot')).toHaveClass('bad');
+    expect(screen.getByText('X1').querySelector('.tw-st')).toHaveClass('bad');
     expect(screen.queryByText(/снова в сети/)).not.toBeInTheDocument();
   });
 

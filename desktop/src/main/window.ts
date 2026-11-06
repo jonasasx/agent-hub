@@ -4,12 +4,13 @@
  */
 import { BrowserWindow, Menu, nativeImage, screen, session, shell, type Session } from 'electron';
 import { join } from 'node:path';
-import { decideNavigation, hubPath, isPermissionAllowed, isPermissionCheckAllowed } from '../core/navigation.js';
+import { decideNavigation, hubPath, isImageViewerUrl, isPermissionAllowed, isPermissionCheckAllowed } from '../core/navigation.js';
 import { HEALTH_POLL_MS, HEALTH_TIMEOUT_MS, actionOnHubBack, actionOnHubUnreachable, isOfflineHttpStatus, isOfflineLoadError, type WindowOutageView } from '../core/offline.js';
 import { offlinePage, toDataUrl } from '../core/pages.js';
 import { shouldHideOnToggle, type TrayIconName } from '../core/trayView.js';
 import { parseWindowState, restoreWindowState, type WindowState } from '../core/windowState.js';
 import { log, readText, userFile, writeText } from './files.js';
+import { openImageWindow } from './imageWindow.js';
 
 export const PARTITION = 'persist:agenthub';
 
@@ -138,6 +139,11 @@ export class AppWindow {
       if (d.kind !== 'allow' && !e.url.startsWith('about:')) e.preventDefault();
     });
     wc.setWindowOpenHandler(({ url }) => {
+      // «Открыть оригинал»: the picture in a window of its own, the app stays (change image-viewer, D4)
+      if (isImageViewerUrl(url, origin)) {
+        openImageWindow(url, origin, this.o.assetsDir);
+        return { action: 'deny' };
+      }
       const d = decideNavigation(url, origin);
       if (d.kind === 'allow') void this.win.loadURL(url);
       else if (d.kind === 'login') this.o.onLoginRequested(d.returnPath);

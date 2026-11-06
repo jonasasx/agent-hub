@@ -12,6 +12,23 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
   });
   afterAll(async () => t.drop());
 
+  it('042_project_suggestions rolls down and up without changing catalog links or storing transcript text', async () => {
+    const db = await createTestDb();
+    try {
+      const columns = await db.pool.query<{ column_name: string }>(`SELECT column_name FROM information_schema.columns WHERE table_name='project_suggestions'`);
+      expect(columns.rows.map(r => r.column_name)).toContain('messages_hash');
+      expect(columns.rows.map(r => r.column_name)).not.toContain('messages');
+      await db.pool.query(await readFile(`${MIGRATIONS_DIR}/042_project_suggestions.down.sql`, 'utf8'));
+      expect((await db.pool.query(`SELECT 1 FROM information_schema.tables WHERE table_name='project_suggestions'`)).rowCount).toBe(0);
+      expect((await db.pool.query(`SELECT 1 FROM session_projects LIMIT 1`)).rowCount).toBe(0);
+      await db.pool.query(await readFile(`${MIGRATIONS_DIR}/042_project_suggestions.up.sql`, 'utf8'));
+      expect((await db.pool.query(`SELECT 1 FROM project_suggestions LIMIT 1`)).rowCount).toBe(0);
+      expect((await db.pool.query(`SELECT 1 FROM project_classifier_usage LIMIT 1`)).rowCount).toBe(0);
+    } finally {
+      await db.drop();
+    }
+  });
+
   it('036_projects_catalog creates reversible user-owned tables without changing the legacy projects table', async () => {
     const t7 = await createTestDb({ migrated: false });
     try {
@@ -20,6 +37,8 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
         `SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('projects','catalog_projects','project_bindings','session_projects','user_preferences') ORDER BY table_name`,
       );
       expect(before.rows.map(r => r.table_name)).toEqual(['catalog_projects', 'project_bindings', 'projects', 'session_projects', 'user_preferences']);
+      await t7.pool.query(await readFile(`${MIGRATIONS_DIR}/042_project_suggestions.down.sql`, 'utf8'));
+      await t7.pool.query(await readFile(`${MIGRATIONS_DIR}/041_project_management.down.sql`, 'utf8'));
       await t7.pool.query(await readFile(`${MIGRATIONS_DIR}/036_projects_catalog.down.sql`, 'utf8'));
       const after = await t7.pool.query<{ table_name: string }>(
         `SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('projects','catalog_projects','project_bindings','session_projects','user_preferences') ORDER BY table_name`,
@@ -74,6 +93,9 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
       '037_mcp_registry',
       '038_mcp_oauth_status',
       '039_mcp_registry_machine_toggle',
+      '040_mcp_registry_server_drafts',
+      '041_project_management',
+      '042_project_suggestions',
     ]);
     const second = await migrate(t.pool);
     expect(second).toEqual([]);
@@ -89,6 +111,7 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
       'enroll_codes',
       'events',
       'handoff_drafts',
+      'hidden_project_groups',
       'import_runs',
       'invites',
       'mcp_gateway_statuses',
@@ -107,6 +130,8 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
       'pending_agent_meta',
       'permission_requests',
       'project_bindings',
+      'project_classifier_usage',
+      'project_suggestions',
       'projects',
       'runners',
       'schema_migrations',
@@ -128,11 +153,51 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
     ]);
   });
 
-  it('037-039 MCP registry migrations can be rolled down and up', async () => {
+  it('041 backfills stable colors, preserves links across down/up, and reports normalized duplicates', async () => {
+    const fixture = await createTestDb();
+    try {
+      const q = (text: string, values: unknown[] = []) => fixture.pool.query(text, values);
+      const down = await readFile(`${MIGRATIONS_DIR}/041_project_management.down.sql`, 'utf8');
+      const up = await readFile(`${MIGRATIONS_DIR}/041_project_management.up.sql`, 'utf8');
+      await q(down);
+      const uid = (await q(`INSERT INTO users(email) VALUES ('e-migration@test.local') RETURNING id`)).rows[0].id;
+      await q(`INSERT INTO runners(id,user_id,name,home_dir) VALUES ('e-runner',$1,'E','/home/e')`, [uid]);
+      const pid = (await q(`INSERT INTO catalog_projects(user_id,name) VALUES ($1,'Preserved') RETURNING id`, [uid])).rows[0].id;
+      await q(
+        `INSERT INTO projects(user_id,kind,path,slug,title,color_key,origin) VALUES ($1,'repo','/legacy/e','e','Legacy E','rose','repos'), ($1,'repo','/legacy/missing','missing','Missing','none','repos')`,
+        [uid],
+      );
+      await q(`INSERT INTO project_bindings(user_id,project_id,runner_id,path) VALUES ($1,$2,'e-runner','/home/e/project')`, [uid, pid]);
+      const sid = (await q(`INSERT INTO sessions(user_id,runner_id,claude_session_id,source,status) VALUES ($1,'e-runner','00000000-0000-4000-8000-000000000040','hub','working') RETURNING id`, [uid]))
+        .rows[0].id;
+      await q(`INSERT INTO session_projects(user_id,session_id,project_id) VALUES ($1,$2,$3)`, [uid, sid, pid]);
+      const snapshot = async () =>
+        (await q(`SELECT (SELECT count(*) FROM sessions) sessions, (SELECT count(*) FROM session_projects) links, (SELECT count(*) FROM project_bindings) bindings`)).rows[0];
+      const before = await snapshot();
+      await q(up);
+      expect((await q(`SELECT color_key FROM catalog_projects WHERE id=$1`, [pid])).rows[0].color_key).toBe('scanner');
+      expect((await q(`SELECT color_key FROM projects WHERE user_id=$1 AND path='/legacy/e'`, [uid])).rows[0].color_key).toBe('rose');
+      expect((await q(`SELECT color_key FROM projects WHERE user_id=$1 AND path='/legacy/missing'`, [uid])).rows[0].color_key).not.toBe('none');
+      expect(await snapshot()).toEqual(before);
+      await q(down);
+      expect((await q(`SELECT color_key FROM projects WHERE user_id=$1 AND path='/legacy/e'`, [uid])).rows[0].color_key).toBe('none');
+      expect(await snapshot()).toEqual(before);
+      await q(`INSERT INTO catalog_projects(user_id,name) VALUES ($1,' preserved ')`, [uid]);
+      await expect(q(up)).rejects.toThrow(/Duplicate active project names:.*preserved/);
+      await q(`DELETE FROM catalog_projects WHERE name=' preserved '`);
+      await q(up);
+      expect(await snapshot()).toEqual(before);
+    } finally {
+      await fixture.drop();
+    }
+  });
+
+  it('037-040 MCP registry migrations can be rolled down and up', async () => {
     const t37 = await createTestDb({ migrated: true });
     try {
       const before = await t37.pool.query(`SELECT 1 FROM information_schema.tables WHERE table_name='mcp_registry_servers'`);
       expect(before.rowCount).toBe(1);
+      await t37.pool.query(await readFile(`${MIGRATIONS_DIR}/040_mcp_registry_server_drafts.down.sql`, 'utf8'));
       await t37.pool.query(await readFile(`${MIGRATIONS_DIR}/039_mcp_registry_machine_toggle.down.sql`, 'utf8'));
       await t37.pool.query(await readFile(`${MIGRATIONS_DIR}/038_mcp_oauth_status.down.sql`, 'utf8'));
       await t37.pool.query(await readFile(`${MIGRATIONS_DIR}/037_mcp_registry.down.sql`, 'utf8'));
@@ -141,7 +206,11 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
       await t37.pool.query(await readFile(`${MIGRATIONS_DIR}/037_mcp_registry.up.sql`, 'utf8'));
       await t37.pool.query(await readFile(`${MIGRATIONS_DIR}/038_mcp_oauth_status.up.sql`, 'utf8'));
       await t37.pool.query(await readFile(`${MIGRATIONS_DIR}/039_mcp_registry_machine_toggle.up.sql`, 'utf8'));
+      await t37.pool.query(await readFile(`${MIGRATIONS_DIR}/040_mcp_registry_server_drafts.up.sql`, 'utf8'));
       expect((await t37.pool.query(`SELECT 1 FROM information_schema.tables WHERE table_name='mcp_oauth_statuses'`)).rowCount).toBe(1);
+      const draftCols = await t37.pool.query<{ column_name: string }>(`SELECT column_name FROM information_schema.columns WHERE table_name='mcp_registry_drafts' ORDER BY column_name`);
+      expect(draftCols.rows.map(x => x.column_name)).toContain('server_id');
+      expect(draftCols.rows.map(x => x.column_name)).toContain('base_revision');
       const enabled = await t37.pool.query<{ column_default: string; is_nullable: string }>(
         `SELECT column_default, is_nullable FROM information_schema.columns WHERE table_name='runners' AND column_name='mcp_registry_enabled'`,
       );
@@ -239,6 +308,9 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
         '037_mcp_registry',
         '038_mcp_oauth_status',
         '039_mcp_registry_machine_toggle',
+        '040_mcp_registry_server_drafts',
+        '041_project_management',
+        '042_project_suggestions',
       ]);
       expect((await q(`SELECT count(*)::int AS n FROM events`)).rows[0].n).toBe(3);
       expect((await q(`SELECT rel_key, runner_id, claude_session_id, acked_line::int AS l FROM transcript_files`)).rows[0]).toEqual({
@@ -304,12 +376,16 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
         '037_mcp_registry',
         '038_mcp_oauth_status',
         '039_mcp_registry_machine_toggle',
+        '040_mcp_registry_server_drafts',
+        '041_project_management',
+        '042_project_suggestions',
       ]);
       expect((await q(`SELECT git_remote FROM sessions ORDER BY git_remote`)).rows.map(r => r.git_remote)).toEqual([
         'git@git.example.com:a/b.git',
         'https://git.example.com/alice/pos.git',
         'https://git.example.com/c/d.git',
       ]);
+      await q(await readFile(`${MIGRATIONS_DIR}/041_project_management.down.sql`, 'utf8'));
       await q(await readFile(`${MIGRATIONS_DIR}/014_projects.down.sql`, 'utf8'));
       expect((await q(`SELECT count(*)::int AS n FROM information_schema.tables WHERE table_name = 'projects'`)).rows[0].n).toBe(0);
       await q(await readFile(`${MIGRATIONS_DIR}/014_projects.up.sql`, 'utf8'));
