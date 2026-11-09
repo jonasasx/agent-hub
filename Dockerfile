@@ -27,12 +27,9 @@ ARG BUILD_COMMIT=dev
 ARG BUILD_TIME=
 ENV BUILD_COMMIT=${BUILD_COMMIT} \
     BUILD_TIME=${BUILD_TIME}
+# The agent build also packs agent/release/agent-<version>.tgz: the contents of agent/dist at the archive root, no
+# node_modules (the installer runs npm install --omit=dev: the SDK has a native binary per platform).
 RUN npm run build -w shared && npm run build -w hub && npm run build -w web && npm run build -w agent
-# /agent/agent-<version>.tgz: the contents of agent/dist at the archive root, no node_modules (the installer runs
-# npm install --omit=dev: the SDK has a native binary per platform). The version is agent/package.json's.
-RUN mkdir -p /src/agent-release \
- && V=$(node -p "require('./agent/package.json').version") \
- && tar -czf "/src/agent-release/agent-$V.tgz" -C agent/dist .
 
 # ---------- production dependencies of hub only ----------
 FROM ${NODE_IMAGE} AS deps
@@ -62,7 +59,7 @@ COPY --from=build /src/hub/package.json hub/
 COPY --from=build /src/hub/dist hub/dist
 COPY --from=build /src/hub/migrations hub/migrations
 COPY --from=build /src/web/dist web/dist
-COPY --from=build /src/agent-release agent-release
+COPY --from=build /src/agent/release agent-release
 # install.sh / install.ps1 templates (__HUB_URL__ is substituted when served)
 COPY deploy/agent installers
 USER node

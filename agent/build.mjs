@@ -1,6 +1,7 @@
 // Bundles the agent into dist/agent.mjs. The Agent SDK stays external: it ships a native Claude Code
 // binary per platform, installed next to the bundle by the installer (`npm install --omit=dev` in the app dir).
-import { readFile, writeFile, mkdir, copyFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, copyFile, rm } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
@@ -50,3 +51,14 @@ await writeFile(
 );
 await copyFile(new URL('./scripts/s4u-check.mjs', import.meta.url), new URL('./dist/s4u-check.mjs', import.meta.url));
 console.log(`agent ${pkg.version} bundled to dist/agent.mjs`);
+
+// release/agent-<version>.tgz: the build the hub serves at /agent/ (its default AGENT_DIST_DIR, the Docker image copies
+// the same file). The contents of dist/ at the archive root, no node_modules. Without it a hub run from the sources
+// answers 404 on /agent/latest.json and the installer stops at «Проверяем связь с хабом».
+const release = fileURLToPath(new URL('./release/', import.meta.url));
+await rm(release, { recursive: true, force: true });
+await mkdir(release, { recursive: true });
+const tgz = `agent-${pkg.version}.tgz`;
+const tar = spawnSync('tar', ['-czf', tgz, '-C', fileURLToPath(out), '.'], { cwd: release, stdio: 'inherit' });
+if (tar.status !== 0) throw new Error(`tar exited with ${tar.status ?? tar.error?.message}`);
+console.log(`agent ${pkg.version} packed to release/${tgz}`);

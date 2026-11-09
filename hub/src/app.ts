@@ -201,7 +201,13 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
   const limits = deps.limits ?? createLimits();
   const trust = trustFn(config.TRUSTED_PROXIES);
   const agentBuild = new AgentBuild(config.AGENT_DIST_DIR || null);
-  await agentBuild.refresh().catch((err: unknown) => app.log.warn({ err }, 'agent build scan failed'));
+  const built = await agentBuild.refresh().catch((err: unknown) => {
+    app.log.warn({ err }, 'agent build scan failed');
+    return null;
+  });
+  if (!built && config.AGENT_DIST_DIR) {
+    app.log.warn({ dir: config.AGENT_DIST_DIR }, 'no agent build: /agent/latest.json answers 404, machines cannot be connected; run npm run build -w agent');
+  }
 
   const bus = new HubBus();
   const agents = new AgentGateway({
