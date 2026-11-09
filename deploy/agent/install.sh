@@ -178,7 +178,11 @@ EOF
   if [[ "$claude_status" == *'"login":"ok"'* ]]; then
     say "Вход есть."
   elif { : < /dev/tty; } 2> /dev/null; then
-    "$run_node" "$stage/cli.mjs" login --no-restart < /dev/tty ||
+    # The real device (/dev/ttys003), not /dev/tty: macOS kqueue rejects /dev/tty with EINVAL, and claude (Bun) dies on it.
+    local tty_dev
+    tty_dev="$(tty < /dev/tty 2> /dev/null || true)"
+    [[ -c "$tty_dev" ]] || tty_dev=/dev/tty
+    "$run_node" "$stage/cli.mjs" login --no-restart < "$tty_dev" ||
       warn "Вход в Claude не выполнен. Позже: $state/bin/agent-hub login"
   else
     warn "Нет входа в Claude и нет терминала для входа. После установки выполните: $state/bin/agent-hub login"
