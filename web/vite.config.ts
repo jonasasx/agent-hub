@@ -80,6 +80,10 @@ export default defineConfig({
         ...SW_LIFECYCLE,
         // no json: /version.json always goes to the network (design D1)
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        // push handlers (change web-push-notifications D8): imported by the generated sw.js, the browser byte-compares the
+        // imported script on its own, so it stays out of the precache manifest
+        importScripts: ['push-sw.js'],
+        globIgnores: ['push-sw.js'],
         navigateFallback: '/index.html',
         // Server routes must reach the hub, never the cached shell.
         navigateFallbackDenylist: SW_NAVIGATE_DENYLIST,

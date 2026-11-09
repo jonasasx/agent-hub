@@ -46,9 +46,12 @@ export function redactSecrets(text: string): string {
     .replace(/\b(?:sk-[\w-]+|gh[pousr]_[\w]+|github_pat_[\w]+|AKIA[A-Z0-9]{16})\b/g, '[REDACTED]')
     .replace(/\b(?:bearer|basic)\s+[\w.+/=-]+/gi, '[REDACTED authorization]')
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[REDACTED JWT]')
+    .replace(/(\bauthorization["']?\s*[=:]\s*["']?)[^\r\n"']+/gi, '$1[REDACTED]')
+    .replace(/((?:^|\s)--?(?:password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|key)(?:=|\s+))["']?[^\s"']+["']?/gi, '$1[REDACTED]')
+    .replace(/(\s(?:-u|--user|--proxy-user)(?:=|\s+))["']?[^\s"':]*:[^\s"']+["']?/g, '$1[REDACTED]')
     .replace(/((?:api[_-]?key|token|password|secret|private[_-]?key|preshared[_-]?key)\s*[=:]\s*)[^\s,;]+/gi, '$1[REDACTED]')
     .replace(/(["']?[\w-]{0,40}(?:secret|token|password|private[_-]?key|preshared[_-]?key|api[_-]?key)[\w-]{0,40}["']?\s*[=:]\s*)["']?[^\s,;"']+["']?/gi, '$1[REDACTED]')
-    .replace(/(https?:\/\/)[^\s/@]+(?::[^\s/@]*)?@/gi, '$1[REDACTED]@');
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+(?::[^\s/@]*)?@/gi, '$1[REDACTED]@');
 }
 
 /** One turn of a small model on the utility runner under the user's subscription (the same path as handoff). */

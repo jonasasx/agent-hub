@@ -5,12 +5,12 @@ import userEvent from '@testing-library/user-event';
 import type { EnrollCodeResponse, EnrollStage, RunnerView } from '../../api/types';
 import { useStore } from '../../store';
 import { handleServerMessage } from '../workspace/actions';
-import { mockFetch, resetStore, runner } from '../../test/factories';
+import { mcpImportPreview, mockFetch, resetStore, runner } from '../../test/factories';
 import { EnrollModal, EnrollProgress, NO_CONTACT_HINT_MS } from './EnrollModal';
 import { detectOs, osFamily } from './machines';
 
 const pending = (over: Partial<RunnerView> = {}) =>
-  runner({ id: 'r-abc', name: 'Моя машина', os: null, online: false, lastSeenAt: null, agentVersion: null, vaultRoot: null, homeDir: null, state: 'pending', claudeLogin: null, ...over });
+  runner({ id: 'r-abc', name: 'Моя машина', os: null, online: false, lastSeenAt: null, agentVersion: null, defaultDir: null, homeDir: null, state: 'pending', claudeLogin: null, ...over });
 
 const code = (n = 1, over: Partial<EnrollCodeResponse> = {}): EnrollCodeResponse => ({
   runner: pending(),
@@ -75,7 +75,10 @@ describe('EnrollModal', () => {
   });
 
   it('name and OS → the command of the OS with «Скопировать», then live stages to «Начать первую сессию»', async () => {
-    const calls = mockFetch({ 'POST /api/runners': () => ({ status: 201, body: code() }) });
+    const calls = mockFetch({
+      'POST /api/runners': () => ({ status: 201, body: code() }),
+      'POST /api/mcp/registry/import/preview': () => ({ status: 200, body: mcpImportPreview() }),
+    });
     const user = userEvent.setup();
     // user-event puts its own clipboard on navigator: spy on it
     const writeText = vi.spyOn(navigator.clipboard, 'writeText');
@@ -106,8 +109,10 @@ describe('EnrollModal', () => {
     expect(screen.queryByText(/Install-AgentHub/)).not.toBeInTheDocument();
     // the machine is in the panel now (scenario «Окно закрыто до конца установки» relies on it)
     expect(useStore.getState().runners.map(r => r.id)).toEqual(['r-abc']);
+    // step 4 «MCP»: the machine has nothing to import, the panel offers the first session
+    expect(await screen.findByText('В настройках Claude Code и Codex на этой машине MCP-серверов нет.')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Начать первую сессию' }));
-    expect(useStore.getState().modal).toEqual({ type: 'new', runnerId: 'r-abc', cwd: '/home/bob', first: true });
+    expect(useStore.getState().modal).toEqual({ type: 'new', runnerId: 'r-abc', first: true });
   });
 
   it('a taken name keeps the form with the text under the field', async () => {
@@ -162,7 +167,10 @@ describe('EnrollModal', () => {
   });
 
   it('scenario «Mac без полного доступа к диску» and no Claude login: ready with both warnings', async () => {
-    mockFetch({ 'POST /api/runners': () => ({ status: 201, body: code() }) });
+    mockFetch({
+      'POST /api/runners': () => ({ status: 201, body: code() }),
+      'POST /api/mcp/registry/import/preview': () => ({ status: 200, body: mcpImportPreview() }),
+    });
     const user = userEvent.setup();
     render(<EnrollModal onClose={() => undefined} />);
     await user.click(screen.getByRole('button', { name: 'Получить команду' }));
@@ -172,7 +180,7 @@ describe('EnrollModal', () => {
     expect(screen.getByText('Нет доступа к защищённым папкам macOS.')).toBeInTheDocument();
     expect(screen.getByText(/Полный доступ к диску/)).toBeInTheDocument();
     expect(screen.getByText('~/.agent-hub/bin/agent-hub login')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Начать первую сессию' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Начать первую сессию' })).toBeInTheDocument();
   });
 
   it('«Переподключить»: a new code at once, the OS from the machine, no name step', async () => {

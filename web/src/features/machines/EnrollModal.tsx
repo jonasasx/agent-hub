@@ -6,6 +6,8 @@
  * scenario «Истёкший код» — the window offers «Новый код»; scenario «Машина не достаёт хаб» — a hint about :443.
  * Requirement: macOS — scenario «Mac без полного доступа к диску».
  * API: POST /api/runners, POST /api/runners/:id/enroll-code, GET /api/runners/:id (D10, design M4).
+ * Requirement (machine-mcp-onboarding): Шаг MCP в мастере подключения машины — after «готово» a new machine gets the
+ * import preview of its MCP configuration (`McpImportPanel`); «Пропустить» closes the wizard (change `mcp-hub-only`).
  */
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -15,6 +17,8 @@ import { useT } from '../../i18n';
 import { fmt } from '../../i18n';
 import { useStore } from '../../store';
 import { useDialog } from '../ui/a11y';
+import { McpImportPanel } from '../mcp/McpImportPanel';
+import { DefaultDirField } from './DefaultDir';
 import { OS_LABEL, OS_ORDER, STAGE_INDEX, claudeLoginCommand, copyText, detectOs, osFamily } from './machines';
 
 /** Waiting this long without the code being used shows the hint about the machine's way out to the internet. */
@@ -178,12 +182,13 @@ export function EnrollModal({ runnerId: initialRunnerId, onClose }: { runnerId?:
   const expired = !!issued && stage === 'waiting' && Date.parse(issued.expiresAt) <= now;
   const showNoContact = !!issued && !expired && stage === 'waiting' && now - issuedAt >= NO_CONTACT_HINT_MS;
   const ready = stage === 'ready';
+  const mcpStep = ready && !reconnect && !!runner;
   const command = issued ? (os === 'windows' ? issued.commands.windows : issued.commands.unix) : '';
   const until = issued ? fmt.time(new Date(issued.expiresAt)) : '';
   const host = typeof location !== 'undefined' ? location.host : '';
   const startFirst = () => {
     if (!runner) return;
-    useStore.setState({ modal: { type: 'new', runnerId: runner.id, cwd: runner.homeDir ?? '', first: true } });
+    useStore.setState({ modal: { type: 'new', runnerId: runner.id, first: true } });
   };
 
   return createPortal(
@@ -251,6 +256,7 @@ export function EnrollModal({ runnerId: initialRunnerId, onClose }: { runnerId?:
                   <li className="done">{t('machines.enroll.path1')}</li>
                   <li className={stage !== 'waiting' ? 'done' : 'on'}>{t('machines.enroll.path2')}</li>
                   <li className={ready ? 'done' : stage !== 'waiting' ? 'on' : ''}>{t('machines.enroll.path3')}</li>
+                  <li className={mcpStep ? 'on' : ''}>{t('machines.enroll.path4')}</li>
                 </ol>
               )}
               {!issued && busy && (
@@ -296,23 +302,40 @@ export function EnrollModal({ runnerId: initialRunnerId, onClose }: { runnerId?:
                   </div>
                 </div>
               )}
+              {ready && runner && <DefaultDirField runner={runner} />}
               {ready && <p className="hint">{t('machines.enroll.readyHint')}</p>}
-            </div>
-            <div className="modal-foot">
-              {issued && !ready && (
-                <button type="button" className={`btn${expired ? ' primary' : ''}`} disabled={busy} onClick={() => runnerId && void issue(() => api.enrollCode(runnerId))}>
-                  {t('machines.enroll.newCode')}
-                </button>
+              {mcpStep && (
+                <section className="enroll-mcp" aria-labelledby={`${titleId}-mcp`}>
+                  <h3 id={`${titleId}-mcp`}>{t('machines.enroll.mcpTitle')}</h3>
+                  <McpImportPanel
+                    machineId={runner.id}
+                    onClose={onClose}
+                    doneActions={
+                      <button type="button" className="btn primary" onClick={startFirst}>
+                        {t('machines.enroll.startFirst')}
+                      </button>
+                    }
+                  />
+                </section>
               )}
-              <button type="button" className="btn ghost" onClick={onClose}>
-                {ready ? t('machines.enroll.ready') : t('machines.enroll.close')}
-              </button>
-              {ready && (
-                <button type="button" className="btn primary" onClick={startFirst} autoFocus>
-                  {t('machines.enroll.startFirst')}
-                </button>
-              )}
             </div>
+            {!mcpStep && (
+              <div className="modal-foot">
+                {issued && !ready && (
+                  <button type="button" className={`btn${expired ? ' primary' : ''}`} disabled={busy} onClick={() => runnerId && void issue(() => api.enrollCode(runnerId))}>
+                    {t('machines.enroll.newCode')}
+                  </button>
+                )}
+                <button type="button" className="btn ghost" onClick={onClose}>
+                  {ready ? t('machines.enroll.ready') : t('machines.enroll.close')}
+                </button>
+                {ready && (
+                  <button type="button" className="btn primary" onClick={startFirst} autoFocus>
+                    {t('machines.enroll.startFirst')}
+                  </button>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>

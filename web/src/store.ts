@@ -46,21 +46,17 @@ export type PendingResume = { kind: 'send'; text: string; clientUuid: string; at
 
 /**
  * `new` may come preset by «Начать первую сессию» (runner-enrollment «Окно подключения машины»): the machine is chosen,
- * the directory is its home, `first` shows the one-line hint about projects.
+ * `first` shows the one-line hint about projects.
  * `enroll` — «Подключить машину»; with `runnerId` — «Переподключить» / the command of a pending machine (a new code).
  */
 export type Modal =
-  | null
-  | { type: 'new'; runnerId?: string; cwd?: string; first?: boolean }
-  | { type: 'search' }
-  | { type: 'fork'; sessionId: string; mode?: 'copy' | 'handoff' }
-  | { type: 'enroll'; runnerId?: string };
+  null | { type: 'new'; runnerId?: string; first?: boolean } | { type: 'search' } | { type: 'fork'; sessionId: string; mode?: 'copy' | 'handoff' } | { type: 'enroll'; runnerId?: string };
 
 /**
  * «Настройки» (change `multi-user`): `/settings/<tab>`; «Пользователи» — only for role admin. claude-subscriptions P12:
  * «Подписки» and «Расход» for every user, absent when the hub has no subscriptions API.
  */
-export type SettingsTab = 'machines' | 'subscriptions' | 'usage' | 'users' | 'security' | 'language';
+export type SettingsTab = 'machines' | 'subscriptions' | 'usage' | 'users' | 'security' | 'notifications' | 'language';
 
 /** A runner of the user that can run sessions: connected at least once and not disabled. */
 export const usableRunner = (r: RunnerView) => r.state !== 'pending' && r.state !== 'disabled';

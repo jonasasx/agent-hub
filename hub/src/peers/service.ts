@@ -195,8 +195,9 @@ export class PeersService {
   }
 
   /**
-   * hub-subagents D4: a child session of the caller — the caller's machine, folder, provider, model and mode unless
-   * given; the task is its first turn as a peer message of kind spawn, and that turn reports back (D5).
+   * hub-subagents D4: a child session of the caller — the caller's machine, provider, model and mode unless given; the
+   * folder by the rule of session-folder (the parent's project on the target machine, else its default folder); the task is
+   * its first turn as a peer message of kind spawn, and that turn reports back (D5).
    */
   private async spawn(caller: SessionBase, runner: RunnerRow, req: SpawnRequest): Promise<PeerSpawnResult> {
     if (!protocolAtLeast(runner.protocol_version, SPAWN_PROTOCOL)) throw new PeerError('unsupported', 'the machine agent does not support starting subagents through the hub, update the agent');
@@ -217,8 +218,6 @@ export class PeersService {
     if (wait !== null) throw new PeerError('rate_limited', `too many messages and launches, retry in ${wait} s`, wait);
 
     const target = await this.machine(caller.user_id, runner, req.machine);
-    const cwd = req.cwd?.trim() || (target.id === caller.runner_id ? caller.cwd : null);
-    if (!cwd) throw new PeerError('invalid_request', `a directory is required on another machine (${target.name}): pass cwd`);
     const provider = req.provider ?? caller.provider;
     const id = randomUUID();
     const envelope = wrapPeerMessage({ from: caller.id, title: caller.title || baseName(caller.cwd), machine: runner.name, id, kind: 'spawn', parent: true }, task);
@@ -229,7 +228,7 @@ export class PeersService {
       model ??= (provider === caller.provider ? caller.model : null) ?? (await this.o.sessions.defaultModel(caller.user_id, target.id, provider));
       // runner-enrollment «Запуск под root»: bypassPermissions becomes acceptEdits on a root machine
       const mode = inheritMode(caller.permission_mode, target).mode as UiPermissionMode;
-      view = await this.o.sessions.create(caller.user_id, { runnerId: target.id, cwd, permissionMode: mode, model, prompt: envelope, provider }, undefined, {
+      view = await this.o.sessions.create(caller.user_id, { runnerId: target.id, permissionMode: mode, model, prompt: envelope, provider }, undefined, {
         parentId: caller.id,
         task,
         title: req.title,
@@ -238,11 +237,11 @@ export class PeersService {
       if (!(err instanceof HttpError)) throw new PeerError('spawn_failed', err instanceof Error ? err.message : String(err));
       if (err.code === 'runner_offline') throw new PeerError('runner_offline', err.message);
       if (err.status === 404) throw new PeerError('not_found', err.message);
-      throw new PeerError('spawn_failed', err.message);
+      throw new PeerError('spawn_failed', err.code === 'cwd_not_found' ? `cwd_not_found: ${err.message}` : err.message);
     }
     await recordPeerMessage(this.o.db, { id, userId: caller.user_id, from: caller.id, to: view.id, text: task, result: 'resumed', at, kind: 'spawn' });
     this.o.log.info({ from: caller.id, to: view.id, id, machine: target.name, provider }, 'peer spawn');
-    return { sessionId: view.id, title: view.title, machine: target.name, provider, cwd, model };
+    return { sessionId: view.id, title: view.title, machine: target.name, provider, cwd: view.cwd ?? '', model };
   }
 
   /** The machine of a spawn by name, case-insensitive, among the owner's active machines; none given — the caller's. */

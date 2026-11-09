@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { McpImportPreviewResponse, McpProjectOverride, McpRegistryDraftView, McpRegistryResponse, McpRegistryServerUpdate, McpRegistryStatus } from '../../api/mcpRegistryTypes';
-import { api } from '../../api/client';
+import type { McpProjectOverride, McpRegistryDraftView, McpRegistryMachineOverrideRequest, McpRegistryResponse, McpRegistryServerUpdate, McpRegistryStatus } from '../../api/mcpRegistryTypes';
+import { ApiError, api } from '../../api/client';
 import type { UserProjectView } from '../../api/types';
+import { McpImportPanel } from './McpImportPanel';
 import { McpSegment } from './McpSegment';
 import { MCP_MODE_LABELS, mcpStatusLabel, mcpStatusTone } from './mcpLabels';
 import { fmt, t, useT } from '../../i18n';
@@ -17,16 +18,7 @@ interface McpRegistryListProps {
   status: McpRegistryStatus;
   machines: MachineOption[];
   projects: UserProjectView[];
-  importMachineId: string;
-  importProjectId: string;
-  selectedImportServerIds: string[];
-  preview: McpImportPreviewResponse | null;
-  onImportMachineChange: (machineId: string) => void;
-  onImportProjectChange: (projectId: string) => void;
-  onImportServerSelectionChange: (serverIds: string[]) => void;
-  onImportPreview: () => void;
-  onImportCommit: () => void;
-  onImportCancel: () => void;
+  onImported: () => void;
   onAdd: () => void;
   onContinueDraft: (draft: McpRegistryDraftView) => void;
   onToggleServer: (serverId: string, update: McpRegistryServerUpdate) => void;
@@ -36,7 +28,7 @@ interface McpRegistryListProps {
   onProjectOverrideChange: (serverId: string, projectId: string, enabled: boolean, revision: number) => Promise<McpProjectOverride>;
   onProjectOverrideClear: (serverId: string, projectId: string, revision: number) => Promise<McpProjectOverride>;
   onRefreshStatus: () => Promise<void>;
-  onMachineRegistryToggle: (machineId: string, enabled: boolean) => Promise<{ machineId: string; registryEnabled: boolean }>;
+  onMachineOverride: (serverId: string, machineId: string, body: McpRegistryMachineOverrideRequest) => Promise<void>;
 }
 
 export function McpRegistryList(props: McpRegistryListProps) {
@@ -45,16 +37,7 @@ export function McpRegistryList(props: McpRegistryListProps) {
     status,
     machines,
     projects,
-    importMachineId,
-    importProjectId,
-    selectedImportServerIds,
-    preview,
-    onImportMachineChange,
-    onImportProjectChange,
-    onImportServerSelectionChange,
-    onImportPreview,
-    onImportCommit,
-    onImportCancel,
+    onImported,
     onAdd,
     onContinueDraft,
     onToggleServer,
@@ -64,7 +47,7 @@ export function McpRegistryList(props: McpRegistryListProps) {
     onProjectOverrideChange,
     onProjectOverrideClear,
     onRefreshStatus,
-    onMachineRegistryToggle,
+    onMachineOverride,
   } = props;
   const t = useT();
 
@@ -77,17 +60,8 @@ export function McpRegistryList(props: McpRegistryListProps) {
       </div>
       <details className="mcp-import-section">
         <summary>{t('mcp.list.importSummary')}</summary>
-        <ImportFields
-          machines={machines}
-          projects={projects}
-          machineId={importMachineId}
-          projectId={importProjectId}
-          onMachineChange={onImportMachineChange}
-          onProjectChange={onImportProjectChange}
-          onPreview={onImportPreview}
-        />
+        <ImportSection machines={machines} onImported={onImported} />
       </details>
-      <MachineRegistryList agents={status.agents} onToggle={onMachineRegistryToggle} />
       <ServerList
         servers={registry.servers}
         status={status}
@@ -100,114 +74,32 @@ export function McpRegistryList(props: McpRegistryListProps) {
         onProjectOverrideChange={onProjectOverrideChange}
         onProjectOverrideClear={onProjectOverrideClear}
         onRefreshStatus={onRefreshStatus}
+        onMachineOverride={onMachineOverride}
       />
       <DraftList drafts={registry.drafts} onContinue={onContinueDraft} />
-      {preview && <ImportPreview preview={preview} selectedServerIds={selectedImportServerIds} onSelectionChange={onImportServerSelectionChange} onCommit={onImportCommit} onCancel={onImportCancel} />}
     </>
   );
 }
 
-function MachineRegistryList({ agents, onToggle }: { agents: McpRegistryStatus['agents']; onToggle: McpRegistryListProps['onMachineRegistryToggle'] }) {
+/** Import from a machine's Claude Code and Codex configs (requirement «Повторный импорт»): the same panel as the wizard step. */
+function ImportSection({ machines, onImported }: { machines: MachineOption[]; onImported: () => void }) {
   const t = useT();
-  if (agents.length === 0) return null;
-
-  return (
-    <section className="mcp-machine-registry" aria-label={t('mcp.list.machines.title')}>
-      <h3>{t('mcp.list.machines.title')}</h3>
-      <p>{t('mcp.list.machines.note')}</p>
-      {agents.map(agent => (
-        <MachineRegistryRow key={agent.machineId} agent={agent} onToggle={onToggle} />
-      ))}
-    </section>
-  );
-}
-
-function MachineRegistryRow({ agent, onToggle }: { agent: McpRegistryStatus['agents'][number]; onToggle: McpRegistryListProps['onMachineRegistryToggle'] }) {
-  const t = useT();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-
-  const toggle = async (enabled: boolean) => {
-    if (enabled) {
-      const machineName = agent.machineName || agent.machineId;
-      const confirmed = window.confirm(t('mcp.list.machines.confirm', { machine: machineName }));
-      if (!confirmed) return;
-    }
-
-    setBusy(true);
-    setError('');
-    try {
-      await onToggle(agent.machineId, enabled);
-    } catch (cause) {
-      setError(errorText(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="mcp-machine-registry-row">
-      <label>
-        <input className="mcp-checkbox" type="checkbox" checked={agent.registryEnabled} disabled={busy} onChange={event => void toggle(event.target.checked)} />
-        <span>{agent.machineName || agent.machineId}</span>
-        <small>{agent.online ? t('mcp.list.machines.online') : t('mcp.list.machines.offline')}</small>
-      </label>
-      {error && <small role="alert">{error}</small>}
-    </div>
-  );
-}
-
-function ImportFields({
-  machines,
-  projects,
-  machineId,
-  projectId,
-  onMachineChange,
-  onProjectChange,
-  onPreview,
-}: {
-  machines: MachineOption[];
-  projects: UserProjectView[];
-  machineId: string;
-  projectId: string;
-  onMachineChange: (machineId: string) => void;
-  onProjectChange: (projectId: string) => void;
-  onPreview: () => void;
-}) {
-  const t = useT();
-  const availableProjects = projects.filter(project => project.bindings.some(binding => binding.runnerId === machineId));
-  const canImport = machines.some(machine => machine.id === machineId && machine.online);
-
+  const [machineId, setMachineId] = useState('');
   return (
     <>
       {!machineId && <p className="mcp-field-hint">{t('mcp.list.import.pickMachine')}</p>}
-      <div className="mcp-import-controls">
-        <McpSegment
-          label={t('mcp.list.import.machineLabel')}
-          value={machineId}
-          options={machines.map(machine => ({
-            value: machine.id,
-            label: machine.name,
-            description: machine.online ? t('mcp.list.import.online') : t('mcp.list.import.offline'),
-            disabled: !machine.online,
-          }))}
-          onChange={onMachineChange}
-        />
-        <label>
-          {t('mcp.list.import.projectLabel')}
-          <select className="input" value={projectId} onChange={event => onProjectChange(event.target.value)} disabled={!machineId}>
-            <option value="">{t('mcp.list.import.pickProject')}</option>
-            {availableProjects.map(project => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="btn" disabled={!canImport || !projectId} onClick={onPreview}>
-          {t('mcp.list.import.preview')}
-        </button>
-      </div>
+      <McpSegment
+        label={t('mcp.list.import.machineLabel')}
+        value={machineId}
+        options={machines.map(machine => ({
+          value: machine.id,
+          label: machine.name,
+          description: machine.online ? t('mcp.list.import.online') : t('mcp.list.import.offline'),
+          disabled: !machine.online,
+        }))}
+        onChange={setMachineId}
+      />
+      {machineId && <McpImportPanel key={machineId} machineId={machineId} onClose={() => setMachineId('')} onImported={onImported} skipLabel={t('mcp.import.cancel')} />}
     </>
   );
 }
@@ -224,6 +116,7 @@ function ServerList({
   onProjectOverrideChange,
   onProjectOverrideClear,
   onRefreshStatus,
+  onMachineOverride,
 }: {
   servers: McpRegistryResponse['servers'];
   status: McpRegistryStatus;
@@ -236,6 +129,7 @@ function ServerList({
   onProjectOverrideChange: McpRegistryListProps['onProjectOverrideChange'];
   onProjectOverrideClear: McpRegistryListProps['onProjectOverrideClear'];
   onRefreshStatus: McpRegistryListProps['onRefreshStatus'];
+  onMachineOverride: McpRegistryListProps['onMachineOverride'];
 }) {
   return servers.map(server => (
     <ServerRow
@@ -251,6 +145,7 @@ function ServerList({
       onProjectOverrideChange={onProjectOverrideChange}
       onProjectOverrideClear={onProjectOverrideClear}
       onRefreshStatus={onRefreshStatus}
+      onMachineOverride={onMachineOverride}
     />
   ));
 }
@@ -267,6 +162,7 @@ function ServerRow({
   onProjectOverrideChange,
   onProjectOverrideClear,
   onRefreshStatus,
+  onMachineOverride,
 }: {
   server: McpRegistryResponse['servers'][number];
   status: McpRegistryStatus;
@@ -279,6 +175,7 @@ function ServerRow({
   onProjectOverrideChange: McpRegistryListProps['onProjectOverrideChange'];
   onProjectOverrideClear: McpRegistryListProps['onProjectOverrideClear'];
   onRefreshStatus: McpRegistryListProps['onRefreshStatus'];
+  onMachineOverride: McpRegistryListProps['onMachineOverride'];
 }) {
   const t = useT();
   const rename = () => {
@@ -301,7 +198,7 @@ function ServerRow({
         {[
           server.transport === 'stdio' ? t('mcp.list.server.stdio') : t('mcp.list.server.http'),
           MCP_MODE_LABELS[server.mode],
-          server.machineScope.allMachines ? t('mcp.list.server.allMachines') : server.machineScope.machineIds.join(', '),
+          server.machineScope.allMachines ? t('mcp.list.server.allMachines') : server.machineScope.machineIds.map(id => machines.find(m => m.id === id)?.name ?? id).join(', '),
         ]
           .filter(Boolean)
           .join(' · ')}
@@ -310,6 +207,7 @@ function ServerRow({
       <SecretList secrets={server.secrets} />
       {server.transport === 'http' && <RegistryOAuthControl server={server} status={status} onRefreshStatus={onRefreshStatus} />}
       <GatewayList serverId={server.id} status={status} />
+      <ServerMachineList server={server} machines={machines} onOverride={onMachineOverride} />
       <ServerConfigEditor server={server} machines={machines} onSave={onUpdate} />
       <ProjectOverrideControl serverId={server.id} projects={projects} onChange={onProjectOverrideChange} onClear={onProjectOverrideClear} />
       <div className="mcp-actions">
@@ -324,6 +222,63 @@ function ServerRow({
         </button>
       </div>
     </article>
+  );
+}
+
+/** Requirement «Включение сервера по машинам»: a switch per machine, «своя настройка» and «Сбросить» for a machine-specific config. */
+function ServerMachineList({ server, machines, onOverride }: { server: McpRegistryResponse['servers'][number]; machines: MachineOption[]; onOverride: McpRegistryListProps['onMachineOverride'] }) {
+  const t = useT();
+  const [busyMachineId, setBusyMachineId] = useState('');
+  const [error, setError] = useState('');
+  const rows = server.machines ?? [];
+  if (rows.length === 0) return null;
+
+  const apply = async (machineId: string, body: McpRegistryMachineOverrideRequest) => {
+    setBusyMachineId(machineId);
+    setError('');
+    try {
+      await onOverride(server.id, machineId, body);
+    } catch (cause) {
+      setError(errorText(cause));
+    } finally {
+      setBusyMachineId('');
+    }
+  };
+
+  return (
+    <section className="mcp-server-machines" aria-label={t('mcp.list.serverMachines.title', { name: server.name })}>
+      <h4>{t('mcp.list.serverMachines.heading')}</h4>
+      {rows.map(row => {
+        const name = machines.find(machine => machine.id === row.machineId)?.name ?? row.machineId;
+        const busy = busyMachineId === row.machineId;
+        return (
+          <div className="mcp-server-machine" key={row.machineId}>
+            <label>
+              <input
+                className="mcp-checkbox"
+                type="checkbox"
+                role="switch"
+                checked={row.enabled}
+                disabled={busy}
+                onChange={event => void apply(row.machineId, { revision: server.revision, enabled: event.target.checked })}
+              />
+              <span>{name}</span>
+            </label>
+            {row.customConfig && <span className="pill">{t('mcp.list.serverMachines.custom')}</span>}
+            {row.customConfig && (
+              <button type="button" className="btn ghost" disabled={busy} onClick={() => void apply(row.machineId, { revision: server.revision, resetConfig: true })}>
+                {t('mcp.list.serverMachines.reset')}
+              </button>
+            )}
+          </div>
+        );
+      })}
+      {error && (
+        <small className="bad" role="alert">
+          {error}
+        </small>
+      )}
+    </section>
   );
 }
 
@@ -351,8 +306,11 @@ function RegistryOAuthControl({
   const [popupBlocked, setPopupBlocked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [pastedUrl, setPastedUrl] = useState('');
   const selectedStatus = serverStatuses.find(item => item.machineId === machineId);
   const displayedState = selectedStatus?.state ?? (startResponse ? 'pending' : 'needs-login');
+  // A pre-registered client returns the browser to localhost: the user pastes that address here.
+  const manualCallback = displayedState === 'pending' && (startResponse ? startResponse.callback === 'manual' : Boolean(server.oauthClientId));
 
   useEffect(() => {
     if (!eligibleAgents.some(agent => agent.machineId === machineId)) {
@@ -367,6 +325,7 @@ function RegistryOAuthControl({
     setError('');
     setStartResponse(null);
     setPopupBlocked(false);
+    setPastedUrl('');
     try {
       const response = await api.mcpRegistryOAuthStart(server.id, { machineId });
       setStartResponse(response);
@@ -378,7 +337,22 @@ function RegistryOAuthControl({
       }
     } catch (cause) {
       loginWindow?.close();
-      setError(errorText(cause));
+      setError(oauthErrorText(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const completeLogin = async () => {
+    if (!machineId || busy || !pastedUrl.trim()) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api.mcpRegistryOAuthComplete(server.id, { machineId, callbackUrl: pastedUrl.trim() });
+      setPastedUrl('');
+      await onRefreshStatus();
+    } catch (cause) {
+      setError(oauthErrorText(cause));
     } finally {
       setBusy(false);
     }
@@ -392,7 +366,7 @@ function RegistryOAuthControl({
       await api.mcpRegistryOAuthRevoke(server.id, { machineId });
       await onRefreshStatus();
     } catch (cause) {
-      setError(errorText(cause));
+      setError(oauthErrorText(cause));
     } finally {
       setBusy(false);
     }
@@ -412,7 +386,7 @@ function RegistryOAuthControl({
       await api.mcpRegistryOAuthConnect(server.id, { machineId });
       await onRefreshStatus();
     } catch (cause) {
-      setError(errorText(cause));
+      setError(oauthErrorText(cause));
     } finally {
       setBusy(false);
     }
@@ -458,6 +432,27 @@ function RegistryOAuthControl({
         <button className="btn" disabled={busy || !machineId || selectedStatus?.state === 'pending'} onClick={() => void startLogin()}>
           {busy ? t('mcp.list.oauth.preparing') : t('mcp.list.oauth.signIn')}
         </button>
+      )}
+      {manualCallback && (
+        <>
+          <small role="note">{t('mcp.list.oauth.manual.hint')}</small>
+          <label>
+            {t('mcp.list.oauth.manual.label')}
+            <input
+              className="input"
+              value={pastedUrl}
+              placeholder="http://localhost:45129/callback?code=…"
+              disabled={busy}
+              onChange={event => setPastedUrl(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter') void completeLogin();
+              }}
+            />
+          </label>
+          <button className="btn primary" disabled={busy || !pastedUrl.trim()} onClick={() => void completeLogin()}>
+            {t('mcp.list.oauth.manual.complete')}
+          </button>
+        </>
       )}
       {!busy && startResponse && popupBlocked && (
         <a className="btn" href={startResponse.authorizationUrl} target="_blank" rel="noreferrer">
@@ -674,66 +669,23 @@ function DraftList({ drafts, onContinue }: { drafts: McpRegistryResponse['drafts
   );
 }
 
-function ImportPreview({
-  preview,
-  selectedServerIds,
-  onSelectionChange,
-  onCommit,
-  onCancel,
-}: {
-  preview: McpImportPreviewResponse;
-  selectedServerIds: string[];
-  onSelectionChange: (serverIds: string[]) => void;
-  onCommit: () => void;
-  onCancel: () => void;
-}) {
-  const t = useT();
-  const setSelected = (serverId: string, selected: boolean) => {
-    const next = selected ? [...selectedServerIds, serverId] : selectedServerIds.filter(id => id !== serverId);
-    onSelectionChange(next);
-  };
-
-  return (
-    <section className="mcp-note info" aria-label={t('mcp.list.preview.label')}>
-      <h3>{t('mcp.list.preview.title')}</h3>
-      <p>{t('mcp.list.preview.scope')}</p>
-      <p>{t('mcp.list.preview.counts', { count: preview.servers.length, secrets: preview.secretsCaptured })}</p>
-      <p>{t('mcp.list.preview.secretsNote')}</p>
-      <ul className="mcp-import-servers">
-        {preview.servers.map(server => {
-          const secrets = server.secrets.filter(secret => secret.state === 'set');
-          return (
-            <li key={server.id}>
-              <label>
-                <input className="mcp-checkbox" type="checkbox" checked={selectedServerIds.includes(server.id)} onChange={event => setSelected(server.id, event.target.checked)} />
-                <span>{server.name}</span>
-                <small>{sourceLabel(server.source)}</small>
-              </label>
-              {secrets.length > 0 && <small>{t('mcp.list.preview.secretsList', { names: secrets.map(secret => secret.name).join(', ') })}</small>}
-            </li>
-          );
-        })}
-      </ul>
-      {preview.warnings.map(warning => (
-        <p key={warning}>{warning}</p>
-      ))}
-      <button className="btn primary" disabled={selectedServerIds.length === 0} onClick={onCommit}>
-        {t('mcp.list.preview.commit')}
-      </button>
-      <button className="btn" onClick={onCancel}>
-        {t('mcp.list.preview.cancel')}
-      </button>
-    </section>
-  );
-}
-
-function sourceLabel(source: McpImportPreviewResponse['servers'][number]['source']): string {
-  if (source === 'user') return '.claude.json · user';
-  if (source === 'local') return '.claude.json · local';
-  return t('mcp.list.preview.sourceProject');
-}
-
 function errorText(cause: unknown): string {
   if (cause instanceof Error) return cause.message;
   return t('mcp.list.override.failed');
+}
+
+/** OAuth errors of the hub as text for people: the raw «502 oauth_start_failed» told nothing. */
+function oauthErrorText(cause: unknown): string {
+  if (cause instanceof ApiError) {
+    if (cause.code === 'oauth_start_failed') return t('mcp.list.oauth.error.startFailed');
+    if (cause.code === 'oauth_start_invalid') return t('mcp.list.oauth.error.startInvalid');
+    if (cause.code === 'machine_offline') return t('mcp.list.oauth.error.offline');
+    if (cause.code === 'timeout') return t('mcp.list.oauth.error.timeout');
+    if (cause.code === 'oauth_callback_invalid') return t('mcp.list.oauth.error.callbackInvalid');
+    if (cause.code === 'oauth_flow_not_found') return t('mcp.list.oauth.error.flowNotFound');
+    if (cause.code === 'oauth_flow_expired') return t('mcp.list.oauth.error.flowExpired');
+    if (cause.code === 'oauth_callback_failed') return t('mcp.list.oauth.error.callbackFailed');
+    if (cause.serverMessage) return cause.serverMessage;
+  }
+  return t('mcp.list.oauth.error.generic');
 }

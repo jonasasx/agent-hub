@@ -1,7 +1,7 @@
 // Task 4.10 on the live stand (QA M4a), read-only: the tree by projects («Без проекта» last, path in the tooltip),
 // a session classified by git remote shows its evidence, Ctrl+K finds sessions by project name, phone «назад» returns
 // to the list (chat, lightbox, /s/<id>). Requirements: spec project-grouping (Справочник проектов, Сигналы путей,
-// Классификация по путям), workspace-ui (Быстрый поиск Ctrl+K, Телефонный режим).
+// Классификация по путям; single-project-classifier: проект — только связь с каталогом), workspace-ui (Быстрый поиск Ctrl+K, Телефонный режим).
 //
 //   E2E_BASE_URL=https://hub.internal.example.com E2E_COOKIE=<ah_session> [E2E_REMOTE_SESSION=<id of an Orca session>] \
 //   [E2E_PICTURE_TITLE=<title of a session with an image>] E2E_CHANNEL=msedge npx playwright test tests/m4.projects.spec.ts
@@ -61,25 +61,25 @@ test('Дерево «Проекты»: projects by the hub order, «Без пр�
   expect(colours).toBeGreaterThan(2);
 });
 
-test('Клон вне vault: an Orca session is in its project by git remote', async ({ page, isMobile }) => {
+test('Клон вне vault: an Orca session is in its catalog project by git remote', async ({ page, isMobile }) => {
   test.skip(isMobile || !REMOTE_SESSION, 'desktop, needs E2E_REMOTE_SESSION');
-  const s = (await (await api.get(`/api/sessions/${REMOTE_SESSION}`)).json()) as { title: string; project: { title: string }; projectEvidence: string };
-  expect(s.projectEvidence).toMatch(/^git remote /);
+  const s = (await (await api.get(`/api/sessions/${REMOTE_SESSION}`)).json()) as { title: string; project: { title: string }; catalogProjectReason: string | null };
+  expect(s.catalogProjectReason).toBe('remote');
   // opened through Ctrl+K: a cold /s/<id> may leave the tab at «Загрузка…» (QA M4a, the card is not fetched)
   await start(page);
   await (await search(page, s.title)).filter({ hasText: s.title }).filter({ hasText: s.project.title }).first().click();
   const chat = page.locator('section.leaf.focused section.chat');
   await expect(chat.getByRole('button', { name: new RegExp(`^Проект: ${s.project.title}`) })).toBeVisible({ timeout: 15_000 });
-  await expect(chat.getByText(/определено по путям: git remote /).first()).toBeVisible();
+  await expect(chat.getByText('Автоматически: Git remote').first()).toBeVisible();
 });
 
-test('Ctrl+K by project name: «scanner-fleet» finds sessions of 02-scanner-fleet', async ({ page, isMobile }) => {
+test('Ctrl+K by project name: «fleet-ops» finds sessions of 02-fleet-ops', async ({ page, isMobile }) => {
   test.skip(isMobile, 'desktop');
-  const r = (await (await api.get('/api/search', { params: { q: '02-scanner-fleet', limit: 12, cron: 0 } })).json()) as { results: Array<{ match: string; session: { project: { title: string } } }> };
-  expect(r.results.some(x => x.match === 'project' && x.session.project.title === '02-scanner-fleet')).toBe(true);
+  const r = (await (await api.get('/api/search', { params: { q: '02-fleet-ops', limit: 12, cron: 0 } })).json()) as { results: Array<{ match: string; session: { project: { title: string } } }> };
+  expect(r.results.some(x => x.match === 'project' && x.session.project.title === '02-fleet-ops')).toBe(true);
   await start(page);
-  const opts = await search(page, '02-scanner-fleet');
-  await expect(opts.filter({ hasText: '02-scanner-fleet' }).first()).toBeVisible();
+  const opts = await search(page, '02-fleet-ops');
+  await expect(opts.filter({ hasText: '02-fleet-ops' }).first()).toBeVisible();
 });
 
 test('Телефон: «назад» from the chat, from the lightbox and from /s/<id> returns to the list, not out of the app', async ({ page, isMobile }) => {

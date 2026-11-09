@@ -12,6 +12,7 @@ import {
   protocolAtLeast,
   RESULT_TEXT_MAX,
   SPAWN_PROTOCOL,
+  type AgentMessage,
   type Attachment,
   type HubMessage,
   type LimitsProbeResult,
@@ -48,8 +49,17 @@ type StartPayload = PayloadOf<HubMessage, 'session.start'>;
 type ResumePayload = PayloadOf<HubMessage, 'session.resume'>;
 type Image = { mime: string; data: Buffer };
 
+/**
+ * The workspace-write sandbox of Codex. On Windows the unelevated sandbox hangs every command when %TEMP% is a writable root
+ * (codex-cli 0.166: «code-mode host closed its stdout»), so Windows sessions write only to their folder.
+ */
+function workspaceWrite(cwd: string, platform: NodeJS.Platform): Record<string, unknown> {
+  const noTmp = platform === 'win32';
+  return { type: 'workspaceWrite', writableRoots: [cwd], networkAccess: true, excludeTmpdirEnvVar: noTmp, excludeSlashTmp: noTmp };
+}
+
 /** Design D6: the hub's permission mode → the approval policy and the sandbox of Codex. */
-export function policyOf(mode: PermissionMode, cwd: string): { approvalPolicy: string; sandbox: string; sandboxPolicy: Record<string, unknown> } {
+export function policyOf(mode: PermissionMode, cwd: string, platform: NodeJS.Platform = process.platform): { approvalPolicy: string; sandbox: string; sandboxPolicy: Record<string, unknown> } {
   switch (mode) {
     case 'bypassPermissions':
       return { approvalPolicy: 'never', sandbox: 'danger-full-access', sandboxPolicy: { type: 'dangerFullAccess' } };
@@ -57,7 +67,7 @@ export function policyOf(mode: PermissionMode, cwd: string): { approvalPolicy: s
       return {
         approvalPolicy: 'on-request',
         sandbox: 'workspace-write',
-        sandboxPolicy: { type: 'workspaceWrite', writableRoots: [cwd], networkAccess: true, excludeTmpdirEnvVar: false, excludeSlashTmp: false },
+        sandboxPolicy: workspaceWrite(cwd, platform),
       };
     case 'plan':
       return { approvalPolicy: 'on-request', sandbox: 'read-only', sandboxPolicy: { type: 'readOnly', networkAccess: true } };
@@ -65,11 +75,15 @@ export function policyOf(mode: PermissionMode, cwd: string): { approvalPolicy: s
       return {
         approvalPolicy: 'untrusted',
         sandbox: 'workspace-write',
-        sandboxPolicy: { type: 'workspaceWrite', writableRoots: [cwd], networkAccess: true, excludeTmpdirEnvVar: false, excludeSlashTmp: false },
+        sandboxPolicy: workspaceWrite(cwd, platform),
       };
   }
 }
 
+/** provider-parity R5: how long a sign-in result waits for the hub (the hub forgets the sign-in after 20 minutes). */
+const LOGIN_OUTBOX_MS = 30 * 60_000;
+/** R6: temporary sign-in homes older than this are left by a crash. */
+const LOGIN_HOME_MAX_AGE_MS = 30 * 60_000;
 const PLAN_INSTRUCTIONS = 'Planning mode: change nothing (files, commands with side effects), only investigate and propose a plan.';
 
 /** A turn error → the failure the hub knows (design D5). */
@@ -111,6 +125,8 @@ class CodexSession {
   peers: PeerToolDef[] = [];
   /** provider-parity: the subscription of the registry the process runs under (its own CODEX_HOME). */
   subscriptionId: string | null = null;
+  /** The collaboration mode the last turn ran in: Codex keeps it for the next turns until another one is set. */
+  collaboration: 'default' | 'plan' = 'default';
 
   constructor(
     readonly id: string,
@@ -146,6 +162,8 @@ export interface CodexProviderDeps {
   mcpDraft?: Pick<McpDraftClient, 'request'>;
   machineId?: () => string | null;
   now?: () => number;
+  /** Tests: the sign-in TTL (R6). */
+  loginTtlMs?: number;
   /** Tests: fake app-servers. */
   transport?: () => RpcTransport;
   serviceTransport?: () => RpcTransport;
@@ -155,22 +173,57 @@ export class CodexProvider implements SessionProvider {
   readonly id = 'codex' as const;
   private readonly sessions = new Map<string, CodexSession>();
   readonly service: CodexService;
+  /** provider-parity R5: sign-in results the hub did not get (no connection); sent again after welcome. */
+  private readonly loginOutbox = new Map<string, { payload: PayloadOf<AgentMessage, 'provider.login.done'>; at: number }>();
 
   constructor(private readonly d: CodexProviderDeps) {
     this.service = new CodexService({
       bin: d.bin,
       log: d.log,
       agentVersion: d.agentVersion,
-      onLoginDone: (loginId, ok, error, credential) => d.send('provider.login.done', { provider: 'codex', loginId, ok, ...(error ? { error } : {}), ...(credential ? { credential } : {}) }),
+      onLoginDone: (loginId, ok, error, credential) => this.sendLoginDone({ provider: 'codex', loginId, ok, ...(error ? { error } : {}), ...(credential ? { credential } : {}) }),
       ...(d.homes ? { homes: d.homes } : {}),
       onStatus: s => d.onStatus?.(s),
       ...(d.serviceTransport ? { transport: d.serviceTransport } : {}),
       ...(d.now ? { now: d.now } : {}),
+      ...(d.loginTtlMs ? { loginTtlMs: d.loginTtlMs } : {}),
     });
+    void d.homes?.sweepTemp(LOGIN_HOME_MAX_AGE_MS).catch(() => undefined);
   }
 
   private clock(): number {
     return this.d.now?.() ?? Date.now();
+  }
+
+  /** R5: a sign-in result that could not be sent waits for the next welcome (at most LOGIN_OUTBOX_MS). */
+  private sendLoginDone(payload: PayloadOf<AgentMessage, 'provider.login.done'>): void {
+    if (this.d.send('provider.login.done', payload) !== false) return;
+    this.loginOutbox.set(payload.loginId, { payload, at: this.clock() });
+    this.d.log.info('codex sign-in result kept until the hub is back', { ok: payload.ok });
+  }
+
+  onWelcome(): void {
+    for (const [loginId, e] of this.loginOutbox) {
+      if (this.clock() - e.at > LOGIN_OUTBOX_MS) {
+        this.loginOutbox.delete(loginId);
+        continue;
+      }
+      if (this.d.send('provider.login.done', e.payload) !== false) this.loginOutbox.delete(loginId);
+    }
+  }
+
+  /** R3: the Codex homes the hub still knows; a home under a live session waits for its exit. */
+  private async syncHomes(p: PayloadOf<HubMessage, 'provider.credentials.sync'>): Promise<{ removed: number; deferred: number }> {
+    if (!this.d.homes) return { removed: 0, deferred: 0 };
+    const r = await this.d.homes.sync(p.keep, p.forget ?? [], id => this.underSubscription(id));
+    if (r.removed.length || r.deferred.length) this.d.log.info('codex homes synced', { removed: r.removed.length, deferred: r.deferred.length });
+    return { removed: r.removed.length, deferred: r.deferred.length };
+  }
+
+  private underSubscription(subscriptionId: string): boolean {
+    const id = subscriptionId.toLowerCase();
+    for (const s of this.sessions.values()) if (s.subscriptionId?.toLowerCase() === id) return true;
+    return false;
   }
 
   status(): ProviderStatus {
@@ -254,6 +307,8 @@ export class CodexProvider implements SessionProvider {
       case 'provider.logout':
         await this.service.logout();
         return {};
+      case 'provider.credentials.sync':
+        return this.syncHomes(m.payload);
       default:
         throw new CmdError('not_implemented', `${m.type} is not supported by Codex sessions`);
     }
@@ -451,11 +506,24 @@ export class CodexProvider implements SessionProvider {
       }
     }
     const pol = policyOf(s.mode, s.cwd);
+    // Codex gives the model its question tool (request_user_input) only in the plan collaboration mode
+    const collaboration = s.mode === 'plan' ? 'plan' : 'default';
+    const collab =
+      s.model && collaboration !== s.collaboration ? { collaborationMode: { mode: collaboration, settings: { model: s.model, reasoning_effort: null, developer_instructions: null } } } : {};
     const r = await s.rpc.request<{ turn: { id: string } }>(
       'turn/start',
-      { threadId: s.threadId, input, clientUserMessageId: uuid, approvalPolicy: pol.approvalPolicy, sandboxPolicy: pol.sandboxPolicy, ...(s.model ? { model: s.model } : {}) },
+      {
+        threadId: s.threadId,
+        input,
+        clientUserMessageId: uuid,
+        approvalPolicy: pol.approvalPolicy,
+        sandboxPolicy: pol.sandboxPolicy,
+        ...(s.model ? { model: s.model } : {}),
+        ...collab,
+      },
       120_000,
     );
+    if (collab.collaborationMode) s.collaboration = collaboration;
     if (!s.turnId) {
       s.turnId = r.turn.id;
       s.turnStartedAt = this.clock();
@@ -841,9 +909,17 @@ export class CodexProvider implements SessionProvider {
     const stopped = !!s.stopping;
     const errorText = stopped ? undefined : redactText(error ?? 'The Codex process exited unexpectedly');
     this.d.log.info('codex session exited', { sessionId: s.id, reason: stopped ? 'stopped' : 'crashed', ...(errorText ? { error: errorText } : {}) });
-    void this.syncCredential(s.subscriptionId);
+    void this.syncCredential(s.subscriptionId)
+      .catch(() => undefined)
+      .finally(() => this.releaseHome(s.subscriptionId));
     this.d.send('session.exited', { sessionId: s.id, code: stopped ? 0 : null, reason: stopped ? 'stopped' : 'crashed', ...(errorText ? { errorText } : {}) });
     this.d.onSessionExited?.(s.id);
+  }
+
+  /** R3: the last session under a subscription the hub dropped meanwhile is gone — its home goes too. */
+  private async releaseHome(subscriptionId: string | null): Promise<void> {
+    if (!subscriptionId || !this.d.homes || this.underSubscription(subscriptionId)) return;
+    if (await this.d.homes.release(subscriptionId)) this.d.log.info('codex home of a dropped subscription removed');
   }
 
   private sendState(s: CodexSession): void {

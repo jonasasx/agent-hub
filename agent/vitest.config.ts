@@ -1,3 +1,6 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineProject } from 'vitest/config';
 
@@ -14,6 +17,8 @@ export default defineProject({
     environment: 'node',
     // The integration test runs a real hub against Postgres.
     globalSetup: ['../hub/src/test/globalSetup.ts'],
+    // agents created without a stateDir must never touch the real ~/.agent-hub: its codex-homes hold live auth.json
+    env: { AGENT_STATE_DIR: mkdtempSync(join(tmpdir(), 'agent-hub-test-state-')) },
     testTimeout: 30_000,
     hookTimeout: 120_000,
   },

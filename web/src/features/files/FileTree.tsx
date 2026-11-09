@@ -4,12 +4,14 @@
  * Requirement (file-explorer): Ленивое дерево — one level per request, folders first then by name, hidden files dimmed,
  * «Показаны первые N из M», blocked nodes with a lock and «Нет доступа», `role="tree"`, the keyboard.
  * Requirement: Машина не в сети и ошибки — a failed node does not break the tree.
+ * Requirement: Скачивание файла (change file-download) — «Скачать» in the row of a file, without opening the tab.
  */
 import { useEffect, useId, useMemo, useRef, type KeyboardEvent } from 'react';
 import type { FsEntry } from '@agent-hub/shared';
 import { fmt, useT } from '../../i18n';
 import { openFileTab } from '../workspace/actions';
 import { FileIcon, ICON_CHEV, entryKind } from './fileIcons';
+import { DownloadButton } from './fileViews';
 import { listingKey, loadDir, sessionFor, useFiles, type Listing } from './filesStore';
 import { isInside, joinPath, pathKey } from './paths';
 import type { Source } from './source';
@@ -248,6 +250,18 @@ export function FileTree({ src, flash }: Props) {
             <FileIcon kind={entryKind(r.entry)} open={r.open} blocked={r.blocked} />
             <span className="nm">{r.entry.name}</span>
             {r.blocked ? <span className="meta">{t('files.error.permission_denied')}</span> : null}
+            {r.blocked || isDir || r.entry.kind === 'other' ? null : (
+              <DownloadButton
+                runnerId={src.runnerId}
+                path={r.path}
+                sessionId={sessionFor(src, r.path)}
+                machineName={src.machineName}
+                supported={src.download}
+                className="fx-dl btn sm icon ghost"
+                label={false}
+                tabIndex={-1}
+              />
+            )}
           </div>
         );
       })}

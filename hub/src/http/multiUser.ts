@@ -6,7 +6,9 @@ import {
   createInviteRequestSchema,
   createRunnerRequestSchema,
   enrollRequestSchema,
-  renameRunnerRequestSchema,
+  patchRunnerRequestSchema,
+  pathFitsPlatform,
+  platformOfHome,
   type AdminUsersResponse,
   type CreateInviteResponse,
   type EnrollCodeResponse,
@@ -24,6 +26,7 @@ import type { UiGateway } from '../ui/uiGateway.js';
 import type { HubLimits } from './limits.js';
 import { agentWsUrl, type AgentBuild } from '../runners/agentBuild.js';
 import { HttpError } from '../sessions/service.js';
+import { CommandError } from '../runners/agentGateway.js';
 import { tr } from '../i18n.js';
 import { SESSION_COOKIE, deleteUserSessions, findSession } from '../auth/sessions.js';
 import { InviteError, createInvite, listAdminUsers, listInvites, listSecurityEvents, logSecurity, revokeInvite, setUserStatus } from '../users/repo.js';
@@ -36,7 +39,7 @@ import {
   latestEnroll,
   listRunnerViews,
   redeemEnrollCode,
-  renameRunner,
+  patchRunner,
   toRunnerView,
   type RunnerRow,
 } from '../runners/repo.js';
@@ -84,6 +87,25 @@ export function registerMultiUser(app: FastifyInstance, deps: { config: Config; 
     enroll: await latestEnroll(db, r.id),
     uninstallCommand: uninstallCommands(config.PUBLIC_URL),
   });
+  /** session-folder D4: the default folder — an active machine online, a path of its OS, an existing folder on it. */
+  const checkDefaultDir = async (r: RunnerRow, dir: string): Promise<void> => {
+    if (r.state !== 'active') throw new HttpError(409, 'runner_offline', { key: 'hub.sessions.runnerOffline' });
+    if (!pathFitsPlatform(dir, platformOfHome(r.home_dir)) || dir.split(/[\\/]+/).includes('..')) {
+      throw new HttpError(400, 'invalid_path', { key: 'hub.files.invalidPath' });
+    }
+    const conn = agents.get(r.id);
+    if (!conn) throw new HttpError(409, 'runner_offline', { key: 'hub.sessions.runnerOffline' });
+    let st: { exists?: unknown; isDir?: unknown };
+    try {
+      st = (await conn.request('fs.stat', { path: dir }, 15_000)) as { exists?: unknown; isDir?: unknown };
+    } catch (err) {
+      if (err instanceof CommandError && err.code === 'bad_path') throw new HttpError(400, 'invalid_path', { key: 'hub.files.invalidPath' });
+      if (err instanceof CommandError && err.code === 'disconnected') throw new HttpError(409, 'runner_offline', { key: 'hub.sessions.runnerOffline' });
+      if (err instanceof CommandError && err.code === 'timeout') throw new HttpError(504, 'agent_timeout', { key: 'hub.sessions.agentTimeout' });
+      throw err;
+    }
+    if (st.exists !== true || st.isDir !== true) throw new HttpError(422, 'cwd_not_found', { key: 'hub.sessions.cwdNotFound', params: { name: r.name } });
+  };
   const codeResponse = async (req: FastifyRequest, r: RunnerRow): Promise<EnrollCodeResponse> => {
     const { code, expiresAt } = await issueEnrollCode(db, r);
     void security(req, { userId: r.user_id, kind: 'enroll_code_issued', runnerId: r.id });
@@ -96,8 +118,10 @@ export function registerMultiUser(app: FastifyInstance, deps: { config: Config; 
 
   app.post('/api/admin/invites', { preHandler: requireAdmin }, async (req, reply) => {
     const b = parse(createInviteRequestSchema, req.body);
+    // keycloak-auth D6: the single provider binds an invite to the address only; two providers need the provider.
+    if (!config.singleProvider && !b.provider) throw new HttpError(400, 'invalid_request', { key: 'hub.users.inviteProviderRequired' });
     try {
-      const { code, invite } = await createInvite(db, req.user!.id, b.email, b.provider);
+      const { code, invite } = await createInvite(db, req.user!.id, b.email, config.singleProvider ? null : (b.provider ?? null));
       req.log.info({ inviteId: invite.id, provider: invite.provider }, 'invite created');
       const res: CreateInviteResponse = { invite, url: `${config.PUBLIC_URL}/invite/${code}` };
       return reply.code(201).send(res);
@@ -169,11 +193,12 @@ export function registerMultiUser(app: FastifyInstance, deps: { config: Config; 
   app.get('/api/runners/:id', async (req): Promise<RunnerDetail> => detail(await owned(req)));
 
   app.patch('/api/runners/:id', async (req): Promise<RunnerDetail> => {
-    const b = parse(renameRunnerRequestSchema, req.body);
-    await owned(req);
+    const b = parse(patchRunnerRequestSchema, req.body);
+    const current = await owned(req);
+    if (b.defaultDir !== undefined) await checkDefaultDir(current, b.defaultDir);
     let r: RunnerRow | undefined;
     try {
-      r = await renameRunner(db, req.user!.id, idParam(req), b.name);
+      r = await patchRunner(db, req.user!.id, idParam(req), b);
     } catch (err) {
       if (err instanceof RunnerNameTaken) throw new HttpError(409, 'name_taken', { key: 'hub.users.machineNameTaken' });
       throw err;

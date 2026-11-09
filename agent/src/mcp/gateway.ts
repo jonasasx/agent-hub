@@ -2,6 +2,9 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { URL } from 'node:url';
+// Runs `.cmd` shims on Windows with escaped arguments, the way Claude Code does; Node's spawn without a shell refuses them.
+import crossSpawn from 'cross-spawn';
+import { resolveCommand } from './command.js';
 import type { Logger } from '../log.js';
 import type { RegistrySnapshot } from './registryCache.js';
 import type { PayloadOf } from '@agent-hub/shared';
@@ -35,6 +38,34 @@ const DEFAULT_LIMITS: GatewayLimits = {
 const HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'authorization', 'x-agent-session']);
 const RESPONSE_BODY_HEADERS = new Set(['content-encoding', 'content-length', 'transfer-encoding']);
 type ServerConfig = RegistrySnapshot['servers'][number];
+
+// Streamable HTTP servers may answer a request with an SSE stream instead of a JSON body; the stream may stay open after the response.
+async function readRpcResponse(res: Response, id: number): Promise<Record<string, unknown>> {
+  if (!(res.headers.get('content-type') ?? '').includes('text/event-stream')) return (await res.json()) as Record<string, unknown>;
+  if (!res.body) throw new Error('MCP server returned an empty event stream');
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for await (const chunk of res.body) {
+    buffer = (buffer + decoder.decode(chunk, { stream: true })).replace(/\r\n/g, '\n');
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      const event = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      boundary = buffer.indexOf('\n\n');
+      const data = event
+        .split('\n')
+        .filter(line => line.startsWith('data:'))
+        .map(line => line.slice(5).trimStart())
+        .join('\n');
+      if (!data) continue;
+      const message = JSON.parse(data) as Record<string, unknown>;
+      if (message.id !== id) continue;
+      await res.body.cancel().catch(() => undefined);
+      return message;
+    }
+  }
+  throw new Error('MCP server closed the event stream without a response');
+}
 interface ProcessEntry {
   child: ChildProcess;
   started: Promise<void>;
@@ -49,6 +80,8 @@ interface ProcessEntry {
   timer?: NodeJS.Timeout;
   healthyTimer?: NodeJS.Timeout;
   stopping: boolean;
+  /** Counted against maxProcesses: per-session and validation processes. A machine-shared server has one process at most. */
+  capped: boolean;
 }
 
 interface StartGenerationState {
@@ -198,8 +231,9 @@ export class McpGateway {
     }
     const sessionId = randomUUID(),
       bearer = this.authorize(candidate.id, sessionId);
-    const call = async (id: number, method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> => {
-      const res = await fetch(`${this.endpoint}?server=${encodeURIComponent(candidate.id)}`, {
+    let mcpSession: string | null = null;
+    const post = (message: Record<string, unknown>) =>
+      fetch(`${this.endpoint}?server=${encodeURIComponent(candidate.id)}`, {
         method: 'POST',
         headers: {
           authorization: `Bearer ${bearer}`,
@@ -207,10 +241,13 @@ export class McpGateway {
           'content-type': 'application/json',
           accept: 'application/json, text/event-stream',
           'mcp-protocol-version': '2025-03-26',
+          ...(mcpSession ? { 'mcp-session-id': mcpSession } : {}),
         },
-        body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
+        body: JSON.stringify({ jsonrpc: '2.0', ...message }),
         signal: AbortSignal.timeout(30_000),
       });
+    const call = async (id: number, method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> => {
+      const res = await post({ id, method, params });
       if (!res.ok) {
         const gatewayError = res.headers.get(GATEWAY_ERROR_HEADER);
         const body = await res.text().catch(() => '');
@@ -228,12 +265,14 @@ export class McpGateway {
         if (res.status === 401) throw new McpUnauthorizedError('MCP server requires authorization');
         throw new Error(`MCP server returned HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
       }
-      const result = (await res.json()) as Record<string, unknown>;
+      mcpSession = res.headers.get('mcp-session-id') ?? mcpSession;
+      const result = await readRpcResponse(res, id);
       if (result.error) throw new Error(typeof (result.error as { message?: unknown }).message === 'string' ? (result.error as { message: string }).message : 'MCP request failed');
       return result;
     };
     try {
       await call(1, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'agent-hub-validator', version: '1.0.0' } });
+      await post({ method: 'notifications/initialized' }).then(res => res.body?.cancel());
       const listed = await call(2, 'tools/list', {}),
         result = listed.result as { tools?: Array<{ name?: unknown; description?: unknown }> } | undefined;
       const tools = (Array.isArray(result?.tools) ? result.tools : []).flatMap(t =>
@@ -493,7 +532,13 @@ export class McpGateway {
       return;
     }
     if (req.method === 'DELETE') {
-      this.revoke(id, sid);
+      // One hub session can open several MCP clients (Codex replaces its startup client), so closing one must not revoke the session's bearer or stop the process.
+      // Access ends with the hub session: revokeSession on exit.
+      for (const [key, entry] of this.entries)
+        if (key === id || key.startsWith(`${id}:`)) {
+          entry.streams.get(sid)?.end();
+          entry.streams.delete(sid);
+        }
       res.writeHead(200).end();
       return;
     }
@@ -523,7 +568,8 @@ export class McpGateway {
       if (entry.exited) throw this.processExitError(entry);
       const rpc = JSON.parse(body.toString('utf8')) as { id?: string | number; method?: string; [k: string]: unknown };
       const originalId = rpc.id;
-      const backendId = `${sid}:${String(originalId ?? randomUUID())}`;
+      // Unique per HTTP request: several MCP clients of one hub session (Codex opens a startup client and a session client at once) number their requests from 0.
+      const backendId = `${sid}:${randomUUID()}`;
       if (originalId !== undefined) {
         const pending: PendingRequest = { session: sid, response: res, originalId };
         const timeoutMs = this.limits.requestTimeoutMs ?? 30_000;
@@ -594,10 +640,14 @@ export class McpGateway {
       const method = req.method === 'GET' ? 'GET' : req.method === 'DELETE' ? 'DELETE' : 'POST';
       const body = method === 'POST' ? await readBody(req) : undefined;
       const oauthServerId = this.validationOrigins.get(cfg.id) ?? cfg.id;
-      const registeredOrigin = this.registeredOrigin(oauthServerId);
+      // A server waiting for its first validation is not in the machine's registry yet: validation takes the URL the hub sent.
+      const registeredOrigin = this.registeredOrigin(oauthServerId) ?? this.validationOrigin(cfg.id, oauthServerId);
       const token = registeredOrigin === target.origin ? await this.oauthAccess?.(oauthServerId) : null;
       if (token) headers.set('authorization', `Bearer ${token}`);
-      const request = () => fetch(target, { method, headers, ...(body ? { body } : {}), redirect: 'manual' });
+      // A client that hangs up must not leave the upstream request (an open SSE stream) running.
+      const upstream = new AbortController();
+      res.once('close', () => upstream.abort());
+      const request = () => fetch(target, { method, headers, ...(body ? { body } : {}), redirect: 'manual', signal: upstream.signal });
       let response = await request();
       if (token && response.status === 401 && this.oauthRefresh) {
         const token = await this.oauthRefresh(oauthServerId);
@@ -640,7 +690,8 @@ export class McpGateway {
     if (history.length >= this.limits.maxRestarts) throw new Error('MCP server restart limit reached; retry later');
     if (cfg.mode === 'per-session' && [...this.entries.keys()].filter(k => k.startsWith(`${cfg.id}:${cfg.revision}:`)).length >= this.limits.maxPerServerSessions)
       throw new Error('MCP per-session process limit reached for this server');
-    if (this.entries.size >= this.limits.maxProcesses) throw new Error('MCP process limit reached; stop an unused server and retry');
+    const capped = cfg.mode !== 'machine-shared' || this.validationOrigins.has(cfg.id);
+    if (capped && [...this.entries.values()].filter(e => e.capped).length >= this.limits.maxProcesses) throw new Error('MCP process limit reached; stop an unused server and retry');
     if (!this.hasRequiredSecrets(cfg)) {
       this.reportStatus(cfg.id, { serverId: cfg.id, status: 'needs-secret', observedAt: Date.now() });
       throw new Error('MCP server needs a configured secret');
@@ -654,7 +705,11 @@ export class McpGateway {
         if (value) childEnv[k] = value;
       }
     }
-    const child = spawn(cfg.command!, cfg.args ?? [], { stdio: ['pipe', 'pipe', 'pipe'], shell: false, env: { ...process.env, ...childEnv } });
+    const env = { ...process.env, ...childEnv };
+    const options = { stdio: ['pipe', 'pipe', 'pipe'] as ['pipe', 'pipe', 'pipe'], windowsHide: true, env };
+    const file = resolveCommand(cfg.command!, env);
+    // An unresolved command goes to Node's spawn as is: it fails at once with ENOENT, not later through cmd.exe.
+    const child = file ? crossSpawn(file, cfg.args ?? [], options) : spawn(cfg.command!, cfg.args ?? [], { ...options, shell: false });
     let resolveStarted!: () => void;
     let rejectStarted!: (error: Error) => void;
     const started = new Promise<void>((resolve, reject) => {
@@ -676,6 +731,7 @@ export class McpGateway {
       managedSessions: new Set(),
       streams: new Map(),
       stopping: false,
+      capped,
     };
     this.entries.set(key, entry);
     child.stdout?.on('data', (chunk: Buffer) => this.lines(entry!, chunk));
@@ -731,6 +787,16 @@ export class McpGateway {
     if (this.pendingSecretDeliveries.get(serverId) !== delivery) return;
     this.pendingSecretDeliveries.delete(serverId);
     this.log.warn('MCP secret delivery expired before registry sync', { serverId, revision: delivery.revision });
+  }
+
+  private validationOrigin(validationId: string, oauthServerId: string): string | null {
+    const candidate = this.validationConfigs.get(validationId);
+    if (!candidate?.url || this.validationOrigins.get(validationId) !== oauthServerId) return null;
+    try {
+      return new URL(candidate.url).origin;
+    } catch {
+      return null;
+    }
   }
 
   private registeredOrigin(serverId: string): string | null {

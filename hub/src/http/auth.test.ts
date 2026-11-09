@@ -241,7 +241,8 @@ describe('spec auth (integration)', () => {
   it('Выход: cookie cleared, server record deleted, the old cookie gets 401', async () => {
     const session = await t.login();
     const out = await app().inject({ method: 'POST', url: '/auth/logout', headers: { origin: PUBLIC_URL }, cookies: { ah_session: session } });
-    expect(out.statusCode).toBe(204);
+    expect(out.statusCode).toBe(200);
+    expect(out.json()).toEqual({ redirect: '/' });
     const cleared = ([] as string[]).concat(out.headers['set-cookie'] as string[]).find(c => c.startsWith('ah_session='))!;
     expect(cleared).toMatch(/Expires=Thu, 01 Jan 1970|Max-Age=0/);
     const rows = await t.tdb.pool.query('SELECT 1 FROM auth_sessions WHERE id_hash = $1', [hashSecret(session)]);
@@ -316,7 +317,7 @@ describe('public-addresses: the hub on PUBLIC_URL and EXTRA_PUBLIC_URLS', () => 
   });
 
   it('Origin дополнительного адреса: HTTP and /ws/ui accept it, others get 403', async () => {
-    expect((await t.hub.app.inject({ method: 'POST', url: '/auth/logout', headers: { origin: SECOND } })).statusCode).toBe(204);
+    expect((await t.hub.app.inject({ method: 'POST', url: '/auth/logout', headers: { origin: SECOND } })).json()).toEqual({ redirect: '/' });
     expect((await t.hub.app.inject({ method: 'POST', url: '/auth/logout', headers: { origin: 'https://evil.example' } })).statusCode).toBe(403);
     const session = await t.login();
     expect(await wsHandshake(`${t.wsBase}/ws/ui`, { Origin: SECOND, Cookie: `ah_session=${session}` })).toBe(101);
@@ -330,13 +331,13 @@ describe('public-addresses: the hub on PUBLIC_URL and EXTRA_PUBLIC_URLS', () => 
 });
 
 describe('Keycloak per public address', () => {
-  const allowed = 'https://agents.ivolynkin.ru';
+  const allowed = 'https://hub.example.com';
   const hidden = 'https://getagenthub.dev';
   let t: TestHub;
   beforeAll(async () => {
     t = await startTestHub({
       keycloak: true,
-      env: { PUBLIC_URL: allowed, EXTRA_PUBLIC_URLS: hidden, OIDC_KEYCLOAK_PUBLIC_URLS: allowed, OIDC_KEYCLOAK_LABEL: 'OneCell' },
+      env: { PUBLIC_URL: allowed, EXTRA_PUBLIC_URLS: hidden, OIDC_KEYCLOAK_PUBLIC_URLS: allowed, OIDC_KEYCLOAK_LABEL: 'Corp' },
     });
   });
   afterAll(async () => t.close());
@@ -348,7 +349,7 @@ describe('Keycloak per public address', () => {
     expect(r.body).toContain('Agent Hub');
     expect(r.body).toContain('Войти через Google');
     expect(r.body).toContain('/auth/login?provider=google&amp;return=%2Fs%2Fabc&amp;prompt=select_account');
-    expect(r.body).not.toContain('OneCell');
+    expect(r.body).not.toContain('Corp');
     expect(r.body).not.toContain('provider=keycloak');
     expect(r.headers.location).toBeUndefined();
     expect(r.headers['set-cookie']).toBeUndefined();
@@ -362,11 +363,11 @@ describe('Keycloak per public address', () => {
     expect(location.searchParams.get('redirect_uri')).toBe(`${hidden}/auth/callback`);
   });
 
-  it('allowed address offers Google and OneCell', async () => {
+  it('allowed address offers Google and Corp', async () => {
     const r = await get('/auth/login', allowed);
     expect(r.statusCode).toBe(200);
     expect(r.body).toContain('Войти через Google');
-    expect(r.body).toContain('Войти через OneCell');
+    expect(r.body).toContain('Войти через Corp');
   });
 
   it('explicit Keycloak preserves the path and query on the first allowed origin', async () => {

@@ -4,7 +4,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { RunnerView } from '../../api/types';
 import { useStore } from '../../store';
-import { mockFetch, resetStore, runner } from '../../test/factories';
+import { mcpImportPreview, mockFetch, resetStore, runner } from '../../test/factories';
 import { MachinesPage } from './MachinesPage';
 
 const machines = (): RunnerView[] => [
@@ -121,6 +121,20 @@ describe('MachinesPage', () => {
     expect(calls.some(c => c.url === '/api/runners/x1/disable')).toBe(true);
   });
 
+  it('Esc closes the confirmation «Отключить» without disabling (focus is on «Отмена»)', async () => {
+    const calls = mockFetch({ 'GET /api/runners': () => ({ status: 200, body: { runners: machines(), agentVersion: '0.3.0' } }) });
+    const user = userEvent.setup();
+    render(<MachinesPage />);
+    await screen.findByRole('listitem', { name: 'X1' });
+    await user.click(within(card('X1')).getByRole('button', { name: 'Отключить' }));
+    const dialog = screen.getByRole('alertdialog', { name: 'Отключить X1?' });
+    expect(within(dialog).getByRole('button', { name: 'Отмена' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(within(card('X1')).getByRole('button', { name: 'Отключить' })).toBeInTheDocument();
+    expect(calls.some(c => c.url === '/api/runners/x1/disable')).toBe(false);
+  });
+
   it('«Переподключить» and «Добавить машину» open the enrollment window', async () => {
     mockFetch({ 'GET /api/runners': () => ({ status: 200, body: { runners: machines(), agentVersion: '0.3.0' } }) });
     const user = userEvent.setup();
@@ -165,5 +179,43 @@ describe('MachinesPage', () => {
     await screen.findByRole('listitem', { name: 'X1' });
     expect(screen.queryByText(/Актуальная версия агента/)).not.toBeInTheDocument();
     expect(within(card('X1')).queryByText('устарела')).not.toBeInTheDocument();
+  });
+
+  // Requirement (machine-mcp-onboarding): Повторный импорт со страницы машины
+  it('the MCP block: auto-import state, skipped servers, «Импортировать MCP» only for an agent with mcp.import.v2', async () => {
+    const agent = (machineId: string, over: object = {}) => ({
+      machineId,
+      machineName: machineId,
+      online: true,
+      protocolVersion: '1.17',
+      capabilities: ['mcp.import.v2'],
+      registryEnabled: true,
+      ...over,
+    });
+    mockFetch({
+      'GET /api/runners': () => ({ status: 200, body: { runners: machines(), agentVersion: '0.3.0' } }),
+      'GET /api/mcp/registry/status': () => ({
+        status: 200,
+        body: {
+          revision: 1,
+          agents: [agent('x1', { importState: 'done', importReport: { imported: ['a'], skipped: ['plugin:x', 'dup'] } }), agent('mac', { capabilities: [], importState: 'auto-pending' })],
+          gateways: [],
+          oauth: [],
+        },
+      }),
+      'POST /api/mcp/registry/import/preview': () => ({ status: 200, body: mcpImportPreview({ machineId: 'x1' }) }),
+    });
+    render(<MachinesPage />);
+    await screen.findByRole('listitem', { name: 'X1' });
+    const x1 = await within(card('X1')).findByTestId('machine-mcp');
+    expect(within(x1).getByText('из реестра')).toBeInTheDocument();
+    expect(within(x1).getByText('Не импортированы автоматически (2): plugin:x, dup')).toBeInTheDocument();
+    const mac = within(card('MacBook')).getByTestId('machine-mcp');
+    expect(within(mac).getByText('ждёт импорта')).toBeInTheDocument();
+    expect(within(mac).getByRole('button', { name: 'Импортировать MCP' })).toBeDisabled();
+    expect(within(mac).getByText('Обновите агента, чтобы импортировать MCP.')).toBeInTheDocument();
+    await userEvent.click(within(x1).getByRole('button', { name: 'Импортировать MCP' }));
+    expect(await screen.findByText('Импорт MCP с машины X1')).toBeInTheDocument();
+    expect(await screen.findByText('В настройках Claude Code и Codex на этой машине MCP-серверов нет.')).toBeInTheDocument();
   });
 });

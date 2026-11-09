@@ -124,11 +124,11 @@ describe('the MCP panel', () => {
     const labels = within(panel())
       .getAllByRole('listitem')
       .map(li => li.getAttribute('aria-label'));
-    expect(labels).toEqual(['scanner-fleet: ошибка', 'notion: нужен вход', 'vaultwarden: подключён', 'krisp: подключается', 'playwright: выключен', 'future: статус не сообщается']);
+    expect(labels).toEqual(['fleet-ops: ошибка', 'notion: нужен вход', 'vaultwarden: подключён', 'krisp: подключается', 'playwright: выключен', 'future: статус не сообщается']);
     expect(row('vaultwarden')).toHaveTextContent('vaultwarden-mcp 1.4.0 · 12 инструментов');
     expect(row('vaultwarden')).toHaveTextContent('stdio · пользовательский');
     expect(within(row('vaultwarden')).getByTitle(/--token •••/)).toHaveClass('mono');
-    expect(row('scanner-fleet')).toHaveTextContent('ECONNREFUSED');
+    expect(row('fleet-ops')).toHaveTextContent('ECONNREFUSED');
     expect(row('notion')).toHaveTextContent('https://mcp.notion.com/mcp');
     expect(row('playwright')).toHaveTextContent('выключен для проекта C:/Users/alice/vault на X1');
     expect(within(panel()).getByText(/^Статус на \d\d:\d\d$/)).toBeInTheDocument();
@@ -177,14 +177,14 @@ describe('the MCP panel', () => {
       within(row(n))
         .queryAllByRole('button')
         .map(b => b.textContent);
-    expect(names('scanner-fleet')).toEqual(['Переподключить', 'Выключить']);
+    expect(names('fleet-ops')).toEqual(['Переподключить', 'Выключить']);
     expect(names('notion')).toEqual(['Войти', 'Выключить']);
     expect(names('krisp')).toEqual(['Выключить']);
     expect(names('playwright')).toEqual(['Включить']);
     expect(names('local-auth')).toEqual(['Выключить']);
     // a connected row is quiet: both buttons ghost; a failed one keeps «Переподключить» visible
     expect(within(row('vaultwarden')).getByRole('button', { name: 'Переподключить' })).toHaveClass('ghost');
-    expect(within(row('scanner-fleet')).getByRole('button', { name: 'Переподключить' })).not.toHaveClass('ghost');
+    expect(within(row('fleet-ops')).getByRole('button', { name: 'Переподключить' })).not.toHaveClass('ghost');
   });
 
   it('Esc closes the panel and gives the focus back to the button; a click outside closes it too', async () => {
@@ -206,7 +206,7 @@ describe('the MCP panel', () => {
 
   it('Переподключение упавшего сервера: 202 with pendingAction → «подключается», then session.mcp → «подключён»; the mark goes', async () => {
     const s = session({ mcpProblems: 1 });
-    const failed = mcpServer({ name: 'scanner-fleet', status: 'failed', error: 'ECONNREFUSED', serverInfo: undefined });
+    const failed = mcpServer({ name: 'fleet-ops', status: 'failed', error: 'ECONNREFUSED', serverInfo: undefined });
     const calls = mockFetch({
       [`GET /api/sessions/${s.id}/mcp`]: mcpRoute(mcpView({ servers: [failed] })),
       [`POST /api/sessions/${s.id}/mcp/actions`]: () => ({ status: 202, body: mcpView({ servers: [{ ...failed, pendingAction: 'reconnect' }] }) }),
@@ -214,43 +214,43 @@ describe('the MCP panel', () => {
     head(s);
     await userEvent.click(await screen.findByRole('button', { name: /^MCP/ }));
     await userEvent.click(await within(panel()).findByRole('button', { name: 'Переподключить' }));
-    expect(calls.find(c => c.method === 'POST')).toMatchObject({ url: `/api/sessions/${s.id}/mcp/actions`, body: { server: 'scanner-fleet', action: 'reconnect' } });
-    expect(await within(panel()).findByRole('listitem', { name: 'scanner-fleet: подключается' })).toHaveTextContent('Переподключение…');
+    expect(calls.find(c => c.method === 'POST')).toMatchObject({ url: `/api/sessions/${s.id}/mcp/actions`, body: { server: 'fleet-ops', action: 'reconnect' } });
+    expect(await within(panel()).findByRole('listitem', { name: 'fleet-ops: подключается' })).toHaveTextContent('Переподключение…');
     // a repeat is not possible while the action goes on (UI review M2: no button at all)
-    expect(within(row('scanner-fleet')).queryByRole('button', { name: 'Переподключить' })).toBeNull();
-    expect(within(row('scanner-fleet')).getByRole('button', { name: 'Выключить' })).toBeDisabled();
-    act(() => handleServerMessage({ type: 'session.mcp', sessionId: s.id, mcp: mcpView({ servers: [mcpServer({ name: 'scanner-fleet' })] }) }));
-    expect(row('scanner-fleet')).toHaveAttribute('aria-label', 'scanner-fleet: подключён');
+    expect(within(row('fleet-ops')).queryByRole('button', { name: 'Переподключить' })).toBeNull();
+    expect(within(row('fleet-ops')).getByRole('button', { name: 'Выключить' })).toBeDisabled();
+    act(() => handleServerMessage({ type: 'session.mcp', sessionId: s.id, mcp: mcpView({ servers: [mcpServer({ name: 'fleet-ops' })] }) }));
+    expect(row('fleet-ops')).toHaveAttribute('aria-label', 'fleet-ops: подключён');
     expect(screen.getByRole('button', { name: 'MCP-серверы' })).not.toHaveClass('bad');
   });
 
   it('Переподключение не удалось: lastError of the server shows in its row and the button is back', async () => {
     const s = session({ mcpProblems: 1 });
-    mockFetch({ [`GET /api/sessions/${s.id}/mcp`]: mcpRoute(mcpView({ servers: [mcpServer({ name: 'scanner-fleet', status: 'failed', error: 'old' })] })) });
+    mockFetch({ [`GET /api/sessions/${s.id}/mcp`]: mcpRoute(mcpView({ servers: [mcpServer({ name: 'fleet-ops', status: 'failed', error: 'old' })] })) });
     head(s);
     await userEvent.click(await screen.findByRole('button', { name: /^MCP/ }));
-    await screen.findByRole('listitem', { name: /^scanner-fleet/ });
+    await screen.findByRole('listitem', { name: /^fleet-ops/ });
     act(() =>
       handleServerMessage({
         type: 'session.mcp',
         sessionId: s.id,
-        mcp: mcpView({ servers: [mcpServer({ name: 'scanner-fleet', status: 'failed', error: 'connect ECONNREFUSED 127.0.0.1:8770', lastError: 'Переподключение не удалось: ECONNREFUSED' })] }),
+        mcp: mcpView({ servers: [mcpServer({ name: 'fleet-ops', status: 'failed', error: 'connect ECONNREFUSED 127.0.0.1:8770', lastError: 'Переподключение не удалось: ECONNREFUSED' })] }),
       }),
     );
-    expect(row('scanner-fleet')).toHaveTextContent('connect ECONNREFUSED 127.0.0.1:8770');
-    expect(within(row('scanner-fleet')).getByRole('alert')).toHaveTextContent('Переподключение не удалось: ECONNREFUSED');
-    expect(within(row('scanner-fleet')).getByRole('button', { name: 'Переподключить' })).toBeEnabled();
+    expect(row('fleet-ops')).toHaveTextContent('connect ECONNREFUSED 127.0.0.1:8770');
+    expect(within(row('fleet-ops')).getByRole('alert')).toHaveTextContent('Переподключение не удалось: ECONNREFUSED');
+    expect(within(row('fleet-ops')).getByRole('button', { name: 'Переподключить' })).toBeEnabled();
   });
 
   it('UI review H2: while an action is on the way the previous error is muted, not an alert', async () => {
     const s = session({ mcpProblems: 1 });
-    const srv = mcpServer({ name: 'scanner-fleet', status: 'failed', error: 'old', lastError: 'Переподключение не удалось: ECONNREFUSED', pendingAction: 'reconnect' });
+    const srv = mcpServer({ name: 'fleet-ops', status: 'failed', error: 'old', lastError: 'Переподключение не удалось: ECONNREFUSED', pendingAction: 'reconnect' });
     mockFetch({ [`GET /api/sessions/${s.id}/mcp`]: mcpRoute(mcpView({ servers: [srv] })) });
     head(s);
     await userEvent.click(await screen.findByRole('button', { name: /^MCP/ }));
-    await screen.findByRole('listitem', { name: /^scanner-fleet/ });
-    expect(within(row('scanner-fleet')).queryByRole('alert')).toBeNull();
-    expect(row('scanner-fleet')).toHaveTextContent('Прошлая ошибка: Переподключение не удалось: ECONNREFUSED');
+    await screen.findByRole('listitem', { name: /^fleet-ops/ });
+    expect(within(row('fleet-ops')).queryByRole('alert')).toBeNull();
+    expect(row('fleet-ops')).toHaveTextContent('Прошлая ошибка: Переподключение не удалось: ECONNREFUSED');
   });
 
   it('Выключение: POST action disable; 409 agent_outdated shows the text with the offer to update the agent', async () => {
@@ -297,12 +297,12 @@ describe('the MCP panel', () => {
     expect(await within(panel()).findByText('Сессия спит. Любое действие разбудит её.')).toBeInTheDocument();
     expect(within(panel()).getByText(/^Статус на \d\d:\d\d$/)).toBeInTheDocument();
     expect(within(panel()).queryByRole('button', { name: 'Обновить' })).toBeNull();
-    expect(within(row('scanner-fleet')).getByRole('button', { name: 'Переподключить' })).toBeEnabled();
+    expect(within(row('fleet-ops')).getByRole('button', { name: 'Переподключить' })).toBeEnabled();
     act(() =>
       handleServerMessage({
         type: 'session.mcp',
         sessionId: s.id,
-        mcp: mcpView({ live: false, waking: true, servers: ALL_STATUSES.map(x => (x.name === 'scanner-fleet' ? { ...x, pendingAction: 'wake' as const } : x)) }),
+        mcp: mcpView({ live: false, waking: true, servers: ALL_STATUSES.map(x => (x.name === 'fleet-ops' ? { ...x, pendingAction: 'wake' as const } : x)) }),
       }),
     );
     expect(within(panel()).getAllByText(/Сессия просыпается…/).length).toBeGreaterThan(0);
@@ -556,7 +556,7 @@ describe('/s/<id>?mcp=1', () => {
   it('the address after «Вход выполнен» opens the session with its MCP panel', async () => {
     const s = session({ mcpProblems: 0 });
     mockFetch({
-      '/api/me': () => ({ status: 200, body: { user: { id: 'u1', email: 'jonasasx@gmail.com' }, vapidPublicKey: null } }),
+      '/api/me': () => ({ status: 200, body: { user: { id: 'u1', email: 'alice@example.com' }, vapidPublicKey: null } }),
       '/api/sidebar': () => ({ status: 200, body: { now: [], projects: [], runners: RUNNERS } }),
       [`GET /api/sessions/${s.id}/mcp`]: mcpRoute(mcpView({ servers: [mcpServer({ name: 'notion', transport: 'http' })] })),
       [`/api/sessions/${s.id}/events`]: () => ({ status: 200, body: { events: [], before: null } }),
@@ -581,7 +581,7 @@ describe('sign-in controls of OAuth servers (mcp-auth-controls)', () => {
     vi.restoreAllMocks();
   });
   const fleet = mcpServer({
-    name: 'scanner-fleet',
+    name: 'fleet-ops',
     status: 'connected',
     transport: 'http',
     target: 'https://scanners.example/mcp',
@@ -625,15 +625,15 @@ describe('sign-in controls of OAuth servers (mcp-auth-controls)', () => {
       within(row(n))
         .getAllByRole('button')
         .map(b => b.getAttribute('aria-label') ?? b.textContent);
-    await waitFor(() => expect(names('scanner-fleet')).toEqual(['Переподключить', 'Войти заново', 'Действия с scanner-fleet']));
-    await userEvent.click(within(row('scanner-fleet')).getByRole('button', { name: 'Действия с scanner-fleet' }));
+    await waitFor(() => expect(names('fleet-ops')).toEqual(['Переподключить', 'Войти заново', 'Действия с fleet-ops']));
+    await userEvent.click(within(row('fleet-ops')).getByRole('button', { name: 'Действия с fleet-ops' }));
     expect(
-      within(row('scanner-fleet'))
+      within(row('fleet-ops'))
         .getAllByRole('menuitem')
         .map(b => b.textContent),
     ).toEqual(['Выключить', 'Выйти']);
     // ↑/↓, Home/End between the items (the first has the focus on opening)
-    const items = within(row('scanner-fleet')).getAllByRole('menuitem');
+    const items = within(row('fleet-ops')).getAllByRole('menuitem');
     expect(items[0]).toHaveFocus();
     await userEvent.keyboard('{ArrowDown}');
     expect(items[1]).toHaveFocus();
@@ -646,14 +646,14 @@ describe('sign-in controls of OAuth servers (mcp-auth-controls)', () => {
     await userEvent.keyboard('{End}');
     expect(items[1]).toHaveFocus();
     await userEvent.keyboard('{Escape}');
-    expect(within(row('scanner-fleet')).queryByRole('menu')).toBeNull();
-    expect(within(row('scanner-fleet')).getByRole('button', { name: 'Действия с scanner-fleet' })).toHaveFocus();
+    expect(within(row('fleet-ops')).queryByRole('menu')).toBeNull();
+    expect(within(row('fleet-ops')).getByRole('button', { name: 'Действия с fleet-ops' })).toHaveFocus();
     expect(panel()).toBeInTheDocument();
     // the focus leaving the menu closes it
-    await userEvent.click(within(row('scanner-fleet')).getByRole('button', { name: 'Действия с scanner-fleet' }));
+    await userEvent.click(within(row('fleet-ops')).getByRole('button', { name: 'Действия с fleet-ops' }));
     await userEvent.tab();
     await userEvent.tab();
-    expect(within(row('scanner-fleet')).queryByRole('menu')).toBeNull();
+    expect(within(row('fleet-ops')).queryByRole('menu')).toBeNull();
     expect(names('krisp')).toEqual(['Войти', 'Действия с krisp']);
     await userEvent.click(within(row('krisp')).getByRole('button', { name: 'Действия с krisp' }));
     expect(
@@ -674,30 +674,30 @@ describe('sign-in controls of OAuth servers (mcp-auth-controls)', () => {
     head(s);
     await userEvent.click(await screen.findByRole('button', { name: /^MCP/ }));
     const logout = async () => {
-      await userEvent.click(await within(row('scanner-fleet')).findByRole('button', { name: 'Действия с scanner-fleet' }));
-      await userEvent.click(within(row('scanner-fleet')).getByRole('menuitem', { name: 'Выйти' }));
+      await userEvent.click(await within(row('fleet-ops')).findByRole('button', { name: 'Действия с fleet-ops' }));
+      await userEvent.click(within(row('fleet-ops')).getByRole('menuitem', { name: 'Выйти' }));
     };
     await logout();
-    const confirm = within(row('scanner-fleet')).getByRole('alertdialog');
-    expect(confirm).toHaveTextContent('Выйти из scanner-fleet на HP? Вход сбросится во всех сессиях HP и в новых сессиях; токен будет отозван у провайдера.');
+    const confirm = within(row('fleet-ops')).getByRole('alertdialog');
+    expect(confirm).toHaveTextContent('Выйти из fleet-ops на HP? Вход сбросится во всех сессиях HP и в новых сессиях; токен будет отозван у провайдера.');
     expect(within(confirm).getByText('всех').tagName).toBe('B');
     expect(within(confirm).getByRole('button', { name: 'Отмена' })).toHaveFocus();
     await userEvent.click(within(confirm).getByRole('button', { name: 'Отмена' }));
-    expect(within(row('scanner-fleet')).queryByRole('alertdialog')).toBeNull();
+    expect(within(row('fleet-ops')).queryByRole('alertdialog')).toBeNull();
     await logout();
     await userEvent.keyboard('{Escape}');
-    expect(within(row('scanner-fleet')).queryByRole('alertdialog')).toBeNull();
+    expect(within(row('fleet-ops')).queryByRole('alertdialog')).toBeNull();
     expect(panel()).toBeInTheDocument();
     expect(calls.filter(c => c.method === 'POST')).toEqual([]);
 
     await logout();
-    await userEvent.click(within(within(row('scanner-fleet')).getByRole('alertdialog')).getByRole('button', { name: 'Выйти и отозвать токен' }));
-    await waitFor(() => expect(calls.find(c => c.method === 'POST')).toMatchObject({ url: `/api/sessions/${s.id}/mcp/logout`, body: { server: 'scanner-fleet' } }));
-    expect(await within(row('scanner-fleet')).findByText('Выход…')).toBeInTheDocument();
-    expect(within(row('scanner-fleet')).queryAllByRole('button')).toEqual([]);
+    await userEvent.click(within(within(row('fleet-ops')).getByRole('alertdialog')).getByRole('button', { name: 'Выйти и отозвать токен' }));
+    await waitFor(() => expect(calls.find(c => c.method === 'POST')).toMatchObject({ url: `/api/sessions/${s.id}/mcp/logout`, body: { server: 'fleet-ops' } }));
+    expect(await within(row('fleet-ops')).findByText('Выход…')).toBeInTheDocument();
+    expect(within(row('fleet-ops')).queryAllByRole('button')).toEqual([]);
     act(() => handleServerMessage({ type: 'session.mcp', sessionId: s.id, mcp: mcpView({ servers: [{ ...fleet, status: 'needs-auth', serverInfo: undefined, toolCount: 0 }] }) }));
-    expect(row('scanner-fleet')).toHaveAttribute('aria-label', 'scanner-fleet: нужен вход');
-    expect(within(row('scanner-fleet')).getByRole('button', { name: 'Войти' })).toBeInTheDocument();
+    expect(row('fleet-ops')).toHaveAttribute('aria-label', 'fleet-ops: нужен вход');
+    expect(within(row('fleet-ops')).getByRole('button', { name: 'Войти' })).toBeInTheDocument();
   });
 
   it('agent 1.7: no «Войти заново» or «Выйти», «Войти» of a 401 still there', async () => {
@@ -707,7 +707,7 @@ describe('sign-in controls of OAuth servers (mcp-auth-controls)', () => {
     await userEvent.click(await screen.findByRole('button', { name: /^MCP/ }));
     await waitFor(() =>
       expect(
-        within(row('scanner-fleet'))
+        within(row('fleet-ops'))
           .getAllByRole('button')
           .map(b => b.textContent),
       ).toEqual(['Переподключить', 'Выключить']),
@@ -725,8 +725,8 @@ describe('sign-in controls of OAuth servers (mcp-auth-controls)', () => {
     head(s);
     await userEvent.click(await screen.findByRole('button', { name: /^MCP/ }));
     await userEvent.click(await within(panel()).findByRole('button', { name: 'Войти заново' }));
-    expect(calls.find(c => c.method === 'POST')).toMatchObject({ url: `/api/sessions/${s.id}/mcp/auth`, body: { server: 'scanner-fleet' } });
-    act(() => handleServerMessage({ type: 'mcp.auth', sessionId: s.id, server: 'scanner-fleet', flow: authFlow({ server: 'scanner-fleet', redirect: 'localhost', callbackPort: 53412 }) }));
-    expect(await within(row('scanner-fleet')).findByText(MCP_TEXTS.resigninHint)).toBeInTheDocument();
+    expect(calls.find(c => c.method === 'POST')).toMatchObject({ url: `/api/sessions/${s.id}/mcp/auth`, body: { server: 'fleet-ops' } });
+    act(() => handleServerMessage({ type: 'mcp.auth', sessionId: s.id, server: 'fleet-ops', flow: authFlow({ server: 'fleet-ops', redirect: 'localhost', callbackPort: 53412 }) }));
+    expect(await within(row('fleet-ops')).findByText(MCP_TEXTS.resigninHint)).toBeInTheDocument();
   });
 });

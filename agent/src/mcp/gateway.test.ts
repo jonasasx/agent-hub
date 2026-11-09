@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
 import { createServer, request as httpRequest } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createLogger } from '../log.js';
 import { McpGateway } from './gateway.js';
@@ -88,6 +91,111 @@ describe('McpGateway', () => {
     gateway.revoke(serverId, sessionId);
     await delay(50);
     expect(statuses.map(status => status.status)).toContain('stopped');
+  });
+
+  it('keeps the bearer and the process when one MCP client of a live session closes', async () => {
+    const statuses: Array<{ status?: string }> = [];
+    gateway = new McpGateway(createLogger({ level: 'error', write: () => undefined }), status => statuses.push(status as { status?: string }), {
+      maxProcesses: 8,
+      maxSessions: 64,
+      maxPending: 256,
+      maxPerServerSessions: 4,
+      idleMs: 20,
+      backoffBaseMs: 10,
+      backoffMaxMs: 30,
+      backoffWindowMs: 100,
+      maxRestarts: 5,
+      healthyResetMs: 100,
+    });
+    await gateway.start();
+    const serverId = randomUUID();
+    gateway.setRegistry({
+      protocol: '1.13',
+      revision: 1,
+      generatedAt: 1,
+      registryEnabled: true,
+      servers: [
+        {
+          id: serverId,
+          name: 'shared',
+          enabled: true,
+          transport: 'stdio',
+          mode: 'machine-shared',
+          command: process.execPath,
+          args: [
+            '-e',
+            "process.stdin.on('data', d => { const q = JSON.parse(d.toString()); process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: q.id, result: { pid: process.pid } }) + '\\n'); });",
+          ],
+          machineScope: { allMachines: true, machineIds: [] },
+          projectIds: [],
+          revision: 1,
+          secrets: [],
+        },
+      ],
+    });
+    const sessionId = randomUUID();
+    const bearer = gateway.authorize(serverId, sessionId);
+    const headers = { authorization: `Bearer ${bearer}`, 'x-agent-session': sessionId, 'mcp-session-id': sessionId, 'content-type': 'application/json' };
+    const call = async (id: number) => {
+      const response = await fetch(`${gateway!.url}?server=${serverId}`, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id, method: 'initialize', params: {} }) });
+      expect(response.status).toBe(200);
+      return ((await response.json()) as { result: { pid: number } }).result.pid;
+    };
+    const firstPid = await call(1);
+    const closed = await fetch(`${gateway.url}?server=${serverId}`, { method: 'DELETE', headers });
+    expect(closed.status).toBe(200);
+    await delay(50);
+    expect(statuses.map(status => status.status)).not.toContain('stopped');
+    expect(await call(2)).toBe(firstPid);
+    gateway.revokeSession(sessionId);
+    await delay(50);
+    expect(statuses.map(status => status.status)).toContain('stopped');
+  });
+
+  it('answers each of two MCP clients of one session that use the same request id', async () => {
+    gateway = new McpGateway(createLogger({ level: 'error', write: () => undefined }), () => undefined);
+    await gateway.start();
+    const serverId = randomUUID();
+    gateway.setRegistry({
+      protocol: '1.13',
+      revision: 1,
+      generatedAt: 1,
+      registryEnabled: true,
+      servers: [
+        {
+          id: serverId,
+          name: 'shared',
+          enabled: true,
+          transport: 'stdio',
+          mode: 'machine-shared',
+          command: process.execPath,
+          args: [
+            '-e',
+            "require('readline').createInterface({ input: process.stdin }).on('line', l => { const q = JSON.parse(l); setTimeout(() => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: q.id, result: { method: q.method } }) + '\\n'), 20); });",
+          ],
+          machineScope: { allMachines: true, machineIds: [] },
+          projectIds: [],
+          revision: 1,
+          secrets: [],
+        },
+      ],
+    });
+    const sessionId = randomUUID();
+    const bearer = gateway.authorize(serverId, sessionId);
+    const headers = { authorization: `Bearer ${bearer}`, 'x-agent-session': sessionId, 'content-type': 'application/json' };
+    const call = async (method: string) => {
+      const response = await fetch(`${gateway!.url}?server=${serverId}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ jsonrpc: '2.0', id: 0, method, params: {} }),
+        signal: AbortSignal.timeout(5000),
+      });
+      expect(response.status).toBe(200);
+      return (await response.json()) as { id: number; result: { method: string } };
+    };
+    const [first, second] = await Promise.all([call('initialize'), call('tools/list')]);
+    expect(first).toMatchObject({ id: 0, result: { method: 'initialize' } });
+    expect(second).toMatchObject({ id: 0, result: { method: 'tools/list' } });
   });
 
   it('does not let an old idle callback delete a replacement process entry', () => {
@@ -316,9 +424,12 @@ describe('McpGateway', () => {
     const secretId = randomUUID();
     const script = [
       "process.stdin.on('data', d => {",
-      '  const q = JSON.parse(d.toString());',
-      "  const result = q.method === 'tools/list' ? { tools: [] } : { marker: process.env.API_TOKEN };",
-      "  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: q.id, result }) + '\\n');",
+      "  for (const line of d.toString().split('\\n').filter(Boolean)) {",
+      '    const q = JSON.parse(line);',
+      '    if (q.id === undefined) continue;',
+      "    const result = q.method === 'tools/list' ? { tools: [] } : { marker: process.env.API_TOKEN };",
+      "    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: q.id, result }) + '\\n');",
+      '  }',
       '});',
     ].join(' ');
     const server = {
@@ -380,9 +491,12 @@ describe('McpGateway', () => {
     const serverId = randomUUID();
     const script = [
       "process.stdin.on('data', d => {",
-      '  const q = JSON.parse(d.toString());',
-      "  const result = q.method === 'tools/list' ? { tools: [] } : {};",
-      "  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: q.id, result }) + '\\n');",
+      "  for (const line of d.toString().split('\\n').filter(Boolean)) {",
+      '    const q = JSON.parse(line);',
+      '    if (q.id === undefined) continue;',
+      "    const result = q.method === 'tools/list' ? { tools: [] } : {};",
+      "    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: q.id, result }) + '\\n');",
+      '  }',
       '});',
     ].join(' ');
     const server = {
@@ -931,6 +1045,43 @@ describe('McpGateway', () => {
     expect(second.status).toBe(504);
   });
 
+  it('starts every machine-shared server of the registry beyond maxProcesses (one process per server)', async () => {
+    gateway = new McpGateway(createLogger({ level: 'error', write: () => undefined }), undefined, {
+      maxProcesses: 2,
+      maxSessions: 64,
+      maxPending: 256,
+      maxPerServerSessions: 2,
+      idleMs: 60_000,
+      backoffBaseMs: 10,
+      backoffMaxMs: 30,
+      backoffWindowMs: 100,
+      maxRestarts: 2,
+      healthyResetMs: 100,
+    });
+    await gateway.start();
+    const ids = Array.from({ length: 10 }, () => randomUUID());
+    gateway.setRegistry({
+      protocol: '1.13',
+      revision: 1,
+      generatedAt: 1,
+      registryEnabled: true,
+      servers: ids.map((id, i) => ({
+        id,
+        name: `shared-${i}`,
+        enabled: true,
+        transport: 'stdio' as const,
+        mode: 'machine-shared' as const,
+        command: process.execPath,
+        args: ['-e', 'setInterval(() => undefined, 1000);'],
+        machineScope: { allMachines: true, machineIds: [] },
+        projectIds: [],
+        revision: 1,
+        secrets: [],
+      })),
+    });
+    for (const id of ids) await gateway.startManaged(id, randomUUID(), randomUUID() + randomUUID());
+  });
+
   it('enforces process limits and reports a missing runtime without repeated spawn attempts', async () => {
     const statuses: Array<{ serverId?: string; status?: string; error?: string }> = [];
     gateway = new McpGateway(createLogger({ level: 'error', write: () => undefined }), status => statuses.push(status as { serverId?: string; status?: string; error?: string }), {
@@ -1072,6 +1223,59 @@ describe('McpGateway', () => {
     expect(statuses).toEqual([]);
   });
 
+  it('starts a bare command from PATH, through a .cmd shim on Windows, like `npx` or an npm-installed server', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-shim-'));
+    const previousPath = process.env.PATH;
+    try {
+      const script = [
+        "process.stdin.on('data', d => {",
+        "  for (const line of d.toString().trim().split('\\n')) {",
+        '    if (!line) continue;',
+        '    const q = JSON.parse(line);',
+        "    const result = q.method === 'initialize'",
+        "      ? { protocolVersion: '2025-03-26', capabilities: {}, serverInfo: { name: 'shim', version: '1' } }",
+        '      : { tools: [{ name: process.argv[2] }] };',
+        "    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: q.id, result }) + '\\n');",
+        '  }',
+        '});',
+      ].join('\n');
+      await writeFile(join(dir, 'server.js'), script);
+      if (process.platform === 'win32') {
+        await writeFile(join(dir, 'shim-mcp.cmd'), `@"${process.execPath}" "%~dp0server.js" %*\r\n`);
+      } else {
+        await writeFile(join(dir, 'shim-mcp'), `#!/bin/sh\nexec "${process.execPath}" "$(dirname "$0")/server.js" "$@"\n`, { mode: 0o755 });
+      }
+      process.env.PATH = `${dir}${delimiter}${previousPath ?? ''}`;
+      gateway = new McpGateway(createLogger({ level: 'error', write: () => undefined }));
+      await gateway.start();
+      const machineId = randomUUID();
+      const result = await gateway.validate({
+        draftId: randomUUID(),
+        revision: 1,
+        machineId,
+        server: {
+          id: randomUUID(),
+          name: 'shim',
+          enabled: true,
+          transport: 'stdio',
+          mode: 'machine-shared',
+          command: 'shim-mcp',
+          args: ['tool with spaces & "quotes"'],
+          machineScope: { allMachines: false, machineIds: [machineId] },
+          projectIds: [],
+          revision: 1,
+          secrets: [],
+        },
+      });
+      expect(result).toMatchObject({ ok: true, status: 'checked', tools: [{ name: 'tool with spaces & "quotes"' }] });
+    } finally {
+      process.env.PATH = previousPath;
+      await gateway?.stop();
+      gateway = undefined;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('uses the persisted OAuth server id while validating an edited remote server', async () => {
     const authorizationHeaders: string[] = [];
     const remote = (remoteFixture = createServer((req, res) => {
@@ -1138,9 +1342,67 @@ describe('McpGateway', () => {
       },
     });
     expect(result).toMatchObject({ ok: true, status: 'checked', tools: [], oauthRequired: false });
-    expect(resolvedServerIds).toEqual([serverId, serverId]);
-    expect(authorizationHeaders).toEqual(['Bearer access-token', 'Bearer access-token']);
+    expect(resolvedServerIds).toEqual([serverId, serverId, serverId]);
+    expect(authorizationHeaders).toEqual(['Bearer access-token', 'Bearer access-token', 'Bearer access-token']);
     expect(statuses).toEqual([]);
+  });
+
+  it('sends the OAuth token while validating a server that is not in the machine registry yet', async () => {
+    const authorizationHeaders: string[] = [];
+    const sessionHeaders: string[] = [];
+    const remote = (remoteFixture = createServer((req, res) => {
+      authorizationHeaders.push(String(req.headers.authorization ?? ''));
+      sessionHeaders.push(String(req.headers['mcp-session-id'] ?? ''));
+      const chunks: Buffer[] = [];
+      req.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      req.on('end', () => {
+        const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { id?: number; method: string };
+        if (rpc.id === undefined) {
+          res.writeHead(202).end();
+          return;
+        }
+        const result = rpc.method === 'tools/list' ? { tools: [{ name: 'list_processes' }] } : { protocolVersion: '2025-03-26', capabilities: {} };
+        // Streamable HTTP answer: SSE with CRLF line ends, a notification first, and the stream left open after the response.
+        res.writeHead(200, { 'content-type': 'text/event-stream', 'mcp-session-id': 'remote-session' });
+        res.write('event: message\r\ndata: {"jsonrpc":"2.0","method":"notifications/message","params":{}}\r\n\r\n');
+        res.write(`event: message\r\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result })}\r\n\r\n`);
+      });
+    }));
+    await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve));
+    const address = remote.address();
+    if (!address || typeof address === 'string') throw new Error('remote fixture failed to bind');
+    gateway = new McpGateway(createLogger({ level: 'error', write: () => undefined }));
+    await gateway.start();
+    const serverId = randomUUID();
+    const draftId = randomUUID();
+    const serverUrl = `http://127.0.0.1:${address.port}/mcp`;
+    const resolvedServerIds: string[] = [];
+    gateway.setOAuthAccess(async id => {
+      resolvedServerIds.push(id);
+      return 'access-token';
+    });
+    const result = await gateway.validate({
+      draftId,
+      revision: 1,
+      machineId: randomUUID(),
+      oauthServerId: serverId,
+      server: {
+        id: draftId,
+        name: 'oauth-needs-login',
+        enabled: true,
+        transport: 'http',
+        mode: 'remote',
+        url: serverUrl,
+        machineScope: { allMachines: true, machineIds: [] },
+        projectIds: [],
+        revision: 1,
+        secrets: [],
+      },
+    });
+    expect(result).toMatchObject({ ok: true, status: 'checked', tools: [{ name: 'list_processes' }], oauthRequired: false });
+    expect(resolvedServerIds).toEqual([serverId, serverId, serverId]);
+    expect(authorizationHeaders).toEqual(['Bearer access-token', 'Bearer access-token', 'Bearer access-token']);
+    expect(sessionHeaders).toEqual(['', 'remote-session', 'remote-session']);
   });
 
   it('reports an HTTP 401 validation response as needs_auth', async () => {
@@ -1244,7 +1506,7 @@ describe('McpGateway', () => {
     expect(result.status).toBe('checked');
     expect(accessCalls).toBe(0);
     expect(refreshCalls).toBe(0);
-    expect(authorizationHeaders).toEqual(['', '']);
+    expect(authorizationHeaders).toEqual(['', '', '']);
   });
 
   it.each([
@@ -1252,7 +1514,7 @@ describe('McpGateway', () => {
       title: 'normalizes hostname case and the default port',
       registeredUrl: 'HTTPS://EXAMPLE.TEST:443/registered',
       candidateUrl: 'https://example.test/candidate',
-      expectedAccessCalls: 2,
+      expectedAccessCalls: 3,
     },
     {
       title: 'keeps HTTP and HTTPS origins distinct',
@@ -1317,7 +1579,7 @@ describe('McpGateway', () => {
       },
     });
     expect(result.status).toBe('checked');
-    expect(authorizationHeaders).toHaveLength(2);
+    expect(authorizationHeaders).toHaveLength(3);
     expect(authorizationHeaders.filter(value => value === 'Bearer access-token')).toHaveLength(expectedAccessCalls);
   });
 
@@ -1406,19 +1668,17 @@ describe('McpGateway', () => {
           secrets: [],
         },
       });
+    // the errors prove the early path: waiting for the request timeout ends with HTTP 504 or an abort instead; a wall-clock
+    // bound measured a process spawn and failed under load
     const missingCommand = `mcp-not-installed-${randomUUID()}`;
-    const missingStarted = Date.now();
     const missing = await validate(missingCommand, []);
-    expect(Date.now() - missingStarted).toBeLessThan(2_000);
     expect(missing).toMatchObject({
       ok: false,
       status: 'validation-failed',
       error: `MCP server returned HTTP 502: command not found: ${missingCommand}`,
     });
 
-    const exitStarted = Date.now();
     const earlyExit = await validate(process.execPath, ['-e', 'process.exit(17)']);
-    expect(Date.now() - exitStarted).toBeLessThan(2_000);
     expect(earlyExit).toMatchObject({
       ok: false,
       status: 'validation-failed',

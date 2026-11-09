@@ -2,6 +2,10 @@ import type { Dict } from '../../index.js';
 
 export default {
   'files.action.copyPath': 'คัดลอกพาธ',
+  'files.action.download': 'ดาวน์โหลด',
+  'files.action.downloadFailed': 'ดาวน์โหลด {name} ไม่สำเร็จ',
+  'files.action.downloadNamed': 'ดาวน์โหลด {name}',
+  'files.action.downloadOutdated': 'อัปเดตเอเจนต์บน {machine} เพื่อดาวน์โหลดไฟล์',
   'files.action.inTree': 'ในโครงสร้าง',
   'files.action.mention': 'ไปยังข้อความ',
   'files.action.mentionTitle': 'แทรกพาธลงในช่องป้อนข้อความของเซสชัน "{title}"',

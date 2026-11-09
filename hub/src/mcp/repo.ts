@@ -33,11 +33,12 @@ function rowsOf(v: unknown): McpServerSnapshot[] {
 
 /**
  * Writes the snapshot of a session when it is newer than the stored one. Returns null when older (nothing written),
- * else whether the problem count changed (the sidebar row needs a session.upsert).
+ * else whether the problem count changed (the sidebar row needs a session.upsert) and the servers that were not
+ * `connected` in the stored snapshot and are `connected` in this one.
  */
-export async function storeSessionSnapshot(db: Db, sessionId: string, snap: McpSnapshot): Promise<{ problemsChanged: boolean } | null> {
+export async function storeSessionSnapshot(db: Db, sessionId: string, snap: McpSnapshot): Promise<{ problemsChanged: boolean; becameConnected: string[] } | null> {
   const at = new Date(snap.observedAt);
-  const prev = await db.selectFrom('sessions').select(['mcp_problems']).where('id', '=', sessionId).executeTakeFirst();
+  const prev = await db.selectFrom('sessions').select(['mcp_problems', 'mcp_servers']).where('id', '=', sessionId).executeTakeFirst();
   if (!prev) return null;
   const problems = countProblems(snap.servers);
   const r = await db
@@ -47,7 +48,13 @@ export async function storeSessionSnapshot(db: Db, sessionId: string, snap: McpS
     .where(eb => eb.or([eb('mcp_observed_at', 'is', null), eb('mcp_observed_at', '<', at)]))
     .executeTakeFirst();
   if (Number(r.numUpdatedRows) === 0) return null;
-  return { problemsChanged: prev.mcp_problems !== problems };
+  const wasConnected = new Set(
+    rowsOf(prev.mcp_servers)
+      .filter(x => x.status === 'connected')
+      .map(x => x.name),
+  );
+  const becameConnected = snap.servers.filter(x => x.status === 'connected' && !wasConnected.has(x.name)).map(x => x.name);
+  return { problemsChanged: prev.mcp_problems !== problems, becameConnected };
 }
 
 /**

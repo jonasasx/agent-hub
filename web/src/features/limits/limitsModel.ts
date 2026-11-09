@@ -45,6 +45,14 @@ export function isReset(w: Pick<LimitWindowView, 'resetsAt'>, now: number): bool
 }
 
 /**
+ * The subscription has a weekly window and no 5-hour one: the service does not limit the 5-hour window for it (an Ultra
+ * subscription, limits-stale-windows D4).
+ */
+export function noFiveHour(lim: Pick<SubscriptionLimitsView, 'windows'>): boolean {
+  return lim.windows.some(w => w.type === 'seven_day') && !lim.windows.some(w => w.type === 'five_hour');
+}
+
+/**
  * The window was observed before the latest quiet check: a successful turn without an event came later. Such a turn
  * only says «the turn passed, the limit is not exhausted» — the service sends events not on every turn — so the window
  * keeps its level only when `heldOverQuiet`.

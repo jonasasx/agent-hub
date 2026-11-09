@@ -37,16 +37,19 @@ describe('search (integration)', () => {
     const token = await t.addRunner('hp', 'HP');
     cookie = await t.login();
     await seedFixtureVault(t.tdb.db, t.hub.projects.catalog, FIXTURE_VAULT);
+    // 01-ledger: a catalog project with its folder under the default folder of hp (the only classifier, single-project-classifier)
+    await t.tdb.pool.query(`INSERT INTO catalog_projects(user_id,name,folder) SELECT user_id,'01-ledger','20-personal/01-finance/systems/01-ledger' FROM runners WHERE id='hp'`);
     agent = connectFakeAgent(t.wsBase, token);
     agent.ws.on('message', d => got.push(JSON.parse(d.toString()) as { type: string; payload: Record<string, unknown> }));
     await agent.next('welcome');
+    await t.tdb.pool.query(`UPDATE runners SET default_dir = 'C:\\Users\\alice\\vault' WHERE id = 'hp'`);
     await session('dzi', 'C:\\Users\\alice\\vault', o => [F.userText(o, 'почему растут тайминги очереди DZI на Барометре?'), F.assistantText(o, 'Тайминги очереди DZI выросли из-за конвертера Q50.')]);
     await session('deploy', 'C:\\Users\\alice\\vault', o => [F.userText(o, 'что с выкаткой?'), F.assistantText(o, 'После перезапуска deployments в namespace copilot всё поднялось.')]);
     await session('ledger', 'C:\\Users\\alice\\vault\\20-personal\\01-finance\\systems\\01-ledger', o => [F.userText(o, 'импортируй выписку'), F.assistantText(o, 'Готово.')]);
     const titled = await session('title', 'C:\\Users\\alice\\vault', o => [F.userText(o, 'привет'), F.assistantText(o, 'Здравствуй.')]);
     await t.tdb.pool.query(`UPDATE sessions SET title = 'Барабан стиральной машины' WHERE id = $1`, [titled]);
-    // 01-ledger by its start directory (the project of the catalogue, M4)
-    await waitFor(async () => (await t.tdb.pool.query(`SELECT project_id FROM sessions WHERE id = $1`, [ids.get('ledger')])).rows[0].project_id !== null);
+    // 01-ledger by its start directory (the cwd rule of the catalog)
+    await waitFor(async () => (await t.tdb.pool.query(`SELECT 1 FROM session_projects WHERE session_id = $1`, [ids.get('ledger')])).rowCount === 1);
     await session('cron', '/home/ubuntu/vault', o => [F.userText(o, 'отчёт мониторинга: барабан алертов', 'sdk')], 'sdk-cli');
   });
   afterAll(async () => t.close());

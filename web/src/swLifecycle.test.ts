@@ -18,6 +18,11 @@ describe('service worker lifecycle', () => {
 
   it('the web build checks the generated sw.js', () => {
     const pkg = JSON.parse(readFileSync(join(import.meta.dirname, '../package.json'), 'utf8')) as { scripts: { build: string } };
-    expect(pkg.scripts.build).toMatch(/vite build && node scripts\/check-sw\.mjs$/);
+    expect(pkg.scripts.build).toMatch(/vite build && node scripts\/check-sw\.mjs( &&|$)/);
+  });
+
+  it('the web build refuses scripts inlined as data: URLs (voice-conversation: CSP blocks the worklets)', () => {
+    const pkg = JSON.parse(readFileSync(join(import.meta.dirname, '../package.json'), 'utf8')) as { scripts: { build: string } };
+    expect(pkg.scripts.build).toMatch(/vite build && .*node scripts\/check-inline-scripts\.mjs/);
   });
 });

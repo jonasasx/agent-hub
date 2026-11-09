@@ -2,14 +2,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   PANE_LIMIT,
-  TAB_LIMIT,
   allTabs,
   clampRatio,
   closePane,
   closeTab,
   emptyWorkspace,
-  enforceLimit,
-  evictionCandidate,
   insertSlot,
   leaves,
   mergeAll,
@@ -53,32 +50,11 @@ describe('Мои вкладки', () => {
     expect(allTabs(ws)).toHaveLength(4);
   });
 
-  it('Вытеснение давно не открывавшейся: the ninth tab evicts the least recently opened one that is not shown', () => {
-    let ws = emptyWorkspace(['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8']);
-    ws = { ...ws, panes: { p1: { ...ws.panes.p1!, active: 's1' } } };
-    // s1 is the oldest but active; s2 is the oldest of the rest
-    const lastOpened = { s1: 1, s2: 2, s3: 3, s4: 4, s5: 5, s6: 6, s7: 7, s8: 8, s9: 9 };
-    ws = openSession(ws, 's9');
-    // s9 is active now; s1 is not shown any more → it is the oldest candidate
-    const r = enforceLimit(ws, 's9', lastOpened);
-    expect(r.evicted).toBe('s1');
-    expect(allTabs(r.ws)).toHaveLength(TAB_LIMIT);
-    expect(allTabs(r.ws)).toContain('s9');
-  });
-
-  it('eviction skips tabs active in any pane and the new tab', () => {
-    const base = split(emptyWorkspace(['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8']), 's1', 'p1', 'right').ws;
-    // panes: p1 [s2..s8], p2 [s1] (active)
-    let ws = { ...base, focus: 'p1' };
-    ws = openSession(ws, 's9');
-    const lastOpened = { s1: 1, s2: 2, s3: 3, s4: 4, s5: 5, s6: 6, s7: 7, s8: 8 };
-    // s1 is active in p2 and s9 is new → the oldest of the rest is s2
-    expect(evictionCandidate(ws, 's9', lastOpened)).toBe('s2');
-  });
-
-  it('no eviction at 8 tabs', () => {
-    const ws = emptyWorkspace(['1', '2', '3', '4', '5', '6', '7', '8']);
-    expect(enforceLimit(ws, '8', {}).evicted).toBeNull();
+  it('Девятая вкладка (spec tab-strip): the ninth tab joins the pane, nothing is evicted', () => {
+    const ws = openSession(emptyWorkspace(['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8']), 's9');
+    expect(allTabs(ws)).toHaveLength(9);
+    expect(allTabs(ws)).toEqual(expect.arrayContaining(['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9']));
+    expect(ws.panes.p1!.active).toBe('s9');
   });
 
   it('Закрытие вкладки: the tab disappears, the neighbour on the left becomes active', () => {

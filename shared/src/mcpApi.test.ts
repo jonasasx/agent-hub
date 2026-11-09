@@ -60,7 +60,7 @@ const view: McpSessionView = {
       authError: false,
       pendingAction: 'auth',
     },
-    { name: 'scanner-fleet', status: 'failed', error: 'ECONNREFUSED', transport: 'http', toolCount: 0, persistence: 'process', canAuth: true, oauth: false, authError: false, lastError: 'boom' },
+    { name: 'fleet-ops', status: 'failed', error: 'ECONNREFUSED', transport: 'http', toolCount: 0, persistence: 'process', canAuth: true, oauth: false, authError: false, lastError: 'boom' },
   ],
   authFlows: [{ server: 'notion', authUrl: 'https://mcp.notion.com/authorize?x=1', redirect: 'hub', expiresAt: '2026-10-28T12:10:00.000Z' }],
 };

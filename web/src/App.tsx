@@ -37,6 +37,8 @@ import { DropOverlay } from './features/toolwindows/DropOverlay';
 import { PhoneWindow } from './features/toolwindows/PhoneWindow';
 import { useDock } from './features/toolwindows/useDock';
 import { applyProfileLocale, t, useT } from './i18n';
+import { releasePush, syncPush } from './features/push/pushClient';
+import { listenSwMessages } from './features/push/swMessages';
 import { usePhone } from './features/toolwindows/usePhone';
 import {
   dropSubagentLists,
@@ -51,6 +53,8 @@ import {
   openSession,
   startLayoutPersistence,
   syncSocket,
+  noteHidden,
+  noteShown,
   visibleSessionIds,
 } from './features/workspace/actions';
 
@@ -236,6 +240,11 @@ export function App() {
     });
     const onVis = () => syncSocket();
     document.addEventListener('visibilitychange', onVis);
+    // the hiding is counted from the loss of focus: Android sends visibilitychange seconds after the app is minimized
+    const onBlur = () => noteHidden();
+    const onFocus = () => noteShown();
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('focus', onFocus);
     const mq = window.matchMedia?.(PHONE_QUERY);
     const onMq = () => {
       const d = currentDevice();
@@ -255,15 +264,33 @@ export function App() {
       unsubHistory();
       unsubSync();
       document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('focus', onFocus);
       mq?.removeEventListener?.('change', onMq);
       window.removeEventListener('keydown', onKey);
     };
   }, [signedIn, handleUnauthorized]);
 
+  // web-push-notifications D8: a tap on a push notification asks the open window to show the session (no reload);
+  // the subscription is restored on start without a dialog
+  const vapidKey = auth.kind === 'signed_in' ? auth.me.vapidPublicKey : null;
+  const meId = auth.kind === 'signed_in' ? auth.me.user.id : null;
+  useEffect(() => {
+    if (!signedIn) return;
+    return listenSwMessages(id => openSession(id));
+  }, [signedIn]);
+  useEffect(() => {
+    if (!signedIn || !meId) return;
+    void syncPush({ vapidPublicKey: vapidKey, userId: meId });
+  }, [signedIn, vapidKey, meId]);
+
   const pushToast = useStore(s => s.pushToast);
   const logout = async () => {
+    // the device leaves the push list before the session ends; a failure or a slow hub never blocks the sign-out
+    await releasePush(3000).catch(() => undefined);
+    let redirect = '/';
     try {
-      await api.logout();
+      redirect = (await api.logout()).redirect;
     } catch (err) {
       // The server session may still be alive: do not pretend the user is signed out.
       if (!(err instanceof ApiError && err.status === 401)) {
@@ -275,6 +302,11 @@ export function App() {
       sessionStorage.setItem(SIGNED_OUT_FLAG, '1');
     } catch {
       // ignore
+    }
+    // keycloak-auth D7: the provider ends its own session and returns to the root, where the flag shows «Вы вышли»
+    if (redirect !== '/') {
+      window.location.assign(redirect);
+      return;
     }
     setAuth({ kind: 'signed_out' });
   };

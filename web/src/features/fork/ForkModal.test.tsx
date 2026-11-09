@@ -47,9 +47,9 @@ describe('fork form', () => {
     expect(copyUnavailable(session({ readOnlyReason: 'cwd_missing' }), RUNNERS)).toBe('Недоступно: нет каталога на машине');
     expect(copyUnavailable(session({ runnerId: 'gone' }), RUNNERS)).toBe('Недоступно: нет каталога на машине');
     expect(copyUnavailable(session(), RUNNERS)).toBeNull();
-    // handoff defaults: the source's runner and directory, or the first online runner and its vault root
-    expect(handoffTarget(session({ runnerId: 'vm', cwd: '/home/ubuntu/vault/x' }), RUNNERS)).toEqual({ runnerId: 'vm', cwd: '/home/ubuntu/vault/x' });
-    expect(handoffTarget(session({ runnerId: 'hp' }), RUNNERS)).toEqual({ runnerId: 'x1', cwd: 'C:\\Users\\alice\\vault' });
+    // handoff default: the source's runner, or the first online runner; the folder follows the project (session-folder)
+    expect(handoffTarget(session({ runnerId: 'vm', cwd: '/home/ubuntu/vault/x' }), RUNNERS)).toEqual({ runnerId: 'vm' });
+    expect(handoffTarget(session({ runnerId: 'hp' }), RUNNERS)).toEqual({ runnerId: 'x1' });
   });
 
   it('Полная копия: POST fork {mode:"copy"}, the copy opens in a new pane right of the source', async () => {
@@ -85,17 +85,15 @@ describe('fork form', () => {
     expect(screen.getByRole('radio', { name: /Handoff/ })).toHaveAttribute('aria-checked', 'true');
     expect(await screen.findByText(/Хаб готовит промпт/)).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /X1/ })).toHaveAttribute('aria-checked', 'true');
-    expect(screen.getByLabelText('Каталог')).toHaveValue('C:\\Users\\alice\\vault');
     await waitFor(() => expect(useDrafts.getState().byId.d1).toBeDefined());
     act(() => handleServerMessage({ type: 'handoff.draft', draft: { id: 'd1', sessionId: 's', status: 'ready', text: '## Цель\nдоделать', error: null, createdAt: '', finishedAt: '' } }));
     await waitFor(() => expect(screen.getByLabelText('Промпт для новой сессии')).toHaveValue('## Цель\nдоделать'));
     expect(screen.queryByText(/Хаб готовит промпт/)).not.toBeInTheDocument();
     await userEvent.type(screen.getByLabelText('Промпт для новой сессии'), ' сегодня');
     await userEvent.click(screen.getByRole('radio', { name: /ВМ \.3/ }));
-    expect(screen.getByLabelText('Каталог')).toHaveValue('/home/ubuntu/vault');
     await userEvent.click(screen.getByRole('button', { name: 'Запустить handoff' }));
     await waitFor(() => expect(forkCalls(calls)).toHaveLength(1));
-    expect(forkCalls(calls)[0]!.body).toEqual({ mode: 'handoff', prompt: '## Цель\nдоделать сегодня', runnerId: 'vm', cwd: '/home/ubuntu/vault', draftId: 'd1' });
+    expect(forkCalls(calls)[0]!.body).toEqual({ mode: 'handoff', prompt: '## Цель\nдоделать сегодня', runnerId: 'vm', draftId: 'd1' });
   });
 
   it('Cron-сессия: only Handoff', () => {
@@ -115,7 +113,7 @@ describe('fork form', () => {
     expect(await screen.findByText(/Хаб готовит промпт/)).toBeInTheDocument();
   });
 
-  it('cwd_not_found keeps the form open with the text under «Каталог»', async () => {
+  it('cwd_not_found keeps the form open with the text under the machine', async () => {
     const s = session();
     setup(s, { mode: 'handoff', fork: () => ({ status: 422, body: { error: 'cwd_not_found', message: 'Каталог не найден на X1' } }) });
     await screen.findByText(/Хаб готовит промпт/);

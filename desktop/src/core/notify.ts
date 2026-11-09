@@ -6,9 +6,11 @@
  * its first upsert never notifies, so a session that has been waiting for hours does not pop up after a reseed. Only hub-managed, non-cron sessions. Suppressed when the hub says the
  * session is active in a visible window (`activeVisible`); when the hub does not send the field — when the app window
  * is visible and focused. State from `GET /api/sidebar` never notifies (the caller does not pass it here).
+ * The front is of `notifyReason` (`@agent-hub/shared`): a finished turn while subagents, background tasks or child hub
+ * sessions still work is not waiting; the front comes when the last one ends.
  */
-import type { SessionView } from '@agent-hub/shared';
-import { needsMe, type RunnerLookup } from './waiting.js';
+import { notifyReason, type SessionView } from '@agent-hub/shared';
+import type { RunnerLookup } from './waiting.js';
 import { dt } from './i18n.js';
 
 export interface NotificationSpec {
@@ -38,13 +40,17 @@ export function notificationText(s: SessionView, runners: RunnerLookup): Pick<No
   return { reason, title, body };
 }
 
+function waitsForMe(s: SessionView, runners: RunnerLookup): boolean {
+  return notifyReason(s, runners.get(s.runnerId)?.online === true) !== null;
+}
+
 export function decideNotification(input: NotifyInput): NotificationSpec | null {
   const { prev, next, runners } = input;
   if (!next.isHubManaged || next.isCron) return null;
-  if (!needsMe(next, runners)) return null;
+  if (!waitsForMe(next, runners)) return null;
   // hub-subagents D10: a session another hub session started answers its parent, not the user — only a permission request reaches the user
   if (next.spawnedBy && next.status !== 'permission') return null;
-  if (!prev || needsMe(prev, runners)) return null;
+  if (!prev || waitsForMe(prev, runners)) return null;
   if (input.activeVisible === true) return null;
   if (input.activeVisible === undefined && input.windowVisibleAndFocused) return null;
   return { sessionId: next.id, ...notificationText(next, runners) };

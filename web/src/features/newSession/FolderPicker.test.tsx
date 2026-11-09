@@ -61,6 +61,21 @@ describe('FolderPicker', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Выбрать эту папку' }));
     expect(onChoose).toHaveBeenCalledWith('/home/me/work');
   });
+  it('with a root it does not leave it: no breadcrumbs above the root, «Вверх» stops at the root', async () => {
+    browse.mockImplementation(async (_runner, path) => ({
+      path: path ?? '/home/me',
+      parent: path === '/home/me/vault/work' ? '/home/me/vault' : '/home/me',
+      directories: [],
+    }));
+    render(<FolderPicker runnerId="r1" initialPath="/home/me/vault/work" root="/home/me/vault" onChoose={vi.fn()} onClose={vi.fn()} />);
+    expect(await screen.findByRole('button', { name: 'work' })).toBeInTheDocument();
+    const crumbs = screen.getByRole('navigation').querySelectorAll('button');
+    expect([...crumbs].map(b => b.textContent)).toEqual(['vault', 'work']);
+    fireEvent.click(screen.getByRole('button', { name: '↑ Вверх' }));
+    await waitFor(() => expect(browse).toHaveBeenLastCalledWith('r1', '/home/me/vault', false));
+    await screen.findByText('/home/me/vault');
+    expect(screen.getByRole('button', { name: '↑ Вверх' })).toBeDisabled();
+  });
   it('keeps the dialog open with a manual-entry fallback when the agent cannot browse', async () => {
     browse.mockRejectedValue(new Error('Agent does not support directory browsing'));
     render(<FolderPicker runnerId="old" initialPath="C:\\work" onChoose={vi.fn()} onClose={vi.fn()} />);

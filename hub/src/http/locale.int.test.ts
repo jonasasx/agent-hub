@@ -58,7 +58,7 @@ describe('profile language (integration)', () => {
   });
 
   it('the launch preferences are kept when the language changes', async () => {
-    const userId = (await t.tdb.pool.query<{ id: string }>(`SELECT id FROM users WHERE email = 'jonasasx@gmail.com'`)).rows[0]!.id;
+    const userId = (await t.tdb.pool.query<{ id: string }>(`SELECT id FROM users WHERE email = 'alice@example.com'`)).rows[0]!.id;
     await t.tdb.pool.query(`UPDATE user_preferences SET last_provider = 'codex' WHERE user_id = $1`, [userId]);
     await put('ja');
     const row = (await t.tdb.pool.query(`SELECT last_provider, locale FROM user_preferences WHERE user_id = $1`, [userId])).rows[0];

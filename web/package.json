@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -p tsconfig.json --noEmit && vite build && node scripts/check-sw.mjs",
+    "build": "tsc -p tsconfig.json --noEmit && vite build && node scripts/check-sw.mjs && node scripts/check-inline-scripts.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "preview": "vite preview"
   },
@@ -28,6 +28,7 @@
     "zustand": "^5.0.16"
   },
   "dependencies": {
+    "@elevenlabs/client": "^1.25.0",
     "pdfjs-dist": "^6.5.438"
   }
 }

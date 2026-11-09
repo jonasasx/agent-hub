@@ -1,5 +1,6 @@
 // Test data builders for component tests.
 import { vi } from 'vitest';
+import type { McpImportPreviewResponse } from '../api/mcpRegistryTypes';
 import type { RunnerView, SessionView } from '../api/types';
 import { useStore } from '../store';
 import { resetWindowMirror } from '../features/workspace/windowState';
@@ -18,7 +19,7 @@ export const runner = (over: Partial<RunnerView> = {}): RunnerView => ({
   claudeVersion: '2.1.296',
   protocolVersion: '1.0',
   incompatible: false,
-  vaultRoot: 'C:\\Users\\alice\\vault',
+  defaultDir: 'C:\\Users\\alice\\vault',
   homeDir: 'C:\\Users\\alice',
   ...over,
 });
@@ -26,7 +27,7 @@ export const runner = (over: Partial<RunnerView> = {}): RunnerView => ({
 export const RUNNERS = [
   runner(),
   runner({ id: 'hp', name: 'HP', online: false, lastSeenAt: '2026-10-25T06:41:00Z' }),
-  runner({ id: 'vm', name: 'ВМ .3', os: 'Ubuntu 24.04', vaultRoot: '/home/ubuntu/vault', homeDir: '/home/ubuntu' }),
+  runner({ id: 'vm', name: 'ВМ .3', os: 'Ubuntu 24.04', defaultDir: '/home/ubuntu/vault', homeDir: '/home/ubuntu' }),
 ];
 
 let n = 0;
@@ -66,6 +67,18 @@ export const session = (over: Partial<SessionView> = {}): SessionView => {
 };
 
 export type Route = (init?: RequestInit, url?: string) => { status: number; body?: unknown };
+
+/** Import preview of a machine's MCP configs (change `mcp-hub-only`); empty by default — nothing found on the machine. */
+export const mcpImportPreview = (over: Partial<McpImportPreviewResponse> = {}): McpImportPreviewResponse => ({
+  importId: 'c8d7b95d-6fd7-44be-9d44-4bcf4f0c89ad',
+  machineId: 'r-abc',
+  revision: 1,
+  servers: [],
+  secretsCaptured: 0,
+  warnings: [],
+  notices: [],
+  ...over,
+});
 
 /** Stubs fetch with routes matched by `METHOD path-prefix` or `path-prefix`; returns the recorded calls. */
 export function mockFetch(routes: Record<string, Route>) {

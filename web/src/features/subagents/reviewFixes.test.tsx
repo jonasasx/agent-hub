@@ -165,7 +165,7 @@ describe('subagents web review fixes', () => {
     expect(tab.getAttribute('style')).toContain('--g-personal');
   });
 
-  it('evicting a subagent tab: its title, no session card request, no «осталась в списке слева»', () => {
+  it('a ninth tab next to a subagent tab: nothing is evicted, no toast (spec tab-strip)', () => {
     const list = Array.from({ length: 8 }, () => session());
     const v = row({ sessionId: list[0]!.id, description: 'Phase 3 Dev' });
     useStore.setState({
@@ -173,18 +173,13 @@ describe('subagents web review fixes', () => {
       ws: emptyWorkspace([v.id, ...list.slice(0, 7).map(s => s.id)]),
       tabKinds: { [v.id]: 'subagent' },
       subagents: { [v.id]: v },
-      openedAt: { [v.id]: 1, ...Object.fromEntries(list.map((s, i) => [s.id, 100 + i])) },
     });
     useStore.getState().upsertSessions(list);
-    const ws = useStore.getState().ws;
-    useStore.setState({ ws: { ...ws, panes: { p1: { ...ws.panes.p1!, active: list[0]!.id } } } });
-    const calls = mockFetch({ '/api/': () => ({ status: 200, body: { events: [], before: null } }) });
+    mockFetch({ '/api/': () => ({ status: 200, body: { events: [], before: null } }) });
     act(() => openSession(list[7]!.id));
-    const t = useStore.getState().toasts.at(-1)!;
-    expect(t.title).toBe('Вкладка убрана из полосы');
-    expect(t.text).toContain('Phase 3 Dev');
-    expect(t.text).not.toContain('осталась в списке слева');
-    expect(calls.some(c => c.url === `/api/sessions/${v.id}`)).toBe(false);
+    expect(useStore.getState().ws.panes.p1!.tabs).toHaveLength(9);
+    expect(useStore.getState().ws.panes.p1!.tabs).toEqual(expect.arrayContaining([v.id, ...list.map(s => s.id)]));
+    expect(useStore.getState().toasts).toEqual([]);
   });
 
   it('no «Вы» over the user message in a session; «Лид» over the user lines of a subagent feed', async () => {

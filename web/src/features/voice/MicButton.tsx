@@ -3,6 +3,7 @@
  * Requirements (voice-input): Кнопка микрофона в композере; Одна запись на окно.
  */
 import { useT } from '../../i18n';
+import { useTalk } from './talk';
 import { startDictation, useVoice } from './voice';
 
 function MicIcon() {
@@ -21,7 +22,8 @@ export function MicButton({ sessionId, paneId, disabled }: { sessionId: string; 
   const starting = mine && active.phase === 'starting';
   // one microphone per window: while a dictation runs anywhere else, this button waits
   const other = !!active && !mine;
-  const title = other ? (active.paneId && active.paneId !== paneId ? t('chat.voice.otherPane') : t('chat.voice.otherBusy')) : t('chat.voice.dictation');
+  const talking = useTalk(x => !!x.active);
+  const title = other ? (active.paneId && active.paneId !== paneId ? t('chat.voice.otherPane') : t('chat.voice.otherBusy')) : talking ? t('chat.talk.otherPane') : t('chat.voice.dictation');
   return (
     <button
       type="button"
@@ -29,7 +31,7 @@ export function MicButton({ sessionId, paneId, disabled }: { sessionId: string; 
       aria-label={t('chat.voice.dictation')}
       title={title}
       aria-busy={starting || undefined}
-      disabled={disabled || other || starting}
+      disabled={disabled || other || starting || talking}
       onClick={() => void startDictation(sessionId, paneId)}
     >
       {starting ? <span className="spinner" aria-hidden="true" /> : <MicIcon />}

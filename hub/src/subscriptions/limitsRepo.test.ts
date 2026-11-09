@@ -56,6 +56,30 @@ describe('mergeWindows', () => {
     expect(mergeWindows(s, [w('five_hour', 99)], min(5), 'session')).toBeNull();
     expect(mergeWindows(s, [], NOW, 'session')).toBeNull();
   });
+
+  it('a window missing from an event with windows goes once its reset has passed (limits-stale-windows D1)', () => {
+    const s = [stored('five_hour', 40, min(600), { resetsAt: min(400).toISOString() }), stored('seven_day', 30, min(600))];
+    const out = mergeWindows(s, [w('seven_day', 41)], min(1), 'probe')!;
+    expect(out.map(x => [x.type, x.utilization])).toEqual([['seven_day', 41]]);
+  });
+
+  it('dropping a window alone is a change', () => {
+    const s = [stored('five_hour', 40, min(600), { resetsAt: min(400).toISOString() }), stored('seven_day', 30, min(1))];
+    const out = mergeWindows(s, [w('seven_day', 99)], min(5), 'session')!;
+    expect(out.map(x => [x.type, x.utilization])).toEqual([['seven_day', 30]]);
+  });
+
+  it('an event observed before a stored window drops nothing', () => {
+    const s = [stored('five_hour', 40, min(5), { resetsAt: min(400).toISOString() }), stored('seven_day', 30, min(5))];
+    expect(mergeWindows(s, [w('seven_day', 99)], min(10), 'session')).toBeNull();
+  });
+
+  it('a missing window with a future or unknown reset stays; an event without windows drops nothing (D2)', () => {
+    const s = [stored('seven_day_overage_included', 0, min(60)), stored('seven_day_opus', 10, min(60), { resetsAt: null }), stored('five_hour', 40, min(600), { resetsAt: min(400).toISOString() })];
+    expect(mergeWindows(s, [], NOW, 'session')).toBeNull();
+    const out = mergeWindows(s, [w('seven_day', 41)], NOW, 'probe')!;
+    expect(out.map(x => x.type)).toEqual(['seven_day_overage_included', 'seven_day_opus', 'seven_day']);
+  });
 });
 
 describe('toLimitsView', () => {

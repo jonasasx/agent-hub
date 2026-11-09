@@ -51,7 +51,7 @@ describe('session peers (integration)', () => {
 
   /** A hub session on `runner` that finished its first turn (waiting, process alive). */
   async function session(runner: string): Promise<S> {
-    const r = await api('POST', '/api/sessions', { runnerId: runner, cwd: VAULT, model: 'haiku', prompt: 'hi' });
+    const r = await api('POST', '/api/sessions', { runnerId: runner, model: 'haiku', prompt: 'hi' });
     expect(r.statusCode, r.body).toBe(201);
     const id = (r.json() as SessionView).id;
     const sid = (await t.tdb.pool.query(`SELECT claude_session_id FROM sessions WHERE id = $1`, [id])).rows[0].claude_session_id as string;
@@ -107,6 +107,7 @@ describe('session peers (integration)', () => {
     agent('hp', tok.hp!, '1.9');
     agent('old', tok.old!, '1.8');
     for (const a of agents.values()) await a.next('welcome');
+    await t.tdb.pool.query(`UPDATE runners SET default_dir = $1`, [VAULT]); // session-folder: sessions start in the default folder
     A = await session('x1');
     E = await session('x1');
     B = await session('hp');

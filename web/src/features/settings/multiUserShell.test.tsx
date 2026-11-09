@@ -7,7 +7,7 @@ import userEvent from '@testing-library/user-event';
 import type { MeResponse, RunnerView, SidebarResponse } from '../../api/types';
 import { App } from '../../App';
 import { useStore } from '../../store';
-import { mockFetch, resetStore, runner, session } from '../../test/factories';
+import { mcpImportPreview, mockFetch, resetStore, runner, session } from '../../test/factories';
 import { ClaudeLoginBanner } from '../chat/Chat';
 import { NewSessionModal } from '../newSession/NewSessionModal';
 
@@ -31,11 +31,14 @@ class FakeSocket {
 const me = (role: 'admin' | 'user'): MeResponse => ({
   user:
     role === 'admin'
-      ? { id: 'u-ivan', email: 'jonasasx@gmail.com', role, name: 'Иван Волынкин', provider: 'google' }
-      : { id: 'u-ks', email: 'bob@example.com', role, name: 'Борис Волынкина', provider: 'google' },
+      ? { id: 'u-ivan', email: 'alice@example.com', role, name: 'Алиса Смит', provider: 'google' }
+      : { id: 'u-ks', email: 'bob@example.com', role, name: 'Борис Смит', provider: 'google' },
   vapidPublicKey: null,
   voiceInput: false,
+  voiceTalk: false,
   locale: null,
+  accountUrl: null,
+  singleProvider: null,
 });
 const sidebar = (runners: RunnerView[]): SidebarResponse => ({ now: [], projects: [], runners });
 
@@ -73,13 +76,13 @@ describe('multi-user shell', () => {
     // scenario «Окно закрыто до конца установки»: the window is closed, the machine comes online later
     await user.click(screen.getByRole('button', { name: 'Отмена' }));
     await waitFor(() => expect(FakeSocket.last?.onmessage).toBeTruthy());
-    act(() => FakeSocket.last!.emit({ type: 'runner.status', runner: runner({ id: 'r-a', name: 'Ноутбук', state: 'active', vaultRoot: null }) }));
+    act(() => FakeSocket.last!.emit({ type: 'runner.status', runner: runner({ id: 'r-a', name: 'Ноутбук', state: 'active', defaultDir: null }) }));
     expect(await screen.findByRole('complementary', { name: 'Сессии и проекты' })).toBeInTheDocument();
     expect(screen.getByRole('list', { name: 'Машины' })).toHaveTextContent('Ноутбук');
   });
 
   it('scenario «Успешное подключение» from the welcome screen: the window keeps its code while the work area appears', async () => {
-    const pendingR = runner({ id: 'r-a', name: 'Моя машина', os: null, online: false, state: 'pending', homeDir: null, vaultRoot: null });
+    const pendingR = runner({ id: 'r-a', name: 'Моя машина', os: null, online: false, state: 'pending', homeDir: null, defaultDir: null });
     const calls = mockFetch({
       'GET /api/me': () => ({ status: 200, body: me('user') }),
       'GET /api/sidebar': () => ({ status: 200, body: sidebar([]) }),
@@ -95,6 +98,7 @@ describe('multi-user shell', () => {
           commands: { unix: 'curl -fsSL https://h/install.sh | bash -s -- AAA', windows: 'irm https://h/install.ps1 | iex; Install-AgentHub AAA' },
         },
       }),
+      'POST /api/mcp/registry/import/preview': () => ({ status: 200, body: mcpImportPreview({ machineId: 'r-a' }) }),
     });
     const user = userEvent.setup();
     render(<App />);
@@ -109,7 +113,7 @@ describe('multi-user shell', () => {
     expect(await screen.findByRole('complementary', { name: 'Сессии и проекты' })).toBeInTheDocument();
     expect(screen.getByText('Машина подключилась')).toBeInTheDocument();
     act(() => FakeSocket.last!.emit({ type: 'runner.enroll', runnerId: 'r-a', stage: 'ready', runner: active }));
-    await user.click(screen.getByRole('button', { name: 'Начать первую сессию' }));
+    await user.click(await screen.findByRole('button', { name: 'Начать первую сессию' }));
     expect(screen.getByRole('dialog', { name: 'Новая сессия' })).toBeInTheDocument();
     expect(screen.queryByLabelText('Каталог')).not.toBeInTheDocument();
     expect(calls.filter(c => c.url === '/api/runners' && c.method === 'POST')).toHaveLength(1);
@@ -165,7 +169,7 @@ describe('multi-user shell', () => {
     expect(window.location.pathname).toBe('/settings/subscriptions');
     expect(await screen.findByRole('heading', { level: 2, name: 'Подписки' })).toBeInTheDocument();
     const nav = screen.getByRole('navigation', { name: 'Разделы настроек' });
-    expect([...nav.querySelectorAll('button')].map(b => b.textContent)).toEqual(['Машины', 'Подписки', 'Расход', 'Безопасность', 'Язык']);
+    expect([...nav.querySelectorAll('button')].map(b => b.textContent)).toEqual(['Машины', 'Подписки', 'Расход', 'Безопасность', 'Уведомления', 'Язык']);
     await user.click(screen.getByRole('button', { name: 'Расход' }));
     expect(window.location.pathname).toBe('/settings/usage');
     expect(await screen.findByRole('heading', { level: 2, name: 'Расход' })).toBeInTheDocument();
@@ -246,15 +250,15 @@ describe('multi-user shell', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('«Начать первую сессию»: the machine chosen, its home directory, no vault root; a disabled machine is not offered', () => {
+  it('«Начать первую сессию»: the machine chosen, no folder field; a disabled machine is not offered', () => {
     useStore.setState({
       runners: [
         runner({ id: 'old', name: 'Старый', state: 'disabled', online: false }),
         runner({ id: 'x1', name: 'X1', online: true }),
-        runner({ id: 'r-a', name: 'Ноутбук', os: 'macOS 15.1', vaultRoot: null, homeDir: '/Users/bob', state: 'active' }),
+        runner({ id: 'r-a', name: 'Ноутбук', os: 'macOS 15.1', defaultDir: null, homeDir: '/Users/bob', state: 'active' }),
       ],
     });
-    render(<NewSessionModal preset={{ runnerId: 'r-a', cwd: '/Users/bob', first: true }} onClose={() => undefined} />);
+    render(<NewSessionModal preset={{ runnerId: 'r-a', first: true }} onClose={() => undefined} />);
     expect(screen.getByRole('radio', { name: /Ноутбук/ })).toHaveAttribute('aria-checked', 'true');
     expect(screen.queryByRole('radio', { name: /Старый/ })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Каталог')).not.toBeInTheDocument();

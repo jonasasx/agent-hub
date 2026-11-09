@@ -1,11 +1,11 @@
 # путь url — вложенные клоны кода, в .gitignore. Синхронизация: 40-automation/repos.sh sync
-10-work/01-scanner/repos/site-c git@git.example.com:alice/site-c.git
-10-work/01-scanner/repos/kd-pdm git@git.example.com:alice/kd-pdm.git
-10-work/01-scanner/repos/scanner-ansible git@git.example.com:development/scanner/scanner-ansible.git
-10-work/01-scanner/repos/scanner-docs git@git.example.com:development/scanner/scanner-docs.git
-10-work/01-scanner/repos/scanner-fleet git@git.example.com:development/scanner/scanner-fleet.git
-10-work/01-scanner/repos/scanner-kd git@git.example.com:development/scanner/scanner-kd.git
-10-work/01-scanner/repos/scanner-terraform git@git.example.com:development/scanner/scanner-terraform.git
+10-work/01-devices/repos/site-c git@git.example.com:alice/site-c.git
+10-work/01-devices/repos/kd-pdm git@git.example.com:alice/kd-pdm.git
+10-work/01-devices/repos/scanner-ansible git@git.example.com:development/scanner/scanner-ansible.git
+10-work/01-devices/repos/scanner-docs git@git.example.com:development/scanner/scanner-docs.git
+10-work/01-devices/repos/fleet-ops git@git.example.com:development/scanner/fleet-ops.git
+10-work/01-devices/repos/scanner-kd git@git.example.com:development/scanner/scanner-kd.git
+10-work/01-devices/repos/scanner-terraform git@git.example.com:development/scanner/scanner-terraform.git
 10-work/02-platform/repos/astra-certification git@git.example.com:iac/astra-certification.git
 10-work/02-platform/repos/acme-frontend git@git.example.com:development/platform/frontend/acme-frontend.git
 10-work/03-customers/repos/bom-calculator git@git.example.com:development/bom-calculator.git
@@ -13,8 +13,8 @@
 10-work/03-customers/repos/city-ehr-support git@git.example.com:alice/city-ehr-support.git
 10-work/04-support/repos/diag-ext git@git.example.com:iac/development/diag-ext.git
 10-work/04-support/repos/itsm-jira-mirror git@git.example.com:iac/development/itsm-jira-mirror.git
-10-work/04-support/repos/mm-sd-bot git@git.example.com:iac/development/mm-sd-bot.git
-10-work/04-support/repos/mm-sms-bridge git@git.example.com:iac/development/mm-sms-bridge.git
+10-work/04-support/repos/helpdesk-bot git@git.example.com:iac/development/helpdesk-bot.git
+10-work/04-support/repos/sms-bridge git@git.example.com:iac/development/sms-bridge.git
 10-work/04-support/repos/sd2 git@git.example.com:enterprise-systems/sd2.git
 10-work/05-infra/repos/ansible-iac git@git.example.com:iac/ansible-iac.git
 10-work/05-infra/repos/cloudai-iac git@git.example.com:iac/cloudai/cloudai-iac.git
@@ -45,6 +45,6 @@
 10-work/06-tools/repos/apps-platform-gitops git@git.example.com:apps-platform/platform-gitops.git
 11-side/repos/ansible https://git.example.com/iac/ansible.git
 20-personal/04-life/repos/fitness-core git@git.example.com:alice/fitness-core.git
-20-personal/05-pos/repos/cua git@github.com:jonasasx/cua.git
-20-personal/05-pos/repos/pdf-sign git@github.com:jonasasx/pdf-sign.git
-20-personal/05-pos/repos/agent-hub git@gitlab.com:jonasasx/agent-hub.git
+20-personal/05-pos/repos/cua git@github.com:alice/cua.git
+20-personal/05-pos/repos/pdf-sign git@github.com:alice/pdf-sign.git
+20-personal/05-pos/repos/agent-hub git@git.example.com:alice/agent-hub.git

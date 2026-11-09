@@ -5,8 +5,8 @@ import type { SessionProvider } from './types.js';
 
 /** Commands that name their provider in the payload (absent — claude, as every hub before 1.10 sends them). */
 const BY_PAYLOAD = new Set(['session.start', 'session.resume', 'session.fork']);
-/** Commands of a provider's machine sign-in: `provider` is required. */
-const LOGIN = new Set(['provider.login.start', 'provider.login.cancel', 'provider.logout']);
+/** Commands of a provider's machine sign-in and its subscription homes: `provider` is required. */
+const LOGIN = new Set(['provider.login.start', 'provider.login.cancel', 'provider.logout', 'provider.credentials.sync']);
 
 export class ProviderRouter {
   private readonly byId = new Map<Provider, SessionProvider>();
@@ -50,6 +50,8 @@ export class ProviderRouter {
   }
 
   handle(m: HubMessage): Promise<unknown> {
+    // provider-parity R3: a machine without the Codex CLI has no Codex homes to remove
+    if (m.type === 'provider.credentials.sync' && !this.byId.has(m.payload.provider)) return Promise.resolve({ removed: 0, deferred: 0 });
     let p: SessionProvider;
     try {
       p = this.route(m);

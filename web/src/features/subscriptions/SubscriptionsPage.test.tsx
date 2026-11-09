@@ -56,7 +56,7 @@ describe('SubscriptionsPage / UsagePage («Настройки»)', () => {
     expect(within(retired).getByRole('button', { name: 'Вернуть' })).toBeInTheDocument();
   });
 
-  it('Добавление подписки: the token goes only in the POST body, the input is a password without autocomplete and is empty after the submit; nothing of it stays in the DOM or the store', async () => {
+  it('Добавление подписки: the token goes only in the POST body, the input is a password the browser does not autofill and is empty after the submit; nothing of it stays in the DOM or the store', async () => {
     const { calls, setHub } = show(subsResponse(), {
       'POST /api/subscriptions': () => {
         setHub(subsResponse({ subscriptions: [...subsResponse().subscriptions, subView({ id: '00000000-0000-4000-a000-0000000000cc', name: 'Третья', position: 2, tokenHint: '9z8y' })] }));
@@ -65,7 +65,8 @@ describe('SubscriptionsPage / UsagePage («Настройки»)', () => {
     });
     const token = screen.getByLabelText('Токен') as HTMLInputElement;
     expect(token).toHaveAttribute('type', 'password');
-    expect(token).toHaveAttribute('autocomplete', 'off');
+    expect(token).toHaveAttribute('autocomplete', 'new-password');
+    expect(screen.getByLabelText('Имя')).toHaveAttribute('autocomplete', 'off');
     await userEvent.type(screen.getByLabelText('Имя'), 'Третья');
     await userEvent.type(token, TOKEN);
     await userEvent.click(screen.getByRole('button', { name: 'Добавить' }));

@@ -4,7 +4,7 @@ import { clock } from '../subscriptions/model';
 import { subView } from '../subscriptions/fixtures';
 import { runner } from '../../test/factories';
 import { NOW, isoAt, limView, win } from './fixtures';
-import { beforeQuiet, effectivePct, heldOverQuiet, outdatedMachines, refreshLeft, relIn, rowModel, topWindow, windowLevel } from './limitsModel';
+import { beforeQuiet, effectivePct, heldOverQuiet, noFiveHour, outdatedMachines, refreshLeft, relIn, rowModel, topWindow, windowLevel } from './limitsModel';
 import { reasonText, windowText } from './limitTexts';
 
 const hm = (iso: string) => clock(iso, new Date(NOW));
@@ -57,6 +57,19 @@ describe('the row window (Requirement: Строка подписки)', () => {
     expect(r.text.startsWith('seven_day_future · 85%')).toBe(true);
     expect(windowText('seven_day_future')).toEqual({ short: 'seven_day_future', name: 'seven_day_future', desc: null });
     expect(windowText('toString').desc).toBeNull();
+  });
+  it('the Fable weekly window is known: «7 дн Fable» in the row, «7 дней · Fable» in the card', () => {
+    const r = rowModel(subView(), limView({ windows: [win({ type: 'seven_day_overage_included', utilization: 85 })] }), NOW);
+    expect(r.text.startsWith('7 дн Fable · 85%')).toBe(true);
+    expect(windowText('seven_day_overage_included').name).toBe('7 дней · Fable');
+    expect(windowText('seven_day_overage_included').desc).toMatch(/только в ответ на запросы к Fable/);
+  });
+  it('no 5-hour window: only with a weekly window and without five_hour (limits-stale-windows D4)', () => {
+    expect(noFiveHour(limView({ windows: [win({ type: 'seven_day' })] }))).toBe(true);
+    expect(noFiveHour(limView({ windows: [win({ type: 'seven_day' }), win({ type: 'seven_day_overage_included' })] }))).toBe(true);
+    expect(noFiveHour(limView())).toBe(false);
+    expect(noFiveHour(limView({ windows: [] }))).toBe(false);
+    expect(noFiveHour(limView({ windows: [win({ type: 'seven_day_opus' })] }))).toBe(false);
   });
 });
 

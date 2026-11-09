@@ -11,6 +11,7 @@ import { fixtureEvents } from './fixtures';
 import { ApiError } from '../../api/client';
 import type { Recording } from '../voice/recorder';
 import { resetVoice, useVoice, voiceDeps } from '../voice/voice';
+import { resetTalk, talkDeps, useTalk, type TalkCallbacks } from '../voice/talk';
 import { chooseLocale, initLocale } from '../../i18n';
 
 function show(s: SessionView, events: HubEvent[] = fixtureEvents()) {
@@ -406,7 +407,18 @@ describe('Chat: dictation in the composer', () => {
 
   const signIn = (voiceInput: boolean) =>
     useStore.setState({
-      auth: { kind: 'signed_in', me: { user: { id: 'u1', email: 'alice@example.com', role: 'admin', name: null, provider: 'google' }, vapidPublicKey: null, voiceInput, locale: null } },
+      auth: {
+        kind: 'signed_in',
+        me: {
+          user: { id: 'u1', email: 'alice@example.com', role: 'admin', name: null, provider: 'google' },
+          vapidPublicKey: null,
+          voiceInput,
+          voiceTalk: false,
+          locale: null,
+          accountUrl: null,
+          singleProvider: null,
+        },
+      },
     });
   const flush = () =>
     act(async () => {
@@ -830,5 +842,79 @@ describe('Chat: dictation in the composer', () => {
     await act(async () => answers[0]!.reject(new ApiError(502, 'voice_upstream_error')));
     await flush();
     expect(screen.getByRole('button', { name: 'Повторить' })).toHaveFocus();
+  });
+});
+
+// Requirements (voice-conversation): Кнопка разговора; Полоса разговора; Начало разговора.
+describe('Chat: voice conversation in the composer', () => {
+  const realDeps = { ...talkDeps };
+  let cb: TalkCallbacks | undefined;
+  const end = vi.fn(async () => undefined);
+
+  const signIn = (voiceTalk: boolean) =>
+    useStore.setState({
+      auth: {
+        kind: 'signed_in',
+        me: {
+          user: { id: 'u1', email: 'alice@example.com', role: 'admin', name: null, provider: 'google' },
+          vapidPublicKey: null,
+          voiceInput: true,
+          voiceTalk,
+          locale: null,
+          accountUrl: null,
+          singleProvider: null,
+        },
+      },
+    });
+
+  beforeEach(() => {
+    resetStore();
+    resetVoice();
+    resetTalk();
+    cb = undefined;
+    end.mockClear();
+    talkDeps.checkMic = vi.fn(async () => undefined);
+    talkDeps.fetchTalk = vi.fn(async () => ({ signedUrl: 'wss://el/x', token: 'tok' }));
+    talkDeps.connect = vi.fn(async (_u: string, _t: string, c: TalkCallbacks) => {
+      cb = c;
+      return { endSession: end, sendUserMessage: vi.fn((_text: string) => undefined) };
+    });
+  });
+  afterEach(() => {
+    resetTalk();
+    Object.assign(talkDeps, realDeps);
+  });
+
+  it('no «Разговор» without the agent; with it the bar replaces the field, «Диктовка» is gone, «Завершить» brings the field back', async () => {
+    signIn(false);
+    const { unmount } = show(session(), []);
+    expect(screen.queryByRole('button', { name: 'Разговор' })).toBeNull();
+    unmount();
+    signIn(true);
+    show(session(), []);
+    await userEvent.click(screen.getByRole('button', { name: 'Разговор' }));
+    const bar = await screen.findByRole('group', { name: 'Разговор' });
+    expect(within(bar).getByText('Подключаюсь…')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Сообщение' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Диктовка' })).toBeNull();
+    act(() => cb!.onConnect());
+    expect(within(bar).getByText('Слушаю')).toBeInTheDocument();
+    act(() => cb!.onMessage({ message: 'какая погода', role: 'user' }));
+    expect(within(bar).getByText('Думаю…')).toBeInTheDocument();
+    expect(within(bar).getByText('какая погода')).toBeInTheDocument();
+    await userEvent.click(within(bar).getByRole('button', { name: 'Завершить' }));
+    expect(end).toHaveBeenCalledTimes(1);
+    expect(useTalk.getState().active).toBeNull();
+    expect(screen.getByRole('textbox', { name: 'Сообщение' })).toBeInTheDocument();
+  });
+
+  it('the composer going away ends the conversation', async () => {
+    signIn(true);
+    const { unmount } = show(session(), []);
+    await userEvent.click(screen.getByRole('button', { name: 'Разговор' }));
+    await screen.findByRole('group', { name: 'Разговор' });
+    unmount();
+    expect(useTalk.getState().active).toBeNull();
+    expect(end).toHaveBeenCalledTimes(1);
   });
 });

@@ -12,7 +12,7 @@ import { clock } from '../subscriptions/model';
 import { closeLimitCard, refreshLimits } from './actions';
 import type { LimitOverageView, SubscriptionLimitsView } from '../../api/types';
 import { exhaustionRules, heldText, isKnownWindow, overageDesc, quietText, reasonAdvice, reasonText, refreshHint, unknownWindowDesc, windowText } from './limitTexts';
-import { beforeQuiet, fmtPct, heldOverQuiet, isReset, lastSource, limitedUntil, levelLong, outdatedMachines, refreshLeft, relIn, sourceLabel, windowLevel } from './limitsModel';
+import { beforeQuiet, fmtPct, heldOverQuiet, isReset, lastSource, limitedUntil, levelLong, noFiveHour, outdatedMachines, refreshLeft, relIn, sourceLabel, windowLevel } from './limitsModel';
 import { LevelBadge, LimitBar, useHubNow } from './parts';
 
 const CARD_W = 380;
@@ -200,6 +200,7 @@ function Card({ id, from }: { id: string; from: 'row' | 'chip' }) {
             const hold = lim.state === 'ok' && heldOverQuiet(w, lim, now);
             return <WindowBlock key={w.type} w={w} now={now} neutral={stale || !!reason} quietAt={beforeQuiet(w, lim) ? lim.quietAt : null} held={hold} />;
           })}
+          {lim && noFiveHour(lim) && <p className="lw-desc">{t('limits.card.noFiveHour')}</p>}
           {lim?.overage && (
             <div className="lc-over">
               <b>{t('limits.card.overage')}</b> {overageText(lim.overage)} {overageDesc()}

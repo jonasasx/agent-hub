@@ -139,7 +139,8 @@ describe('Sidebar', () => {
       '/api/projects/none/sessions?offset=205&limit=200&cron=0',
       '/api/projects/none/sessions?offset=405&limit=200&cron=0',
     ]);
-    expect(screen.queryByRole('button', { name: /^ещё/ })).not.toBeInTheDocument();
+    // by text, not by role: a role query computes the accessible name and visibility of each of the 412 rows — seconds in jsdom
+    expect(screen.queryByText(/^ещё \d+$/)).not.toBeInTheDocument();
   });
 
   it('Ещё N when the hub refuses: a toast, the button stays, no unhandled rejection', async () => {

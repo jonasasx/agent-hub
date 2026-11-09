@@ -8,7 +8,7 @@ describe('hub CLI (Postgres)', () => {
   let t: TestDb;
   beforeAll(async () => {
     t = await createTestDb();
-    const ivan = await upsertUser(t.db, 'jonasasx@gmail.com');
+    const ivan = await upsertUser(t.db, 'alice@example.com');
     const bob = await upsertUser(t.db, 'bob@example.com');
     await addRunner(t.db, { id: 'vm', userId: ivan.id, name: 'ВМ .3', os: 'Ubuntu 24.04' });
     await issueRunnerToken(t.db, 'vm');
@@ -19,7 +19,7 @@ describe('hub CLI (Postgres)', () => {
 
   const run = async (argv: string[]) => {
     const out: string[] = [];
-    const code = await runCli(argv, t.db, s => out.push(s), { OIDC_ALLOWED_EMAILS: 'jonasasx@gmail.com' });
+    const code = await runCli(argv, t.db, s => out.push(s), { OIDC_ALLOWED_EMAILS: 'alice@example.com' });
     return { code, out };
   };
 
@@ -34,7 +34,7 @@ describe('hub CLI (Postgres)', () => {
   it('runner:list shows the owner and the state, without token values', async () => {
     const r = await run(['runner:list']);
     const text = r.out.join('\n');
-    expect(text).toMatch(/^vm\tВМ \.3\tjonasasx@gmail\.com\tactive\tmachine\t-\toffline/m);
+    expect(text).toMatch(/^vm\tВМ \.3\talice@example\.com\tactive\tmachine\t-\toffline/m);
     expect(text).toMatch(/^r-bob0001\tНоутбук\tbob@example\.com\tactive/m);
     expect(text).toContain('\ttoken');
   });

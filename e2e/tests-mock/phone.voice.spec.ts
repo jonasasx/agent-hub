@@ -27,14 +27,15 @@ const shot = async (page: Page, name: string) => {
   if (process.env.SHOTS_DIR) await page.screenshot({ path: `${process.env.SHOTS_DIR}/voice-phone-${name}.png` });
 };
 
-test('Размер цели на телефоне: «Диктовка» ≥ 44×44 in the one-row composer; the bar takes the whole width; «Готово» → the text, nothing sent', async ({ page }) => {
+test('Размер цели на телефоне: «Диктовка» ≥ 44×44 in the capsule composer; the bar takes the whole width; «Готово» → the text, nothing sent', async ({ page }) => {
   const hub = await open(page, 'GUI-прототип Agent Hub');
   const mic = page.getByRole('button', { name: 'Диктовка' });
   const box = (await mic.boundingBox())!;
   expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(44);
-  // one row: clip, mic, field and send on one line
+  // the capsule: the field on the full width, the mic in the tool row under it
   const fieldBox = (await field(page).boundingBox())!;
-  expect(Math.abs(box.y + box.height - (fieldBox.y + fieldBox.height))).toBeLessThanOrEqual(4);
+  expect(box.y).toBeGreaterThanOrEqual(fieldBox.y + fieldBox.height - 4);
+  expect(fieldBox.width).toBeGreaterThanOrEqual(300);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
   await shot(page, 'button');
   const bar = await record(page, composer(page));
@@ -136,7 +137,8 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(field(page)).toHaveValue('');
     // the hint is under the composer: below the field, the clip and the send button (QA: it was above them)
     const note = (await page.locator('.voice-note').boundingBox())!;
-    for (const el of [field(page), page.getByRole('button', { name: 'Отправить' }), page.getByRole('button', { name: 'Прикрепить изображение' })]) {
+    // and under the capsule itself, clear of its border and rounding (task 6.7: it sat inside, on the 22px corner)
+    for (const el of [field(page), page.getByRole('button', { name: 'Отправить' }), page.getByRole('button', { name: 'Прикрепить изображение' }), page.locator('.composer-inner')]) {
       const b = (await el.boundingBox())!;
       expect(note.y).toBeGreaterThanOrEqual(b.y + b.height);
     }

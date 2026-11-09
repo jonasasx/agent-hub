@@ -259,6 +259,7 @@ export const ChatItemView = memo(function ChatItemView({
           {who && <span className="who">{who}</span>}
           {item.text && <div className="bubble user-text">{item.text}</div>}
           <ImageGroup pics={item.images.map(picOf)} className="user-imgs" />
+          {item.voice && <span className="voice-mark">{t('chat.talk.voiceMark')}</span>}
         </div>
       );
     case 'assistant':

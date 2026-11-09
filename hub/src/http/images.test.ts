@@ -5,7 +5,7 @@ import { envelope } from '@agent-hub/shared';
 import { PUBLIC_URL, autoReply, connectFakeAgent, startTestHub, waitFor, type FakeAgent, type TestHub } from '../test/harness.js';
 import type { MemoryStore } from '../storage/objectStore.js';
 import { png } from '../test/transcriptFixtures.js';
-import { contentSecurityPolicy, cspProvider, inlineScriptHashes } from './csp.js';
+import { contentSecurityPolicy, cspProvider, inlineScriptHashes, PAGE_THEME_HASH } from './csp.js';
 import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -263,7 +263,7 @@ describe('images (integration)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'agenthub-csp-'));
     try {
       const policy = cspProvider(['https://hub.internal.example.com'], dir);
-      expect(policy()).toContain("script-src 'self';");
+      expect(policy()).toContain(`script-src 'self' ${PAGE_THEME_HASH};`);
       writeFileSync(join(dir, 'index.html'), '<html><script>var a=1</script></html>');
       const h1 = inlineScriptHashes(dir)[0]!;
       expect(policy()).toContain(h1);

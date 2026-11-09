@@ -12,6 +12,7 @@ import type {
   EnrollCodeResponse,
   InvitesResponse,
   LogoutAllResponse,
+  LogoutResponse,
   RunnerDetail,
   RunnerView,
   RunnersResponse,
@@ -27,6 +28,8 @@ import type {
   ModelOption,
   PatchSessionRequest,
   PatchSubscriptionRequest,
+  PushDeviceView,
+  PushSubscriptionsResponse,
   PermissionDecision,
   PermissionView,
   ProjectSessionsResponse,
@@ -36,6 +39,7 @@ import type {
   SubagentView,
   SubagentsResponse,
   TranscribeResponse,
+  VoiceTalkResponse,
   SubscriptionUsageResponse,
   SubscriptionView,
   SubscriptionsResponse,
@@ -64,6 +68,8 @@ import type {
   McpRegistryResponse,
   McpRegistryServerUpdate,
   McpRegistryStatus,
+  McpRegistryOAuthCompleteRequest,
+  McpRegistryOAuthCompleteResponse,
   McpRegistryOAuthStartRequest,
   McpRegistryOAuthStartResponse,
   McpRegistryOAuthRevokeRequest,
@@ -72,8 +78,9 @@ import type {
   McpRegistryOAuthValidateResponse,
   McpRegistryOAuthConnectRequest,
   McpRegistryOAuthConnectResponse,
-  McpRegistryMachineToggleRequest,
-  McpRegistryMachineToggleResponse,
+  McpRegistryMachineOverrideRequest,
+  McpRegistryMachineOverrideResponse,
+  McpImportCommitResponse,
   McpServerConfig,
 } from './mcpRegistryTypes';
 import { currentLocale } from '../i18n';
@@ -169,33 +176,30 @@ export interface HandoffDraft {
 export const api = {
   answerProjectSuggestion: (id: string, answer: import('@agent-hub/shared').ProjectSuggestionAnswer) => request<{ ok: true }>(`/api/sessions/${enc(id)}/project-suggestion`, json('POST', answer)),
   me: () => request<MeResponse>('/api/me'),
+  /** GET /api/voice/talk — the ElevenLabs conversation link and the hub's token (change voice-conversation, D1). */
+  voiceTalk: (sessionId: string) => request<VoiceTalkResponse>(`/api/voice/talk?session=${enc(sessionId)}`),
   setLocale: (locale: Locale | null) => request<void>('/api/preferences/locale', json('PUT', { locale })),
   sidebar: (cron = false) => request<SidebarResponse>(`/api/sidebar?cron=${cron ? 1 : 0}`),
-  logout: () => request<void>('/auth/logout', { method: 'POST' }),
+  /** keycloak-auth D7: `redirect` — the provider's end_session_endpoint, or `/`. */
+  logout: () => request<LogoutResponse>('/auth/logout', { method: 'POST' }),
   projectSessions: (projectId: string | null, offset: number, limit: number, cron: boolean) =>
     request<ProjectSessionsResponse>(`/api/projects/${enc(projectId ?? 'none')}/sessions?offset=${offset}&limit=${limit}&cron=${cron ? 1 : 0}`),
   models: () => request<ModelOption[]>('/api/models'),
   catalogProjects: (sort: 'recent' | 'name' = 'recent', includeArchived = false) => request<UserProjectView[]>(`/api/catalog/projects?sort=${sort}${includeArchived ? '&includeArchived=1' : ''}`),
   launchPreferences: () => request<{ runnerId: string | null; provider: Provider | null }>('/api/preferences/launch'),
-  createCatalogProject: (body: { name: string; description?: string; remote?: string | null; runnerId?: string; path?: string; colorKey?: UserProjectView['colorKey'] }) =>
+  createCatalogProject: (body: { name: string; description?: string; remote?: string | null; folder?: string | null; colorKey?: UserProjectView['colorKey'] }) =>
     request<UserProjectView>('/api/catalog/projects', json('POST', body)),
-  patchCatalogProject: (
-    id: string,
-    body: { name?: string; colorKey?: UserProjectView['colorKey']; description?: string; remote?: string | null; bindings?: Array<{ runnerId: string; path: string | null }> },
-  ) => request<{ ok: true }>(`/api/catalog/projects/${enc(id)}`, json('PATCH', body)),
+  patchCatalogProject: (id: string, body: { name?: string; colorKey?: UserProjectView['colorKey']; description?: string; remote?: string | null; folder?: string | null }) =>
+    request<{ ok: true }>(`/api/catalog/projects/${enc(id)}`, json('PATCH', body)),
   deleteCatalogProject: (id: string) => request<{ ok: true }>(`/api/catalog/projects/${enc(id)}`, { method: 'DELETE' }),
   patchProjectGroupColor: (id: string, colorKey: UserProjectView['colorKey']) => request<{ ok: true }>(`/api/projects/${enc(id)}/color`, json('PATCH', { colorKey })),
   hiddenProjectGroups: () => request<import('./types').ProjectRef[]>('/api/projects/hidden'),
   hideProjectGroup: (id: string, hidden: boolean) => request<{ ok: true }>(`/api/projects/${enc(id)}/hidden`, { method: hidden ? 'PUT' : 'DELETE' }),
   deleteProjectGroup: (id: string) => request<{ ok: true }>(`/api/projects/${enc(id)}/hidden`, { method: 'PUT' }),
-  unbindCatalogProject: (id: string, runnerId: string) => request<{ ok: true }>(`/api/catalog/projects/${enc(id)}/bindings/${enc(runnerId)}`, { method: 'DELETE' }),
-  bindCatalogProject: (id: string, runnerId: string, path: string) => request<{ ok: true }>(`/api/catalog/projects/${enc(id)}/bindings/${enc(runnerId)}`, json('PUT', { path })),
   runnerDirectories: (runnerId: string, path?: string, showHidden = false) =>
     request<{ path: string; parent: string | null; directories: { name: string; path: string }[] }>(
       `/api/runners/${enc(runnerId)}/directories?showHidden=${showHidden}${path ? `&path=${enc(path)}` : ''}`,
     ),
-  resolveCatalogProject: (id: string, runnerId: string) =>
-    request<{ status: 'resolved' | 'needs_binding' | 'unavailable'; path?: string }>(`/api/catalog/projects/${enc(id)}/resolve?runnerId=${enc(runnerId)}`),
   /** Ctrl+K (D10): titles, projects and the text of the replies; the body is parsed by features/search/snippet.ts. */
   search: (q: string, cron: boolean, limit = 12, signal?: AbortSignal) => request<unknown>(`/api/search?q=${enc(q)}&limit=${limit}&cron=${cron ? 1 : 0}`, { signal }),
   session: (id: string) => request<SessionView>(`/api/sessions/${enc(id)}`),
@@ -212,7 +216,7 @@ export const api = {
   subagentEvents: (id: string, before: string | null, limit = 200) => request<EventsPage>(`/api/subagents/${enc(id)}/events?limit=${limit}${before ? `&before=${enc(before)}` : ''}`),
   createSession: (body: CreateSessionRequest & { attachments?: AttachmentRef[] }) => request<SessionView>('/api/sessions', json('POST', body)),
   /** M4b (D10, D14): a full copy on the same machine, or a handoff with an edited prompt on a chosen runner. */
-  fork: (id: string, body: { mode: 'copy' } | { mode: 'handoff'; prompt: string; runnerId: string; cwd: string; draftId?: string; subscriptionId?: string | null }) =>
+  fork: (id: string, body: { mode: 'copy' } | { mode: 'handoff'; prompt: string; runnerId: string; draftId?: string; subscriptionId?: string | null }) =>
     request<SessionView>(`/api/sessions/${enc(id)}/fork`, json('POST', body)),
   /** The hub writes the handoff prompt (202); the result comes as WS `handoff.draft` and from GET /api/handoff-drafts/:id. */
   createHandoffDraft: (id: string, subscriptionId?: string) => request<HandoffDraft>(`/api/sessions/${enc(id)}/handoff-drafts`, json('POST', subscriptionId ? { subscriptionId } : {})),
@@ -240,6 +244,8 @@ export const api = {
   /** «Подключить машину»: a pending runner and its enrollment code (409 name_taken). */
   createRunner: (body: CreateRunnerRequest) => request<EnrollCodeResponse>('/api/runners', json('POST', body)),
   renameRunner: (id: string, name: string) => request<RunnerView>(`/api/runners/${enc(id)}`, json('PATCH', { name })),
+  /** session-folder D3: the default folder of the machine (409 runner_offline, 400 invalid_path, 422 cwd_not_found). */
+  setDefaultDir: (id: string, defaultDir: string) => request<RunnerView>(`/api/runners/${enc(id)}`, json('PATCH', { defaultDir })),
   /** «Новый код» and «Переподключить»: the previous unused code is revoked. */
   enrollCode: (id: string) => request<EnrollCodeResponse>(`/api/runners/${enc(id)}/enroll-code`, json('POST', {})),
   disableRunner: (id: string) => request<RunnerDetail>(`/api/runners/${enc(id)}/disable`, json('POST', {})),
@@ -254,6 +260,12 @@ export const api = {
   createInvite: (body: CreateInviteRequest) => request<CreateInviteResponse>('/api/admin/invites', json('POST', body)),
   revokeInvite: (id: string) => request<void>(`/api/admin/invites/${enc(id)}`, { method: 'DELETE' }),
   security: () => request<SecurityResponse>('/api/security'),
+  // web-push-notifications (design D7): the list has no endpoint and keys, «this device» is found by endpointHash
+  pushDevices: () => request<PushSubscriptionsResponse>('/api/push/subscriptions'),
+  subscribePush: (body: { endpoint: string; keys: { p256dh: string; auth: string } }) => request<PushDeviceView>('/api/push/subscriptions', json('POST', body)),
+  deletePushDevice: (id: string) => request<void>(`/api/push/subscriptions/${enc(id)}`, { method: 'DELETE' }),
+  deletePushByHash: (endpointHash: string) => request<void>(`/api/push/subscriptions?endpointHash=${enc(endpointHash)}`, { method: 'DELETE' }),
+  testPush: (endpointHash: string) => request<void>('/api/push/test', json('POST', { endpointHash })),
   logoutAll: () => request<LogoutAllResponse>('/api/auth/logout-all', json('POST', {})),
 
   // claude-subscriptions (design P8). The token goes to the hub only in the bodies of POST and PUT …/token; no answer carries it.
@@ -295,13 +307,15 @@ export const api = {
   mcpRegistryDeleteProjectOverride: (id: string, projectId: string, revision: number) =>
     request<McpProjectOverride>(`/api/mcp/registry/servers/${enc(id)}/projects/${enc(projectId)}?revision=${revision}`, { method: 'DELETE' }),
   mcpRegistryImportPreview: (body: McpImportPreviewRequest) => request<McpImportPreviewResponse>('/api/mcp/registry/import/preview', json('POST', body)),
-  mcpRegistryImportCommit: (body: McpRegistryImportCommitRequest) => request<{ revision: number }>('/api/mcp/registry/import/commit', json('POST', body)),
+  mcpRegistryImportCommit: (body: McpRegistryImportCommitRequest) => request<McpImportCommitResponse>('/api/mcp/registry/import/commit', json('POST', body)),
   mcpRegistryStatus: () => request<McpRegistryStatus>('/api/mcp/registry/status'),
+  mcpRegistryOAuthComplete: (id: string, body: McpRegistryOAuthCompleteRequest) => request<McpRegistryOAuthCompleteResponse>(`/api/mcp/registry/servers/${enc(id)}/oauth/complete`, json('POST', body)),
   mcpRegistryOAuthStart: (id: string, body: McpRegistryOAuthStartRequest) => request<McpRegistryOAuthStartResponse>(`/api/mcp/registry/servers/${enc(id)}/oauth/start`, json('POST', body)),
   mcpRegistryOAuthRevoke: (id: string, body: McpRegistryOAuthRevokeRequest) => request<McpRegistryOAuthRevokeResponse>(`/api/mcp/registry/servers/${enc(id)}/oauth/revoke`, json('POST', body)),
   mcpRegistryOAuthValidate: (id: string, body: McpRegistryOAuthValidateRequest) => request<McpRegistryOAuthValidateResponse>(`/api/mcp/registry/servers/${enc(id)}/oauth/validate`, json('POST', body)),
   mcpRegistryOAuthConnect: (id: string, body: McpRegistryOAuthConnectRequest) => request<McpRegistryOAuthConnectResponse>(`/api/mcp/registry/servers/${enc(id)}/oauth/connect`, json('POST', body)),
-  mcpRegistryMachineToggle: (machineId: string, body: McpRegistryMachineToggleRequest) => request<McpRegistryMachineToggleResponse>(`/api/mcp/registry/machines/${enc(machineId)}`, json('PUT', body)),
+  mcpRegistryMachineOverride: (serverId: string, machineId: string, body: McpRegistryMachineOverrideRequest) =>
+    request<McpRegistryMachineOverrideResponse>(`/api/mcp/registry/servers/${enc(serverId)}/machines/${enc(machineId)}`, json('PUT', body)),
 };
 
 /** Sends the browser to the login (the hub picks the provider) and back to the current address. */

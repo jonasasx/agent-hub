@@ -19,7 +19,7 @@ export const mcpServer = (over: Partial<McpServerView> = {}): McpServerView => (
 /** One server of every status (the panel scenarios of the spec). */
 export const ALL_STATUSES: McpServerView[] = [
   mcpServer(),
-  mcpServer({ name: 'scanner-fleet', status: 'failed', error: 'MCP error -32000: Connection closed: ECONNREFUSED 127.0.0.1:8770', serverInfo: undefined, toolCount: 0, scope: 'project' }),
+  mcpServer({ name: 'fleet-ops', status: 'failed', error: 'MCP error -32000: Connection closed: ECONNREFUSED 127.0.0.1:8770', serverInfo: undefined, toolCount: 0, scope: 'project' }),
   mcpServer({ name: 'notion', status: 'needs-auth', transport: 'http', target: 'https://mcp.notion.com/mcp', serverInfo: undefined, toolCount: 0, canAuth: true }),
   mcpServer({ name: 'krisp', status: 'pending', transport: 'http', target: 'https://mcp.krisp.ai/mcp', serverInfo: undefined, toolCount: 0, canAuth: true }),
   mcpServer({ name: 'playwright', status: 'disabled', target: 'npx @playwright/mcp@latest', serverInfo: undefined, toolCount: 0, scope: 'local' }),

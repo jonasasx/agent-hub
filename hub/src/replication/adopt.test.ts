@@ -67,7 +67,7 @@ describe('taking a Drive import over (Postgres)', () => {
 
   beforeAll(async () => {
     t = await createTestDb();
-    const uid = (await t.pool.query<{ id: string }>(`INSERT INTO users (email) VALUES ('jonasasx@gmail.com') RETURNING id`)).rows[0]!.id;
+    const uid = (await t.pool.query<{ id: string }>(`INSERT INTO users (email) VALUES ('alice@example.com') RETURNING id`)).rows[0]!.id;
     await t.pool.query(`INSERT INTO runners (id, user_id, name, hostname, home_dir) VALUES ('hp', $1, 'HP', 'HP-Elitebook', 'C:\\Users\\alice')`, [uid]);
     repl = new Replication({
       db: t.db,

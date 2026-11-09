@@ -1,6 +1,6 @@
-// Component tests of the file viewer. Requirements (file-explorer): Просмотрщик; Крошки и действия над файлом; Машина не в сети и ошибки.
+// Component tests of the file viewer. Requirements (file-explorer): Просмотрщик; Крошки и действия над файлом; Машина не в сети и ошибки; Скачивание файла.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useStore } from '../../store';
 import { resetStore, runner } from '../../test/factories';
@@ -72,12 +72,45 @@ describe('FileViewer', () => {
     expect(screen.getByRole('button', { name: 'Крупнее' })).toBeInTheDocument();
   });
 
-  it('the binary class: «Нельзя показать» with the size and no download', async () => {
+  it('the binary class: «Нельзя показать» with the size and «Скачать» in the card and in the header', async () => {
+    setRunner({ protocolVersion: '1.16' });
     stubFs({ list: {}, files: { '/home/u/a.zip': { status: 415, json: { error: 'unsupported', kind: 'binary', size: 1048576, mime: 'application/zip' } } } });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      clicked.push({ href: this.getAttribute('href'), download: this.download });
+    });
+    const clicked: Array<{ href: string | null; download: string }> = [];
     render(<FileViewer tabId={tab('/home/u/a.zip')} />);
     expect(await screen.findByText(/Нельзя показать/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /скачать/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    const buttons = screen.getAllByRole('button', { name: 'Скачать a.zip' });
+    expect(buttons).toHaveLength(2);
+    await userEvent.click(buttons[1]!);
+    await waitFor(() => expect(clicked).toHaveLength(1));
+    expect(clicked[0]!.href).toBe('/api/runners/vm/fs/download?path=%2Fhome%2Fu%2Fa.zip');
+    expect(clicked[0]!.download).toBe('a.zip');
+    expect(document.querySelector('a[download]')).toBeNull();
+    click.mockRestore();
+  });
+
+  it('a refused download is a toast with the text of the hub, no navigation', async () => {
+    setRunner({ protocolVersion: '1.16' });
+    stubFs({ list: {}, files: { '/home/u/a.txt': { kind: 'text', body: 'x', download: { status: 403, json: { error: 'restricted' } } } } });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click');
+    render(<FileViewer tabId={tab('/home/u/a.txt')} />);
+    await screen.findByTestId('text-view');
+    await userEvent.click(screen.getByRole('button', { name: 'Скачать a.txt' }));
+    await waitFor(() => expect(useStore.getState().toasts).toHaveLength(1));
+    expect(useStore.getState().toasts[0]).toMatchObject({ title: 'Не удалось скачать a.txt', text: 'Закрытый путь' });
+    expect(click).not.toHaveBeenCalled();
+    click.mockRestore();
+  });
+
+  it('an agent without fs.download: «Скачать» is dimmed with a hint to update the agent', async () => {
+    stubFs({ list: {}, files: { '/home/u/a.txt': { kind: 'text', body: 'x' } } });
+    render(<FileViewer tabId={tab('/home/u/a.txt')} />);
+    await screen.findByTestId('text-view');
+    const btn = screen.getByTestId('file-download');
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAccessibleName('Обновите агента на ВМ, чтобы скачивать файлы');
   });
 
   it('a file over the limit: «Файл слишком большой» with the size from the listing', async () => {
@@ -88,6 +121,7 @@ describe('FileViewer', () => {
     render(<FileViewer tabId={tab('/home/u/big.log')} />);
     expect(await screen.findByText(/Файл слишком большой/)).toBeInTheDocument();
     expect(screen.getByText(/5 МБ/)).toBeInTheDocument();
+    expect(screen.getAllByTestId('file-download')).toHaveLength(2);
   });
 
   it('an offline machine: its own state, no request', () => {
@@ -95,6 +129,7 @@ describe('FileViewer', () => {
     const calls = stubFs({ list: {}, files: {} });
     render(<FileViewer tabId={tab('/home/u/a.txt')} />);
     expect(screen.getByText('Машина не в сети')).toBeInTheDocument();
+    expect(screen.queryByTestId('file-download')).not.toBeInTheDocument();
     expect(calls).toHaveLength(0);
   });
 

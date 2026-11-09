@@ -208,7 +208,7 @@ export function selectSessions(db: Db) {
       // runner's clock, the start is the hub's.
       sql<Date | null>`GREATEST(
         (SELECT max(COALESCE(r.last_event_at, r.state_at, r.started_at)) FROM subagent_runs r WHERE r.session_id = s.id),
-        (SELECT max(GREATEST(b.started_at, b.ended_at, b.last_event_at)) FROM background_tasks b WHERE b.session_id = s.id AND b.state != 'pending'),
+        (SELECT max(GREATEST(b.started_at, b.ended_at, b.last_event_at)) FROM background_tasks b WHERE b.session_id = s.id AND b.state != 'pending' AND b.task_id IS NOT NULL),
         (SELECT max(c.last_event_at) FROM sessions c WHERE c.spawned_by = s.id AND ${hubChildAlive}))`.as('children_activity_at'),
       sql<string>`(
         (SELECT count(*) FROM subagent_runs r WHERE r.session_id = s.id AND r.state = 'running'
@@ -217,7 +217,7 @@ export function selectSessions(db: Db) {
            AND COALESCE(b.started_at, '-infinity') >= ${processStart})
         + (SELECT count(*) FROM sessions c WHERE c.spawned_by = s.id AND ${hubChildAlive}))`.as('children_working'),
       // change `background-tasks`: monitors and background commands shown in the list (started ones)
-      sql<string>`(SELECT count(*) FROM background_tasks b WHERE b.session_id = s.id AND b.state != 'pending')`.as('background_total'),
+      sql<string>`(SELECT count(*) FROM background_tasks b WHERE b.session_id = s.id AND b.state != 'pending' AND b.task_id IS NOT NULL)`.as('background_total'),
       sql<boolean>`EXISTS (SELECT 1 FROM hidden_project_groups h WHERE h.user_id=s.user_id AND h.project_id=s.project_id)`.as('hidden_project'),
       sql<ColorKey | null>`(SELECT cp.color_key FROM session_projects sp JOIN catalog_projects cp ON cp.id=sp.project_id AND cp.user_id=sp.user_id WHERE sp.session_id=s.id AND sp.user_id=s.user_id)`.as(
         'catalog_project_color',

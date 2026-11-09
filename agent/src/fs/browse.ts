@@ -15,6 +15,7 @@ import {
   type FsFileKind,
   type FsKind,
   type FsListResult,
+  type FsReadChunkResult,
   type FsReadResult,
 } from '@agent-hub/shared';
 
@@ -224,8 +225,13 @@ export interface FsReadAnswer {
   data?: Buffer;
 }
 
-/** fs.read: a file of the root, whole, within the limit of its class. The size is taken from the open descriptor. */
-export async function readFileForView(requested: string, root: string, o?: BrowseOptions): Promise<FsReadAnswer> {
+type FileHandle = Awaited<ReturnType<typeof open>>;
+
+/**
+ * Opens a plain file of the root for reading: resolveInside, then the opened file is checked once more (the path may
+ * have been swapped for a link between realpath and open). The caller closes the handle.
+ */
+async function openInside(requested: string, root: string, o?: BrowseOptions): Promise<{ real: string; handle: FileHandle }> {
   const { real, rootReal } = await resolveInside(requested, root, o);
   // a FIFO or a device would block open(): a plain file is required before the descriptor is taken
   try {
@@ -233,14 +239,13 @@ export async function readFileForView(requested: string, root: string, o?: Brows
   } catch (error) {
     throw fsFailure(error);
   }
-  let handle;
+  let handle: FileHandle;
   try {
     handle = await open(real, 'r');
   } catch (error) {
     throw fsFailure(error);
   }
   try {
-    // the path may have been swapped for a link between realpath and open: the opened file is checked once more
     let again: string;
     try {
       again = await realpath(real);
@@ -249,6 +254,17 @@ export async function readFileForView(requested: string, root: string, o?: Brows
     }
     if (!isInsideRoot(rootReal, again, isWin(o))) throw new FsError('outside_root');
     if (isRestrictedPath(again)) throw new FsError('restricted');
+    return { real, handle };
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+/** fs.read: a file of the root, whole, within the limit of its class. The size is taken from the open descriptor. */
+export async function readFileForView(requested: string, root: string, o?: BrowseOptions): Promise<FsReadAnswer> {
+  const { real, handle } = await openInside(requested, root, o);
+  try {
     const st = await handle.stat();
     if (!st.isFile()) throw new FsError('not_file');
     const head = Buffer.alloc(Math.min(HEAD_BYTES, st.size));
@@ -276,6 +292,39 @@ export async function readFileForView(requested: string, root: string, o?: Brows
       return { result: { path: real, kind, mime, size: got, mtimeMs, text: data.toString('utf8') } };
     }
     return { result: { path: real, kind, mime, size: got, mtimeMs, binary: true }, data };
+  } catch (error) {
+    throw fsFailure(error);
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
+export interface FsChunkAnswer {
+  result: FsReadChunkResult;
+  /** the bytes, sent as a binary frame after cmd.ok {binary: true}; none for length 0 */
+  data?: Buffer;
+}
+
+/**
+ * fs.read_chunk (file-download D1, D3): bytes [offset, offset + length) of a file of the root, cut at its end, any class
+ * and size. Stateless — every piece passes the same checks as fs.read; length 0 reads no content.
+ */
+export async function readFileChunk(requested: string, root: string, offset: number, length: number, o?: BrowseOptions): Promise<FsChunkAnswer> {
+  const { real, handle } = await openInside(requested, root, o);
+  try {
+    const st = await handle.stat();
+    if (!st.isFile()) throw new FsError('not_file');
+    const meta = { path: real, size: st.size, mtimeMs: Math.floor(st.mtimeMs), offset };
+    const want = Math.max(0, Math.min(length, st.size - offset));
+    if (want === 0) return { result: { ...meta, bytes: 0 } };
+    const buf = Buffer.alloc(want);
+    let got = 0;
+    while (got < want) {
+      const { bytesRead } = await handle.read(buf, got, want - got, offset + got);
+      if (bytesRead === 0) break;
+      got += bytesRead;
+    }
+    return { result: { ...meta, bytes: got, binary: true }, data: buf.subarray(0, got) };
   } catch (error) {
     throw fsFailure(error);
   } finally {

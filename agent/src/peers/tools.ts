@@ -51,7 +51,6 @@ export function peersToolDefs(sessionId: string, client: Pick<PeersClient, 'requ
     task: z.string().min(1).max(PEER_TEXT_MAX).describe('task for the subagent: what to do and what to return in the end'),
     provider: z.enum(PROVIDERS).optional().describe('vendor: claude or codex; defaults to the vendor of this session'),
     machine: z.string().max(200).optional().describe('machine name (X1, HP, VM...); defaults to this machine'),
-    cwd: z.string().max(1000).optional().describe('directory; required on another machine, defaults to the directory of this session'),
     model: z.string().max(200).optional().describe('model; defaults to the model of this session for the same vendor, otherwise the default model'),
     title: z.string().max(200).optional().describe('tab title; defaults to one derived from the task'),
   };
@@ -88,7 +87,7 @@ export function peersToolDefs(sessionId: string, client: Pick<PeersClient, 'requ
       readOnly: false,
       run: a => {
         const v = a as z.infer<z.ZodObject<typeof spawnShape>>;
-        const opt = Object.fromEntries(Object.entries({ provider: v.provider, machine: v.machine, cwd: v.cwd, model: v.model, title: v.title }).filter(([, x]) => x !== undefined));
+        const opt = Object.fromEntries(Object.entries({ provider: v.provider, machine: v.machine, model: v.model, title: v.title }).filter(([, x]) => x !== undefined));
         return call({ op: 'spawn', sessionId, task: v.task, ...opt });
       },
     });

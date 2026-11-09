@@ -35,7 +35,7 @@ describe('sessionSource (D5)', () => {
   });
 
   it('Orca cwd on disk and in the encoded directory name', () => {
-    expect(isOrcaCwd('C:\\Users\\alice\\orca\\workspaces\\scanner-fleet')).toBe(true);
+    expect(isOrcaCwd('C:\\Users\\alice\\orca\\workspaces\\fleet-ops')).toBe(true);
     expect(isOrcaCwd('C:\\Users\\alice\\orca-workspaces\\x')).toBe(true);
     expect(isOrcaCwd('/home/u/orca-sandbox/a')).toBe(true);
     expect(isOrcaCwd('C:\\Users\\alice\\vault')).toBe(false);

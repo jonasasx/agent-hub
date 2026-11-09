@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { HandoffDraftView, SessionView } from '@agent-hub/shared';
 import type { MemoryStore } from '../storage/objectStore.js';
 import { FIXTURE_VAULT, PUBLIC_URL, agentSend, autoReply, connectFakeAgent, connectUi, startTestHub, waitFor, type FakeAgent, type TestHub } from '../test/harness.js';
+import { reclassifyProjects } from '../projects/reclassify.js';
 import { seedFixtureVault } from '../test/legacyCatalog.js';
 import * as F from '../test/transcriptFixtures.js';
 import { buildTranscript, scrubSidePaths } from './handoff.js';
@@ -48,6 +49,13 @@ describe('fork (integration)', () => {
     await t.tdb.pool.query(`UPDATE runners SET is_utility = true WHERE id = 'vm'`);
     cookie = await t.login();
     await seedFixtureVault(t.tdb.db, t.hub.projects.catalog, FIXTURE_VAULT);
+    // catalog projects (the only classifier): 01-ledger by its folder under the default folder, 03-sms-bridge without one
+    for (const [name, folder] of [
+      ['01-ledger', '20-personal/01-finance/systems/01-ledger'],
+      ['03-sms-bridge', null],
+    ] as const) {
+      await t.tdb.pool.query(`INSERT INTO catalog_projects(user_id,name,folder) SELECT user_id,$1,$2 FROM runners WHERE id='hp'`, [name, folder]);
+    }
     hp = connectFakeAgent(t.wsBase, hpToken);
     vm = connectFakeAgent(t.wsBase, vmToken, { hostname: 'vault', os: 'Ubuntu 24.04', homeDir: '/home/ubuntu', vaultRoot: '/home/ubuntu/vault' });
     for (const [a, replies] of [
@@ -65,6 +73,7 @@ describe('fork (integration)', () => {
     }
     await hp.next('welcome');
     await vm.next('welcome');
+    await t.tdb.pool.query(`UPDATE runners SET default_dir = CASE id WHEN 'hp' THEN $1 ELSE '/home/ubuntu/vault' END`, [VAULT]);
   });
   afterAll(async () => t.close());
 
@@ -73,8 +82,8 @@ describe('fork (integration)', () => {
     const o = { sessionId: sid, cwd: `${VAULT}\\20-personal\\01-finance\\systems\\01-ledger`, entrypoint: 'cli' as const };
     const src = await chunk(hp, sid, `c--ledger/${sid}.jsonl`, [F.userText(o, 'запомни 4817'), F.assistantText(o, 'Запомнил: 4817')]);
     await t.tdb.pool.query(`UPDATE sessions SET status = 'sleeping', process_alive = false, permission_mode = 'acceptEdits', model = 'haiku' WHERE id = $1`, [src]);
-    const before = (await t.tdb.pool.query(`SELECT status, project_id, project_source FROM sessions WHERE id = $1`, [src])).rows[0];
-    expect(before.project_source).toBe('auto'); // 01-ledger by the start directory
+    const before = (await t.tdb.pool.query(`SELECT project_id, source, reason_code FROM session_projects WHERE session_id = $1`, [src])).rows[0];
+    expect(before).toMatchObject({ source: 'auto', reason_code: 'cwd' }); // 01-ledger by the start directory
     const copySid = randomUUID();
     const forks: Array<Record<string, unknown>> = [];
     hpReply.set('session.fork', p => (forks.push(p), { newSessionId: copySid }));
@@ -91,8 +100,9 @@ describe('fork (integration)', () => {
       permissionMode: 'acceptEdits',
       model: 'haiku',
       forkOf: { id: src, title: 'запомни 4817' },
-      projectSource: 'inherited',
-      projectEvidence: 'inherited from the parent',
+      project: { title: '01-ledger' },
+      catalogProjectSource: 'auto',
+      catalogProjectReason: 'inherited',
     });
     expect(v.project.id).toBe(before.project_id);
     expect((await t.tdb.pool.query(`SELECT fork_mode FROM sessions WHERE id = $1`, [copySid])).rows[0].fork_mode).toBe('copy');
@@ -150,13 +160,12 @@ describe('fork (integration)', () => {
     const o = { sessionId: sid, cwd: VAULT, entrypoint: 'cli' as const };
     const src = await chunk(hp, sid, `c--pinned/${sid}.jsonl`, [F.userText(o, 'закреплённая'), F.assistantText(o, 'да')]);
     const list = (await api('GET', '/api/projects')).json() as Array<{ id: string; title: string }>;
-    const bridge = list.find(p => p.title === '03-mm-sms-bridge')!;
+    const bridge = list.find(p => p.title === '03-sms-bridge')!;
     await t.hub.app.inject({ method: 'PUT', url: `/api/sessions/${src}/project`, cookies: { ah_session: cookie }, headers: { origin: PUBLIC_URL }, payload: { projectId: bridge.id } });
     const copySid = randomUUID();
     hpReply.set('session.fork', () => ({ newSessionId: copySid }));
     const v = (await api('POST', `/api/sessions/${src}/fork`, { mode: 'copy' })).json() as SessionView;
-    expect(v).toMatchObject({ project: { title: '03-mm-sms-bridge' }, projectSource: 'manual' });
-    expect((await t.tdb.pool.query(`SELECT project_id FROM classification_labels WHERE session_id = $1`, [copySid])).rows[0].project_id).toBe(bridge.id);
+    expect(v).toMatchObject({ project: { id: bridge.id, title: '03-sms-bridge' }, catalogProjectSource: 'manual' });
 
     await t.tdb.pool.query(`UPDATE sessions SET source = 'cron' WHERE id = $1`, [src]);
     const cron = await api('POST', `/api/sessions/${src}/fork`, { mode: 'copy' });
@@ -297,30 +306,28 @@ describe('fork (integration)', () => {
     ui.ws.close();
   });
 
-  it('handoff start: a new session on the chosen runner with the prompt first, fork_of, the inherited project; bad_path by the OS of that runner', async () => {
+  it('handoff start: a new session on the chosen runner with the prompt first, fork_of, the inherited project and its folder; the client cwd is ignored', async () => {
+    const LEDGER_VM = '/home/ubuntu/vault/20-personal/01-finance/systems/01-ledger';
     const sid = randomUUID();
     const o = { sessionId: sid, cwd: `${VAULT}\\20-personal\\01-finance\\systems\\01-ledger`, entrypoint: 'cli' as const };
     const src = await chunk(hp, sid, `c--ledger2/${sid}.jsonl`, [F.userText(o, 'бухгалтерия'), F.assistantText(o, 'да')]);
-    const bad = await api('POST', `/api/sessions/${src}/fork`, { mode: 'handoff', prompt: 'продолжи', runnerId: 'vm', cwd: 'C:\\Users\\x' });
-    expect(bad.statusCode).toBe(422);
-    expect(bad.json()).toMatchObject({ error: 'bad_path' });
-    const res = await api('POST', `/api/sessions/${src}/fork`, { mode: 'handoff', prompt: '## Цель\nПродолжить бухгалтерию', runnerId: 'vm', cwd: '/home/ubuntu/vault' });
+    const res = await api('POST', `/api/sessions/${src}/fork`, { mode: 'handoff', prompt: '## Цель\nПродолжить бухгалтерию', runnerId: 'vm', cwd: 'C:\\Users\\x' });
     expect(res.statusCode).toBe(201);
     const v = res.json() as SessionView;
     expect(v).toMatchObject({
       runnerId: 'vm',
-      cwd: '/home/ubuntu/vault',
+      cwd: LEDGER_VM,
       forkOf: { id: src },
       project: { title: '01-ledger' },
-      projectSource: 'inherited',
-      projectEvidence: 'inherited from the parent',
+      catalogProjectReason: 'inherited',
     });
     const start = await waitFor(() => got.find(m => m.type === 'session.start' && m.payload.sessionId === v.id));
-    expect(start.payload).toMatchObject({ cwd: '/home/ubuntu/vault', prompt: '## Цель\nПродолжить бухгалтерию' });
+    expect(start.payload).toMatchObject({ cwd: LEDGER_VM, prompt: '## Цель\nПродолжить бухгалтерию' });
     expect((await t.tdb.pool.query(`SELECT fork_mode FROM sessions WHERE id = $1`, [v.id])).rows[0].fork_mode).toBe('handoff');
-    // projects:reclassify --fresh turns off the hysteresis of auto projects only: the inherited project stays
-    await t.hub.projects.rebuild(v.id, false, true);
-    expect((await api('GET', `/api/sessions/${v.id}`)).json()).toMatchObject({ project: { title: '01-ledger' }, projectSource: 'inherited' });
+    // re-evaluation by the rules (projects:reclassify) keeps the project: the folder of the copy is the project folder
+    await t.hub.projects.flush();
+    await reclassifyProjects(t.tdb.db, { config: t.config, dryRun: false });
+    expect((await api('GET', `/api/sessions/${v.id}`)).json()).toMatchObject({ project: { title: '01-ledger' }, catalogProjectReason: 'cwd' });
     // the source is untouched and may be offline
     expect((await t.tdb.pool.query(`SELECT count(*)::int AS n FROM sessions WHERE id = $1 AND fork_of IS NULL`, [src])).rows[0].n).toBe(1);
   });

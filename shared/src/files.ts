@@ -38,6 +38,17 @@ export type FsListPayload = z.infer<typeof fsListPayload>;
 export const fsReadPayload = z.object({ path: fsPath, root: fsPath });
 export type FsReadPayload = z.infer<typeof fsReadPayload>;
 
+/** Largest piece of a file in one fs.read_chunk (file-download D2). */
+export const FS_CHUNK_MAX = 4 * 1024 * 1024;
+/** Hub → agent: bytes [offset, offset + length) of a file for download; length 0 — metadata only (file-download D1). */
+export const fsReadChunkPayload = z.object({
+  path: fsPath,
+  root: fsPath,
+  offset: z.number().int().nonnegative(),
+  length: z.number().int().min(0).max(FS_CHUNK_MAX),
+});
+export type FsReadChunkPayload = z.infer<typeof fsReadChunkPayload>;
+
 /** cmd.ok.result of fs.list; `path` is the realpath. Entries: folders first, then files, case-insensitive, cut at FS_LIST_LIMIT. */
 export const fsListResultSchema = z.object({
   path: fsPath,
@@ -65,6 +76,17 @@ export const fsReadResultSchema = z.object({
   binary: z.literal(true).optional(),
 });
 export type FsReadResult = z.infer<typeof fsReadResultSchema>;
+
+/** cmd.ok.result of fs.read_chunk; with `binary: true` a binary frame of `bytes` bytes follows (cut at the end of the file). */
+export const fsReadChunkResultSchema = z.object({
+  path: fsPath,
+  size: z.number().int().nonnegative(),
+  mtimeMs: z.number().nonnegative(),
+  offset: z.number().int().nonnegative(),
+  bytes: z.number().int().nonnegative(),
+  binary: z.literal(true).optional(),
+});
+export type FsReadChunkResult = z.infer<typeof fsReadChunkResultSchema>;
 
 /** Largest size of a file of this class, null for `binary` (nothing is read). */
 export function fsMaxBytes(kind: FsFileKind): number | null {

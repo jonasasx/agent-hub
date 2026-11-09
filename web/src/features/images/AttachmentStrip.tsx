@@ -88,8 +88,9 @@ export function AttachButton({ akey, disabled }: { akey: string; disabled?: bool
   return (
     <>
       <button type="button" className="btn ghost attach-btn" disabled={disabled} onClick={() => input.current?.click()} aria-label={t('chat.images.attach')} title={t('chat.images.attach')}>
+        {/* the phone composer capsule shows «+», like the other mobile chat apps */}
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M13.5 7.5 8 13a3.5 3.5 0 0 1-5-5l5.5-5.5a2.3 2.3 0 0 1 3.3 3.3L6.3 11.3a1.2 1.2 0 0 1-1.7-1.7L9.5 4.7" />
+          {phone ? <path d="M8 2.5v11M2.5 8h11" /> : <path d="M13.5 7.5 8 13a3.5 3.5 0 0 1-5-5l5.5-5.5a2.3 2.3 0 0 1 3.3 3.3L6.3 11.3a1.2 1.2 0 0 1-1.7-1.7L9.5 4.7" />}
         </svg>
         <span className="attach-label">{t('chat.images.attachShort')}</span>
       </button>

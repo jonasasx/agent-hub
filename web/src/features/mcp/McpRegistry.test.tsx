@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { McpRegistry } from './McpRegistry';
-import { mockFetch, runner } from '../../test/factories';
+import { mcpImportPreview, mockFetch, runner } from '../../test/factories';
 import { useStore } from '../../store';
-import type { McpRegistryDraftState, McpRegistryDraftView, McpRegistryValidation } from '../../api/mcpRegistryTypes';
+import type { McpImportEntry, McpRegistryDraftState, McpRegistryDraftView, McpRegistryValidation } from '../../api/mcpRegistryTypes';
 
 const blank = { revision: 0, servers: [], drafts: [] };
 const reply =
@@ -830,42 +830,52 @@ describe('MCP registry wizard', () => {
     expect(screen.getByRole('alert').textContent).not.toMatch(/\u00ab\s*\u00bb/);
   });
 
-  it('shows import source and secret metadata and commits only selected servers', async () => {
-    const serverId = '46c2b971-3111-48e9-aef5-f085b4b8df12';
-    const projectId = 'e51cf4c7-96bd-4d84-b01c-cf8e74aa4801';
-    const project = { id: projectId, name: 'Demo', description: '', remote: null, archived: false, lastEventAt: null, bindings: [{ runnerId: id, path: 'C:/work/demo' }] };
-    const preview = {
-      importId: 'c8d7b95d-6fd7-44be-9d44-4bcf4f0c89ad',
-      revision: 4,
-      servers: [{ ...draft().server, id: serverId, source: 'project' as const, secrets: [{ secretId: '2095c3fc-a7ce-42d4-8ea8-ae791ce950fd', name: 'API_TOKEN', state: 'set' as const }] }],
-      secretsCaptured: 1,
+  it('imports from a picked machine: source, masked secrets, only the checked servers are committed', async () => {
+    const entry = (n: number, over: Partial<McpImportEntry> = {}): McpImportEntry => ({
+      id: `46c2b971-3111-48e9-aef5-f085b4b8df1${n}`,
+      name: `srv${n}`,
+      transport: 'stdio',
+      command: 'node',
+      source: 'user',
+      decision: 'new',
+      selected: true,
+      selectable: true,
       warnings: [],
-    };
+      secrets: [],
+      ...over,
+    });
+    const preview = mcpImportPreview({
+      machineId: id,
+      revision: 4,
+      servers: [entry(1, { source: 'project', origin: 'C:/work/demo/.mcp.json', secrets: [{ name: 'API_TOKEN', masked: true }] }), entry(2)],
+      secretsCaptured: 1,
+    });
     const calls = mockFetch({
       'GET /api/mcp/registry': initial,
       'GET /api/mcp/registry/status': reply({}),
-      'GET /api/catalog/projects': reply([project]),
+      'GET /api/catalog/projects': reply([]),
       'POST /api/mcp/registry/import/preview': reply(preview),
-      'POST /api/mcp/registry/import/commit': reply({ revision: 5 }),
+      'POST /api/mcp/registry/import/commit': reply({ imported: 1, servers: [] }),
     });
     render(<McpRegistry onClose={() => undefined} />);
     await screen.findByRole('dialog');
     await userEvent.click(screen.getByText('Импортировать конфигурацию'));
     await userEvent.click(screen.getByRole('radio', { name: /X1/ }));
-    await userEvent.selectOptions(screen.getByRole('combobox'), projectId);
-    await userEvent.click(screen.getByRole('button', { name: /Предпросмотр импорта/ }));
-    expect(await screen.findByText('.mcp.json · проект')).toBeInTheDocument();
-    expect(screen.getByText('Секреты для шифрования: API_TOKEN')).toBeInTheDocument();
-    expect(screen.queryByText('secret-value')).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: 'Импортировать выбранные серверы' }));
+    expect(await screen.findByText('Claude · .mcp.json')).toBeInTheDocument();
+    expect(screen.getByText('C:/work/demo/.mcp.json')).toBeInTheDocument();
+    expect(screen.getByText('Секреты: API_TOKEN')).toBeInTheDocument();
+    expect(calls.find(call => call.url.endsWith('/import/preview'))?.body).toEqual({ machineId: id });
+    await userEvent.click(screen.getByRole('checkbox', { name: 'srv2' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Импортировать 1 сервер' }));
     await waitFor(() =>
       expect(calls.find(call => call.url.endsWith('/import/commit'))?.body).toEqual({
         importId: preview.importId,
         revision: preview.revision,
-        serverIds: [serverId],
+        serverIds: [entry(1).id],
         userConfirmed: true,
       }),
     );
+    expect(await screen.findByText('Импортировано: 1.')).toBeInTheDocument();
   });
 
   it('loads and updates a project override', async () => {
@@ -1064,72 +1074,37 @@ describe('MCP registry wizard', () => {
     });
   });
 
-  it('toggles the per-machine registry and reflects the server response', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+  it('switches a server off on one machine and resets a machine-specific config', async () => {
+    const server = { ...draft().server, machines: [{ machineId: id, enabled: true, customConfig: true }] };
     const calls = mockFetch({
-      'GET /api/mcp/registry': reply(blank),
-      'GET /api/mcp/registry/status': reply({
-        revision: 0,
-        agents: [{ machineId: id, machineName: 'X1', online: true, protocolVersion: '1.13', capabilities: ['mcp.registry.v1'], registryEnabled: false }],
-        gateways: [],
-        oauth: [],
-      }),
+      'GET /api/mcp/registry': reply({ revision: 1, servers: [server], drafts: [] }),
+      'GET /api/mcp/registry/status': reply({}),
       'GET /api/catalog/projects': reply([]),
-      [`PUT /api/mcp/registry/machines/${id}`]: reply({ machineId: id, registryEnabled: true }),
+      [`PUT /api/mcp/registry/servers/${server.id}/machines/${id}`]: reply({ serverId: server.id, revision: 2, machines: [] }),
     });
     render(<McpRegistry onClose={() => undefined} />);
-    const toggle = await screen.findByRole('checkbox', { name: /X1/ });
-    expect(toggle).not.toBeChecked();
-    expect(screen.getByText(/новых и возобновляемых сессий/i)).toBeInTheDocument();
-    await userEvent.click(toggle);
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('на X1'));
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('.claude.json/.mcp.json'));
-    await waitFor(() => expect(calls.find(call => call.url.includes('/machines/'))?.body).toEqual({ enabled: true }));
-    expect(toggle).toBeChecked();
+    const machines = await screen.findByRole('region', { name: `Машины сервера ${server.name}` });
+    expect(within(machines).getByText('своя настройка')).toBeInTheDocument();
+    await userEvent.click(within(machines).getByRole('switch', { name: 'X1' }));
+    await waitFor(() => expect(calls.filter(call => call.method === 'PUT').map(call => call.body)).toEqual([{ revision: server.revision, enabled: false }]));
+    await userEvent.click(within(machines).getByRole('button', { name: 'Сбросить' }));
+    await waitFor(() => expect(calls.filter(call => call.method === 'PUT').at(-1)?.body).toEqual({ revision: server.revision, resetConfig: true }));
   });
 
-  it('does not enable a machine registry when the confirmation is declined', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    const calls = mockFetch({
-      'GET /api/mcp/registry': reply(blank),
-      'GET /api/mcp/registry/status': reply({
-        revision: 0,
-        agents: [{ machineId: id, machineName: 'X1', online: true, protocolVersion: '1.13', capabilities: [], registryEnabled: false }],
-        gateways: [],
-        oauth: [],
-      }),
-      'GET /api/catalog/projects': reply([]),
-      [`PUT /api/mcp/registry/machines/${id}`]: reply({ machineId: id, registryEnabled: true }),
-    });
-    render(<McpRegistry onClose={() => undefined} />);
-    const toggle = await screen.findByRole('checkbox', { name: /X1/ });
-
-    await userEvent.click(toggle);
-
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('на X1'));
-    expect(calls.some(call => call.url.includes('/machines/'))).toBe(false);
-    expect(toggle).not.toBeChecked();
-  });
-
-  it('shows an error when a machine registry toggle fails', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+  it('shows an error when a machine switch fails', async () => {
+    const server = { ...draft().server, machines: [{ machineId: id, enabled: true, customConfig: false }] };
     mockFetch({
-      'GET /api/mcp/registry': reply(blank),
-      'GET /api/mcp/registry/status': reply({
-        revision: 0,
-        agents: [{ machineId: id, machineName: 'X1', online: true, protocolVersion: '1.13', capabilities: [], registryEnabled: false }],
-        gateways: [],
-        oauth: [],
-      }),
+      'GET /api/mcp/registry': reply({ revision: 1, servers: [server], drafts: [] }),
+      'GET /api/mcp/registry/status': reply({}),
       'GET /api/catalog/projects': reply([]),
-      [`PUT /api/mcp/registry/machines/${id}`]: reply({ error: 'unavailable', message: 'Machine update failed' }, 503),
+      [`PUT /api/mcp/registry/servers/${server.id}/machines/${id}`]: reply({ error: 'unavailable', message: 'Machine update failed' }, 503),
     });
     render(<McpRegistry onClose={() => undefined} />);
-    const toggle = await screen.findByRole('checkbox', { name: /X1/ });
-    await userEvent.click(toggle);
-    const alerts = await screen.findAllByRole('alert');
-    expect(alerts.some(alert => alert.textContent?.includes('503 unavailable'))).toBe(true);
-    expect(toggle).not.toBeChecked();
+    const machines = await screen.findByRole('region', { name: `Машины сервера ${server.name}` });
+    expect(within(machines).queryByRole('button', { name: 'Сбросить' })).toBeNull();
+    await userEvent.click(within(machines).getByRole('switch', { name: 'X1' }));
+    expect(await within(machines).findByRole('alert')).toBeInTheDocument();
+    expect(within(machines).getByRole('switch', { name: 'X1' })).toBeChecked();
   });
 
   it('binds an environment entry to the named secret without placing its value in config', async () => {

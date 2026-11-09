@@ -2,6 +2,10 @@ import type { Dict } from '../../index.js';
 
 export default {
   'files.action.copyPath': '复制路径',
+  'files.action.download': '下载',
+  'files.action.downloadFailed': '无法下载 {name}',
+  'files.action.downloadNamed': '下载 {name}',
+  'files.action.downloadOutdated': '请更新 {machine} 上的代理以下载文件',
   'files.action.inTree': '在目录树中',
   'files.action.mention': '插入消息',
   'files.action.mentionTitle': '将路径插入会话「{title}」的输入框',

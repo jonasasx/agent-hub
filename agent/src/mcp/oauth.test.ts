@@ -200,4 +200,87 @@ describe('McpOAuthManager', () => {
     const pending = (oauth as unknown as { pending: Map<string, unknown> }).pending;
     expect(pending.has(malformedFlowId)).toBe(false);
   });
+  it('uses a pre-registered client id without dynamic client registration', async () => {
+    const requests: string[] = [];
+    server = createServer((req, res) => {
+      const origin = `http://${req.headers.host}`;
+      requests.push(`${req.method} ${req.url}`);
+      if (req.method === 'GET' && req.url?.includes('oauth-protected-resource')) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ resource: `${origin}/mcp`, authorization_servers: [origin] }));
+        return;
+      }
+      if (req.method === 'GET' && req.url?.includes('oauth-authorization-server')) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            issuer: origin,
+            authorization_endpoint: `${origin}/authorize`,
+            token_endpoint: `${origin}/token`,
+            registration_endpoint: `${origin}/register`,
+            response_types_supported: ['code'],
+            code_challenge_methods_supported: ['S256'],
+          }),
+        );
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('OAuth fixture failed to bind');
+    const origin = `http://127.0.0.1:${address.port}`;
+    const serverId = randomUUID();
+    const machineId = randomUUID();
+    const snapshot: RegistrySnapshot = {
+      protocol: '1.13',
+      revision: 1,
+      generatedAt: Date.now(),
+      registryEnabled: true,
+      servers: [
+        {
+          id: serverId,
+          name: 'plugin_corp-apps_apps',
+          enabled: true,
+          transport: 'http',
+          mode: 'remote',
+          url: `${origin}/mcp`,
+          oauthClientId: 'apps-portal-mcp',
+          machineScope: { allMachines: true, machineIds: [] },
+          projectIds: [],
+          revision: 1,
+          secrets: [],
+        },
+      ],
+    };
+    gateway = new McpGateway(createLogger({ level: 'debug', write: () => undefined }));
+    const oauth = new McpOAuthManager(
+      () => snapshot,
+      gateway,
+      () => true,
+      createLogger({ level: 'debug', write: () => undefined }),
+    );
+    oauth.setMachine(machineId);
+    const redirectUri = 'https://hub.example.test/mcp/oauth/callback';
+    const started = await oauth.begin({ flowId: randomUUID(), serverId, machineId, redirectUri, serverUrl: `${origin}/mcp`, transport: 'http' });
+    const authorizationUrl = new URL(started.authorizationUrl);
+    expect(authorizationUrl.searchParams.get('client_id')).toBe('apps-portal-mcp');
+    expect(authorizationUrl.searchParams.get('redirect_uri')).toBe(redirectUri);
+    expect(requests.some(request => request.startsWith('POST /register'))).toBe(false);
+
+    // Before the first sign-in the hub keeps the server out of the machine's registry and sends the client id with the command.
+    snapshot.servers = [];
+    const fromCommand = await oauth.begin({
+      flowId: randomUUID(),
+      serverId,
+      machineId,
+      redirectUri,
+      serverUrl: `${origin}/mcp`,
+      transport: 'http',
+      oauthClientId: 'apps-portal-mcp',
+    });
+    expect(new URL(fromCommand.authorizationUrl).searchParams.get('client_id')).toBe('apps-portal-mcp');
+    expect(requests.some(request => request.startsWith('POST /register'))).toBe(false);
+  });
 });

@@ -158,3 +158,9 @@ export function FileIcon({ kind, open, blocked }: FileIconProps) {
   const label = kind === 'md' ? 'MD' : kind === 'pdf' ? 'PDF' : '';
   return <span className={`fx-ic k-${kind}`}>{iconFile(label)}</span>;
 }
+
+export const ICON_DOWNLOAD = (
+  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+    <path fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" d="M8 2.5v7.5M4.8 7 8 10.2 11.2 7M2.8 12.8h10.4" />
+  </svg>
+);

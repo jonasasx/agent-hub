@@ -74,6 +74,8 @@ export default {
   'machines.enroll.path1': '1. Имя и система',
   'machines.enroll.path2': '2. Команда',
   'machines.enroll.path3': '3. Подключение',
+  'machines.enroll.path4': '4. MCP',
+  'machines.enroll.mcpTitle': 'MCP-серверы этой машины',
   'machines.enroll.nameLabel': 'Имя машины',
   'machines.enroll.nameHint': 'Можно поменять потом в «Настройки → Машины».',
   'machines.enroll.osLabel': 'Система',
@@ -97,4 +99,9 @@ export default {
   'machines.enroll.macTitle': 'Нет доступа к защищённым папкам macOS.',
   'machines.enroll.macBefore': 'Агент не читает ~/Documents, ~/Desktop и ~/Downloads. Откройте «Системные настройки → Конфиденциальность и безопасность → Полный доступ к диску» и добавьте',
   'machines.enroll.macAfter': '. Каталоги вне этих папок (например, ~/code) работают и так.',
+  'machines.defaultDir.label': 'Папка по умолчанию',
+  'machines.defaultDir.change': 'Изменить…',
+  'machines.defaultDir.hint': 'Сессии на этой машине начинаются здесь; папка проекта задаётся относительно неё.',
+  'machines.defaultDir.failed': 'Не удалось изменить папку по умолчанию',
+  'machines.menu.defaultDir': 'Папка по умолчанию…',
 } satisfies Dict;

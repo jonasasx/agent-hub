@@ -59,11 +59,8 @@ describe('projects-catalog HTTP (integration)', () => {
     await api('DELETE', `/api/catalog/projects/${unicode.id}`);
     await api('DELETE', `/api/catalog/projects/${peer.id}`);
     expect((await list()).json<Array<{ id: string; colorKey: string }>>().find(p => p.id === created.id)?.colorKey).toBe('rose');
-    expect((await api('PUT', `/api/catalog/projects/${created.id}/bindings/hp`, { path: 'C:\\work\\colors' })).statusCode).toBe(200);
-    expect((await api('DELETE', `/api/catalog/projects/${created.id}/bindings/${foreignRunner}`)).statusCode).toBe(404);
-    expect((await api('DELETE', `/api/catalog/projects/${created.id}/bindings/hp`)).statusCode).toBe(200);
-    await api('PUT', `/api/catalog/projects/${created.id}/bindings/hp`, { path: 'C:\\work\\colors' });
-    const launched = await api('POST', '/api/sessions', { runnerId: 'hp', cwd: 'C:\\work', provider: 'claude', projectId: created.id, prompt: 'Keep this session', model: 'haiku' });
+    expect((await api('PATCH', `/api/catalog/projects/${created.id}`, { folder: 'work/colors' })).statusCode).toBe(200);
+    const launched = await api('POST', '/api/sessions', { runnerId: 'hp', provider: 'claude', projectId: created.id, prompt: 'Keep this session', model: 'haiku' });
     expect(launched.statusCode).toBe(201);
     const sid = launched.json<{ id: string }>().id;
     const ui = connectUi(t.wsBase, cookie);
@@ -110,7 +107,6 @@ describe('projects-catalog HTTP (integration)', () => {
     await t.hub.projects.catalog.load();
     expect(t.hub.projects.catalog.row(legacy.id)?.colorKey).toBe('rose');
     expect((await t.tdb.pool.query(`SELECT 1 FROM session_projects WHERE project_id=$1`, [created.id])).rowCount).toBe(0);
-    expect((await t.tdb.pool.query(`SELECT 1 FROM project_bindings WHERE project_id=$1`, [created.id])).rowCount).toBe(0);
     expect((await api('DELETE', `/api/catalog/projects/${created.id}`)).statusCode).toBe(404);
     // Keep other existing tests independent of the active catalog.
     await t.tdb.pool.query(`DELETE FROM catalog_projects WHERE name IN ('Concurrent E','concurrent e')`);
@@ -149,57 +145,53 @@ describe('projects-catalog HTTP (integration)', () => {
         [second.id, second.colorKey],
       ].sort(),
     );
-    expect((await api('PATCH', `/api/catalog/projects/${first.id}`, { name: 'Must roll back', bindings: [{ runnerId: foreignRunner, path: '/secret' }] })).statusCode).toBe(404);
+    expect((await api('PATCH', `/api/catalog/projects/${first.id}`, { name: 'Must roll back', folder: '../secret' })).statusCode).toBe(400);
     expect((await t.tdb.pool.query(`SELECT name FROM catalog_projects WHERE id=$1`, [first.id])).rows[0].name).toBe('Palette first');
     await api('DELETE', `/api/catalog/projects/${first.id}`);
     await api('DELETE', `/api/catalog/projects/${second.id}`);
     await t.hub.projects.flush();
   });
 
-  it('returns deletion before quiet reclassification and restores the stored path group with one notification', async () => {
+  it('returns deletion before the rules re-run and moves the session to the remaining project with one notification', async () => {
     await t.hub.projects.flush();
     const project = (await api('POST', '/api/catalog/projects', { name: 'Background fallback' })).json<{ id: string }>();
-    const legacy = (await t.tdb.pool.query(`SELECT id,path FROM projects ORDER BY id LIMIT 1`)).rows[0];
+    const fallback = (await api('POST', '/api/catalog/projects', { name: 'Path fallback' })).json<{ id: string }>();
+    expect((await api('PATCH', `/api/catalog/projects/${fallback.id}`, { folder: 'work/fallback' })).statusCode).toBe(200);
     const sid = (
       await t.tdb.pool.query(
-        `INSERT INTO sessions(user_id,runner_id,claude_session_id,source,status) SELECT user_id,'hp',gen_random_uuid(),'hub','closed' FROM catalog_projects WHERE id=$1 RETURNING id`,
-        [project.id],
+        `INSERT INTO sessions(user_id,runner_id,claude_session_id,source,status,cwd) SELECT user_id,'hp',gen_random_uuid(),'hub','closed',$2 FROM catalog_projects WHERE id=$1 RETURNING id`,
+        [project.id, 'C:\\Users\\alice\\work\\fallback'],
       )
     ).rows[0].id;
-    const file = (
-      await t.tdb.pool.query(
-        `INSERT INTO transcript_files(user_id,session_id,runner_id,claude_session_id,rel_key,rel_path,kind) SELECT user_id,id,runner_id,claude_session_id,'e/background.jsonl','e/background.jsonl','main' FROM sessions WHERE id=$1 RETURNING id`,
-        [sid],
-      )
-    ).rows[0].id;
-    await t.tdb.pool.query(`INSERT INTO path_touches(session_id,file_id,line_no,op,path_norm,project_id) VALUES ($1,$2,0,'cwd',$3,$4)`, [sid, file, legacy.path, legacy.id]);
-    await t.tdb.pool.query(`INSERT INTO session_projects(user_id,session_id,project_id) SELECT user_id,$2,id FROM catalog_projects WHERE id=$1`, [project.id, sid]);
-    const original = t.hub.projects.recompute.bind(t.hub.projects);
+    await t.tdb.pool.query(`INSERT INTO session_projects(user_id,session_id,project_id,source) SELECT user_id,$2,id,'manual' FROM catalog_projects WHERE id=$1`, [project.id, sid]);
+    const detection = (t.hub.projects as unknown as { detection: { evaluate: (id: string, m?: string, rulesOnly?: boolean) => Promise<void> } }).detection;
+    const original = detection.evaluate.bind(detection);
     let release!: () => void;
     const barrier = new Promise<void>(resolve => {
       release = resolve;
     });
-    const recompute = vi.spyOn(t.hub.projects, 'recompute').mockImplementation(async (id, options) => {
-      await barrier;
-      return original(id, options);
+    const evaluate = vi.spyOn(detection, 'evaluate').mockImplementation(async (id, m, rulesOnly) => {
+      if (id === sid) await barrier;
+      return original(id, m, rulesOnly);
     });
     const ui = connectUi(t.wsBase, cookie);
     await ui.open;
     try {
       expect((await api('DELETE', `/api/catalog/projects/${project.id}`)).statusCode).toBe(200);
-      await waitFor(() => recompute.mock.calls.length === 1);
-      expect(recompute.mock.calls[0]).toEqual([sid, { fresh: true, quiet: true, skipStart: true }]);
+      await waitFor(() => evaluate.mock.calls.some(c => c[0] === sid));
+      expect(evaluate.mock.calls.find(c => c[0] === sid)).toEqual([sid, undefined, true]);
       expect(ui.received.filter(message => message.type === 'projects.changed')).toHaveLength(0);
       release();
       await t.hub.projects.flush();
       await waitFor(() => ui.received.some(message => message.type === 'projects.changed'));
       expect(ui.received.filter(message => message.type === 'projects.changed')).toHaveLength(1);
-      expect(ui.received.filter(message => message.type === 'session.upsert')).toHaveLength(0);
-      expect((await api('GET', `/api/sessions/${sid}`)).json()).toMatchObject({ project: { id: legacy.id } });
+      expect((await api('GET', `/api/sessions/${sid}`)).json()).toMatchObject({ project: { id: fallback.id }, catalogProjectSource: 'auto', catalogProjectReason: 'cwd' });
     } finally {
       release();
-      recompute.mockRestore();
+      evaluate.mockRestore();
       ui.ws.close();
+      await api('DELETE', `/api/catalog/projects/${fallback.id}`);
+      await t.hub.projects.flush();
     }
   });
 
@@ -246,54 +238,52 @@ describe('projects-catalog HTTP (integration)', () => {
     await pickerAgent.next('welcome');
   });
 
-  it('creates, lists, sorts, binds and archives only a user-owned project', async () => {
-    expect((await api('POST', '/api/catalog/projects', { name: 'Relative', runnerId: 'hp', path: 'relative/path' })).statusCode).toBe(400);
+  it('creates, lists, sorts, sets the folder of and archives only a user-owned project', async () => {
+    for (const folder of ['/abs/path', 'C:\\work', '../up', 'a/../b']) {
+      expect((await api('POST', '/api/catalog/projects', { name: 'Bad folder', folder })).statusCode).toBe(400);
+    }
     expect((await api('GET', '/api/catalog/projects?sort=unknown')).statusCode).toBe(400);
-    const created = await api('POST', '/api/catalog/projects', { name: 'Zeta', description: 'notes', remote: 'https://example.test/zeta.git' });
+    const created = await api('POST', '/api/catalog/projects', { name: 'Zeta', description: 'notes', remote: 'https://example.test/zeta.git', folder: 'work\\zeta\\' });
     expect(created.statusCode).toBe(201);
     const id = created.json<{ id: string }>().id;
-    expect(created.json()).toMatchObject({ id, name: 'Zeta', description: 'notes', remote: 'https://example.test/zeta.git', bindings: [] });
+    expect(created.json()).toMatchObject({ id, name: 'Zeta', description: 'notes', remote: 'https://example.test/zeta.git', folder: 'work/zeta' });
     type Sidebar = { projects: Array<{ project: { id: string | null; title: string }; total: number; sessions: unknown[] }> };
     const group = async () => (await api('GET', '/api/sidebar')).json<Sidebar>().projects.find(p => p.project.id === id);
     // a project without sessions is a group at once, so a project created by hand is visible
     expect(await group()).toMatchObject({ project: { title: 'Zeta' }, total: 0, sessions: [] });
-    expect((await api('PUT', `/api/catalog/projects/${id}/bindings/hp`, { path: 'relative/path' })).statusCode).toBe(400);
-    expect((await api('PUT', `/api/catalog/projects/${id}/bindings/hp`, { path: 'C:\\work\\zeta' })).statusCode).toBe(200);
-    expect((await api('PUT', `/api/catalog/projects/${id}/bindings/vm`, { path: '/home/ubuntu/zeta' })).statusCode).toBe(200);
-    expect((await api('GET', '/api/catalog/projects?sort=name')).json()).toEqual([
-      expect.objectContaining({
-        id,
-        name: 'Zeta',
-        bindings: expect.arrayContaining([
-          { runnerId: 'hp', path: 'C:\\work\\zeta' },
-          { runnerId: 'vm', path: '/home/ubuntu/zeta' },
-        ]),
-      }),
-    ]);
-    expect((await api('GET', `/api/catalog/projects/not-a-uuid/resolve?runnerId=hp`)).statusCode).toBe(400);
-    expect((await api('GET', `/api/catalog/projects/${id}/resolve?runnerId=`)).statusCode).toBe(400);
+    expect((await api('PATCH', `/api/catalog/projects/${id}`, { folder: '/abs' })).statusCode).toBe(400);
+    expect((await api('PATCH', `/api/catalog/projects/${id}`, { folder: 'repos/zeta' })).statusCode).toBe(200);
+    expect((await api('GET', '/api/catalog/projects?sort=name')).json()).toEqual([expect.objectContaining({ id, name: 'Zeta', folder: 'repos/zeta' })]);
+    expect((await api('PATCH', `/api/catalog/projects/${id}`, { folder: '' })).statusCode).toBe(200);
+    expect((await api('GET', '/api/catalog/projects?sort=name')).json()).toEqual([expect.objectContaining({ id, folder: null })]);
     expect((await api('PATCH', '/api/catalog/projects/not-a-uuid', { archived: true })).statusCode).toBe(400);
     expect((await api('PATCH', `/api/catalog/projects/${id}`, { archived: true })).statusCode).toBe(200);
     expect((await api('GET', '/api/catalog/projects')).json()).toEqual([]);
     expect(await group()).toBeUndefined();
   });
 
-  it("rejects a binding to another user's runner and reports an offline owned runner as unavailable", async () => {
+  it('starts a session of a project without a folder in the default folder and refuses an archived or unknown project', async () => {
+    await t.tdb.pool.query(`UPDATE runners SET online=true WHERE id='hp'`);
     const created = await api('POST', '/api/catalog/projects', { name: 'Alpha' });
     const id = created.json<{ id: string }>().id;
-    expect((await api('PUT', `/api/catalog/projects/${id}/bindings/${foreignRunner}`, { path: '/secret' })).statusCode).toBe(404);
-    expect((await api('PUT', `/api/catalog/projects/${id}/bindings/hp`, { path: 'C:\\work\\alpha' })).statusCode).toBe(200);
-    await t.tdb.pool.query(`UPDATE runners SET online=false WHERE id='hp'`);
-    expect((await api('GET', `/api/catalog/projects/${id}/resolve?runnerId=hp`)).json()).toEqual({ status: 'unavailable' });
+    const launched = await api('POST', '/api/sessions', { runnerId: 'hp', model: 'haiku', prompt: 'alpha', projectId: id });
+    expect(launched.statusCode).toBe(201);
+    expect(launched.json()).toMatchObject({ cwd: 'C:\\Users\\alice', catalogProject: { id } });
+    const unknown = await api('POST', '/api/sessions', { runnerId: 'hp', model: 'haiku', prompt: 'x', projectId: '8af5f350-6251-492a-8888-16f8a3bb67af' });
+    expect(unknown.statusCode).toBe(404);
+    expect(unknown.json()).toMatchObject({ error: 'project_not_found' });
+    expect((await api('PATCH', `/api/catalog/projects/${id}`, { archived: true })).statusCode).toBe(200);
+    const archived = await api('POST', '/api/sessions', { runnerId: 'hp', model: 'haiku', prompt: 'x', projectId: id });
+    expect(archived.statusCode).toBe(404);
+    expect(archived.json()).toMatchObject({ error: 'project_not_found' });
     expect((await api('PATCH', `/api/catalog/projects/8af5f350-6251-492a-8888-16f8a3bb67af`, { archived: true })).statusCode).toBe(404);
   });
 
   it('keeps linked sessions available in history after archiving a project', async () => {
     await t.tdb.pool.query(`UPDATE runners SET online=true WHERE id='hp'`);
-    const created = await api('POST', '/api/catalog/projects', { name: 'History' });
+    const created = await api('POST', '/api/catalog/projects', { name: 'History', folder: 'work/history' });
     const id = created.json<{ id: string }>().id;
-    await api('PUT', `/api/catalog/projects/${id}/bindings/hp`, { path: 'C:\\work\\history' });
-    const launched = await api('POST', '/api/sessions', { runnerId: 'hp', cwd: 'C:\\wrong', model: 'haiku', prompt: 'history', projectId: id });
+    const launched = await api('POST', '/api/sessions', { runnerId: 'hp', model: 'haiku', prompt: 'history', projectId: id });
     expect(launched.statusCode).toBe(201);
     const sessionId = launched.json<{ id: string }>().id;
     expect((await api('PATCH', `/api/catalog/projects/${id}`, { archived: true })).statusCode).toBe(200);
@@ -301,18 +291,16 @@ describe('projects-catalog HTTP (integration)', () => {
     expect((await api('GET', `/api/catalog/projects/${id}/sessions`)).json()).toMatchObject({ total: 1, sessions: [expect.objectContaining({ id: sessionId })] });
   });
 
-  it('uses the selected runner binding as the launch cwd, links the session and rejects an unbound launch', async () => {
+  it('starts a project session in the default folder plus the project folder, ignores a client cwd and links the session', async () => {
     await t.tdb.pool.query(`UPDATE runners SET online=true WHERE id='hp'`);
-    const created = await api('POST', '/api/catalog/projects', { name: 'Launch me' });
+    const created = await api('POST', '/api/catalog/projects', { name: 'Launch me', folder: 'work/launch-me' });
     const id = created.json<{ id: string }>().id;
-    const noBinding = await api('POST', '/api/sessions', { runnerId: 'hp', cwd: 'C:\\wrong', model: 'haiku', prompt: 'hello', projectId: id });
-    expect(noBinding.statusCode).toBe(422);
-    expect(noBinding.json()).toMatchObject({ error: 'needs_binding' });
-    await api('PUT', `/api/catalog/projects/${id}/bindings/hp`, { path: 'C:\\work\\launch-me' });
     const launched = await api('POST', '/api/sessions', { runnerId: 'hp', cwd: 'C:\\wrong', model: 'haiku', prompt: 'hello', projectId: id });
     expect(launched.statusCode).toBe(201);
-    expect(commands.find(c => c.type === 'fs.stat' && c.payload.path === 'C:\\work\\launch-me')?.payload).toMatchObject({ path: 'C:\\work\\launch-me' });
-    expect(launched.json()).toMatchObject({ cwd: 'C:\\work\\launch-me', project: { id, title: 'Launch me' }, catalogProject: { id, name: 'Launch me' } });
+    const dir = 'C:\\Users\\alice\\work\\launch-me';
+    expect(commands.some(c => c.type === 'fs.stat' && c.payload.path === dir)).toBe(true);
+    expect(commands.some(c => c.type === 'fs.stat' && c.payload.path === 'C:\\wrong')).toBe(false);
+    expect(launched.json()).toMatchObject({ cwd: dir, project: { id, title: 'Launch me' }, catalogProject: { id, name: 'Launch me' } });
     expect((await t.tdb.pool.query(`SELECT project_id,source FROM session_projects WHERE session_id=$1`, [launched.json<{ id: string }>().id])).rows[0]).toEqual({
       project_id: id,
       source: 'explicit',
@@ -331,18 +319,17 @@ describe('projects-catalog HTTP (integration)', () => {
 
   it('does not start a session if the project link cannot be committed before launch', async () => {
     await t.tdb.pool.query(`UPDATE runners SET online=true WHERE id='hp'`);
-    const created = await api('POST', '/api/catalog/projects', { name: 'Atomic link' });
+    const created = await api('POST', '/api/catalog/projects', { name: 'Atomic link', folder: 'work/atomic-link' });
     const id = created.json<{ id: string }>().id;
-    await api('PUT', `/api/catalog/projects/${id}/bindings/hp`, { path: 'C:\\work\\atomic-link' });
     const starts = commands.filter(c => c.type === 'session.start').length;
-    const sessions = await t.tdb.pool.query<{ n: string }>(`SELECT count(*)::text AS n FROM sessions WHERE user_id=(SELECT id FROM users WHERE email=$1)`, ['jonasasx@gmail.com']);
+    const sessions = await t.tdb.pool.query<{ n: string }>(`SELECT count(*)::text AS n FROM sessions WHERE user_id=(SELECT id FROM users WHERE email=$1)`, ['alice@example.com']);
     await t.tdb.pool.query(`CREATE FUNCTION reject_catalog_link() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected project link failure'; END $$`);
     await t.tdb.pool.query(`CREATE TRIGGER reject_catalog_link BEFORE INSERT ON session_projects FOR EACH ROW EXECUTE FUNCTION reject_catalog_link()`);
     try {
       const result = await api('POST', '/api/sessions', { runnerId: 'hp', cwd: 'C:\\wrong', model: 'haiku', prompt: 'must not launch', projectId: id });
       expect(result.statusCode).toBe(500);
       expect(commands.filter(c => c.type === 'session.start')).toHaveLength(starts);
-      const after = await t.tdb.pool.query<{ n: string }>(`SELECT count(*)::text AS n FROM sessions WHERE user_id=(SELECT id FROM users WHERE email=$1)`, ['jonasasx@gmail.com']);
+      const after = await t.tdb.pool.query<{ n: string }>(`SELECT count(*)::text AS n FROM sessions WHERE user_id=(SELECT id FROM users WHERE email=$1)`, ['alice@example.com']);
       expect(after.rows[0]!.n).toBe(sessions.rows[0]!.n);
     } finally {
       await t.tdb.pool.query(`DROP TRIGGER reject_catalog_link ON session_projects`);
@@ -352,18 +339,17 @@ describe('projects-catalog HTTP (integration)', () => {
 
   it('keeps a successful launch successful when launch preferences cannot be stored and logs the failure', async () => {
     await t.tdb.pool.query(`UPDATE runners SET online=true WHERE id='hp'`);
-    const created = await api('POST', '/api/catalog/projects', { name: 'Preference failure' });
+    const created = await api('POST', '/api/catalog/projects', { name: 'Preference failure', folder: 'work/preference-failure' });
     const id = created.json<{ id: string }>().id;
-    await api('PUT', `/api/catalog/projects/${id}/bindings/hp`, { path: 'C:\\work\\preference-failure' });
     const starts = commands.filter(c => c.type === 'session.start').length;
-    const user = await t.tdb.pool.query<{ id: string }>(`SELECT id FROM users WHERE email=$1`, ['jonasasx@gmail.com']);
+    const user = await t.tdb.pool.query<{ id: string }>(`SELECT id FROM users WHERE email=$1`, ['alice@example.com']);
     await t.tdb.pool.query(`DELETE FROM user_preferences WHERE user_id=$1`, [user.rows[0]!.id]);
     await t.tdb.pool.query(`CREATE FUNCTION reject_launch_preference() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected preference failure'; END $$`);
     await t.tdb.pool.query(`CREATE TRIGGER reject_launch_preference BEFORE INSERT OR UPDATE ON user_preferences FOR EACH ROW EXECUTE FUNCTION reject_launch_preference()`);
     try {
       const result = await api('POST', '/api/sessions', { runnerId: 'hp', cwd: 'C:\\wrong', model: 'haiku', prompt: 'launch succeeds', projectId: id });
       expect(result.statusCode).toBe(201);
-      expect(result.json()).toMatchObject({ cwd: 'C:\\work\\preference-failure', catalogProject: { id, name: 'Preference failure' } });
+      expect(result.json()).toMatchObject({ cwd: 'C:\\Users\\alice\\work\\preference-failure', catalogProject: { id, name: 'Preference failure' } });
       expect(commands.filter(c => c.type === 'session.start')).toHaveLength(starts + 1);
       expect(logs.some(line => line.includes('launch preferences could not be stored'))).toBe(true);
     } finally {

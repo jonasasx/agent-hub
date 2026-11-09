@@ -1,13 +1,13 @@
 // MCP management through the session manager with the real SDK 0.3.310 and the real CLI of the platform package
 // (mcp-management design M9, task 2.6): a fake OAuth provider and an MCP server behind Bearer on 127.0.0.1, a temporary
-// CLAUDE_CONFIG_DIR — the machine's ~/.claude.json and ~/.claude/.credentials.json are not touched. No model call, no
+// CLAUDE_CONFIG_DIR and a temporary home — nothing falls back to ~/.claude.json or ~/.claude/.credentials.json. No model call, no
 // network: runs whenever the platform binary is installed.
 // Requirements: Вход в удалённый MCP с любого устройства; Защита потока входа MCP; Включение и выключение MCP-сервера;
 // MCP машины; Совместимость управления MCP с агентом.
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { query } from '@anthropic-ai/claude-agent-sdk';
@@ -32,24 +32,28 @@ const HUB_URI = 'https://hub.example.com/mcp/oauth/callback';
 const STATIC = 'static-SECRET-0123456789abcdef';
 const cmd = <T extends HubMessage['type']>(type: T, payload: PayloadOf<HubMessage, T>): HubMessage => ({ v: 1, ts: Date.now(), id: randomUUID(), type, payload }) as HubMessage;
 
-function fileHash(p: string): string {
-  return existsSync(p) ? createHash('sha256').update(readFileSync(p)).digest('hex') : 'absent';
-}
-const MACHINE_FILES = [join(homedir(), '.claude.json'), join(homedir(), '.claude', '.credentials.json')];
+// The real home files are rewritten by the live Claude Code sessions of the machine: the guard watches a home of its own,
+// set for the CLI and for this process (os.homedir() reads HOME/USERPROFILE), which must stay empty.
+const HOME_VARS = ['HOME', 'USERPROFILE'] as const;
 
 describe.skipIf(!RUN)('MCP management with the real CLI and a fake OAuth provider', { timeout: 240_000 }, () => {
   let hub: FakeProvider;
   let preset: FakeProvider;
   let cfg: string;
   let project: string;
-  let before: string[];
+  let home: string;
   const sent: Array<{ type: string; payload: Record<string, unknown> }> = [];
   const logs: string[] = [];
   let mgr: SessionManager;
   const sessions: string[] = [];
+  const savedHome: Partial<Record<(typeof HOME_VARS)[number], string>> = {};
 
   beforeAll(async () => {
-    before = MACHINE_FILES.map(fileHash);
+    home = mkdtempSync(join(tmpdir(), 'agenthub-mcp-home-'));
+    for (const v of HOME_VARS) {
+      savedHome[v] = process.env[v];
+      process.env[v] = home;
+    }
     hub = await startFakeProvider('fake-hub-mcp');
     hub.tokens.add(STATIC);
     preset = await startFakeProvider('fake-preset-mcp');
@@ -83,7 +87,11 @@ describe.skipIf(!RUN)('MCP management with the real CLI and a fake OAuth provide
     await mgr?.stopAll(10_000);
     await hub?.close();
     await preset?.close();
-    for (const d of [cfg, project]) if (d) rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+    for (const v of HOME_VARS) {
+      if (savedHome[v] === undefined) delete process.env[v];
+      else process.env[v] = savedHome[v];
+    }
+    for (const d of [cfg, project, home]) if (d) rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
   });
 
   async function startSession(): Promise<string> {
@@ -274,7 +282,7 @@ describe.skipIf(!RUN)('MCP management with the real CLI and a fake OAuth provide
     await expect(mgr.handle(cmd('mcp.auth.logout', { sessionId: sessions[0]!, server: 'echo' }))).rejects.toMatchObject({ code: 'mcp_auth_unsupported' });
   });
 
-  it('the machine files did not change', () => {
-    expect(MACHINE_FILES.map(fileHash)).toEqual(before);
+  it('nothing was written to the home folder: the config and the sign-ins stay in CLAUDE_CONFIG_DIR', () => {
+    expect([join(home, '.claude.json'), join(home, '.claude', '.credentials.json')].filter(f => existsSync(f))).toEqual([]);
   });
 });

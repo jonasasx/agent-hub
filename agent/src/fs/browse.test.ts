@@ -4,8 +4,8 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { FS_LIST_LIMIT, FS_TEXT_MAX } from '@agent-hub/shared';
-import { assertBrowsablePath, classifyFile, FsError, isInsideRoot, listFolder, readFileForView, resolveInside } from './browse.js';
+import { FS_CHUNK_MAX, FS_LIST_LIMIT, FS_TEXT_MAX } from '@agent-hub/shared';
+import { assertBrowsablePath, classifyFile, FsError, isInsideRoot, listFolder, readFileChunk, readFileForView, resolveInside } from './browse.js';
 
 const code = async (p: Promise<unknown>): Promise<string> => {
   try {
@@ -278,6 +278,42 @@ describe('readFileForView', () => {
       await readFileForView(join(root, 'absent.txt'), root);
     } catch (error) {
       expect((error as Error).message).not.toContain('absent');
+    }
+  });
+});
+
+describe('readFileChunk', () => {
+  it('reads a piece by offset of a file of any class and size and cuts it at the end of the file', async () => {
+    const big = join(root, 'big.bin');
+    const data = Buffer.alloc(FS_CHUNK_MAX + 1000);
+    for (let i = 0; i < data.length; i++) data[i] = i % 251;
+    await writeFile(big, data);
+    const first = await readFileChunk(big, root, 0, FS_CHUNK_MAX);
+    expect(first.result).toMatchObject({ size: data.length, offset: 0, bytes: FS_CHUNK_MAX, binary: true });
+    expect(first.data?.equals(data.subarray(0, FS_CHUNK_MAX))).toBe(true);
+    const last = await readFileChunk(big, root, FS_CHUNK_MAX, FS_CHUNK_MAX);
+    expect(last.result).toMatchObject({ offset: FS_CHUNK_MAX, bytes: 1000, binary: true });
+    expect(last.data?.equals(data.subarray(FS_CHUNK_MAX))).toBe(true);
+    expect(last.result.mtimeMs).toBe(first.result.mtimeMs);
+  });
+  it('gives metadata only for length 0 and for an offset past the end', async () => {
+    const meta = await readFileChunk(join(root, 'blob.bin'), root, 0, 0);
+    expect(meta.result).toMatchObject({ size: 6, bytes: 0 });
+    expect(meta.result.binary).toBeUndefined();
+    expect(meta.data).toBeUndefined();
+    const past = await readFileChunk(join(root, 'blob.bin'), root, 100, 10);
+    expect(past.result.bytes).toBe(0);
+    expect(past.data).toBeUndefined();
+  });
+  it('answers restricted, outside_root, not_file, not_found like fs.read', async () => {
+    expect(await code(readFileChunk(join(root, '.env'), root, 0, 10))).toBe('restricted');
+    expect(await code(readFileChunk(join(root, '.ssh', 'config'), root, 0, 0))).toBe('restricted');
+    expect(await code(readFileChunk(join(outside, 'secret.txt'), root, 0, 10))).toBe('outside_root');
+    expect(await code(readFileChunk(join(root, 'src'), root, 0, 10))).toBe('not_file');
+    expect(await code(readFileChunk(join(root, 'absent.bin'), root, 0, 10))).toBe('not_found');
+    if (linksWork) {
+      expect(await code(readFileChunk(join(root, 'linkfile'), root, 0, 10))).toBe('outside_root');
+      expect(await code(readFileChunk(join(root, 'linksecret'), root, 0, 10))).toBe('restricted');
     }
   });
 });

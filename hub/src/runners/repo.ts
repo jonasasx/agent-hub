@@ -38,7 +38,7 @@ export function toRunnerView(r: RunnerRow, latestAgent: string | null = null): R
     claudeVersion: r.claude_version,
     protocolVersion: r.protocol_version,
     incompatible: r.protocol_version !== null && !isCompatibleProtocol(r.protocol_version),
-    vaultRoot: r.vault_root,
+    defaultDir: r.default_dir ?? r.home_dir,
     homeDir: r.home_dir,
     state: r.state,
     claudeLogin: r.claude_login,
@@ -229,9 +229,14 @@ export async function deleteStalePendingRunners(db: Db, now = new Date()): Promi
   return deleted;
 }
 
-export async function renameRunner(db: Db, userId: string, id: string, name: string): Promise<RunnerRow | undefined> {
+/** PATCH /api/runners/:id: the name and/or the default folder (session-folder); the caller checks the folder on the machine. */
+export async function patchRunner(db: Db, userId: string, id: string, patch: { name?: string; defaultDir?: string }): Promise<RunnerRow | undefined> {
+  const set = {
+    ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+    ...(patch.defaultDir !== undefined ? { default_dir: patch.defaultDir } : {}),
+  };
   try {
-    return await db.updateTable('runners').set({ name: name.trim() }).where('id', '=', id).where('user_id', '=', userId).returningAll().executeTakeFirst();
+    return await db.updateTable('runners').set(set).where('id', '=', id).where('user_id', '=', userId).returningAll().executeTakeFirst();
   } catch (err) {
     if (isUniqueViolation(err, 'runners_user_name_key')) throw new RunnerNameTaken();
     throw err;

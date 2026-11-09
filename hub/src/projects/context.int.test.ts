@@ -34,11 +34,10 @@ describe('project catalogue in the session context (integration)', () => {
     old = connectFakeAgent(t.wsBase, oldToken, { protocol: '1.14' });
     autoReply(old, reply('old'));
     await old.next('welcome');
-    current = await create({ name: 'Current', description: 'текущий\nпроект', remote: 'https://example.test/current.git' });
+    current = await create({ name: 'Current', description: 'текущий\nпроект', remote: 'https://example.test/current.git', folder: 'current' });
     other = await create({ name: 'Other' });
     archived = await create({ name: 'Archived' });
-    expect((await api('PUT', `/api/catalog/projects/${current}/bindings/fresh`, { path: 'C:\\work\\current' })).statusCode).toBe(200);
-    expect((await api('PUT', `/api/catalog/projects/${current}/bindings/old`, { path: 'D:\\srv\\current' })).statusCode).toBe(200);
+    await t.tdb.pool.query(`UPDATE runners SET default_dir = CASE id WHEN 'fresh' THEN 'C:\\work' ELSE 'D:\\srv' END`);
     expect((await api('PATCH', `/api/catalog/projects/${archived}`, { archived: true })).statusCode).toBe(200);
   });
   afterAll(async () => {
@@ -47,7 +46,7 @@ describe('project catalogue in the session context (integration)', () => {
     await t.close();
   });
 
-  it('loadProjectCatalog: archived excluded, the binding of the given machine, the current project first', async () => {
+  it('loadProjectCatalog: archived excluded, the folder under the default folder of the given machine, the current project first', async () => {
     const userId = (await t.tdb.pool.query<{ id: string }>(`SELECT id FROM users ORDER BY created_at LIMIT 1`)).rows[0]!.id;
     const list = await loadProjectCatalog(t.tdb.db, userId, 'fresh', other);
     expect(list.map(p => p.id)).toEqual([other, current]);

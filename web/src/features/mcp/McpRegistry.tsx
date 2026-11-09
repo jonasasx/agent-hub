@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { McpImportPreviewResponse, McpRegistryDraftView, McpRegistryResponse, McpRegistryServerUpdate, McpRegistryStatus } from '../../api/mcpRegistryTypes';
+import type { McpRegistryDraftView, McpRegistryMachineOverrideRequest, McpRegistryResponse, McpRegistryServerUpdate, McpRegistryStatus } from '../../api/mcpRegistryTypes';
 import { api } from '../../api/client';
 import { useDialog } from '../ui/a11y';
 import { useStore } from '../../store';
@@ -22,10 +22,6 @@ export function McpRegistry({ onClose, sessionId }: { onClose: () => void; sessi
   const [status, setStatus] = useState(emptyStatus);
   const [selectedDraft, setSelectedDraft] = useState<McpRegistryDraftView | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
-  const [importMachineId, setImportMachineId] = useState('');
-  const [importProjectId, setImportProjectId] = useState('');
-  const [preview, setPreview] = useState<McpImportPreviewResponse | null>(null);
-  const [selectedImportServerIds, setSelectedImportServerIds] = useState<string[]>([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -49,19 +45,10 @@ export function McpRegistry({ onClose, sessionId }: { onClose: () => void; sessi
     }));
   };
 
-  const toggleMachineRegistry = async (machineId: string, enabled: boolean) => {
-    try {
-      setError('');
-      const result = await api.mcpRegistryMachineToggle(machineId, { enabled });
-      setStatus(current => ({
-        ...current,
-        agents: current.agents.map(agent => (agent.machineId === result.machineId ? { ...agent, registryEnabled: result.registryEnabled } : agent)),
-      }));
-      return result;
-    } catch (cause) {
-      setError(errorText(cause));
-      throw cause;
-    }
+  const machineOverride = async (serverId: string, machineId: string, body: McpRegistryMachineOverrideRequest) => {
+    setError('');
+    await api.mcpRegistryMachineOverride(serverId, machineId, body);
+    await reload();
   };
 
   useEffect(() => {
@@ -145,41 +132,6 @@ export function McpRegistry({ onClose, sessionId }: { onClose: () => void; sessi
     }
   };
 
-  const previewImport = async () => {
-    const project = projects.find(item => item.id === importProjectId);
-    const binding = project?.bindings.find(item => item.runnerId === importMachineId);
-    if (!binding) {
-      setError(t('mcp.registry.pickProject'));
-      return;
-    }
-    try {
-      setError('');
-      const result = await api.mcpRegistryImportPreview({ machineId: importMachineId, projectRoot: binding.path });
-      setPreview(result);
-      setSelectedImportServerIds(result.servers.map(server => server.id));
-    } catch (cause) {
-      setError(errorText(cause));
-    }
-  };
-
-  const commitImport = async () => {
-    if (!preview) return;
-    try {
-      setError('');
-      await api.mcpRegistryImportCommit({
-        importId: preview.importId,
-        revision: preview.revision,
-        serverIds: selectedImportServerIds,
-        userConfirmed: true,
-      });
-      setPreview(null);
-      setSelectedImportServerIds([]);
-      await reload();
-    } catch (cause) {
-      setError(errorText(cause));
-    }
-  };
-
   const doneWizard = async (message?: string) => {
     setWizardOpen(false);
     setSelectedDraft(null);
@@ -238,19 +190,7 @@ export function McpRegistry({ onClose, sessionId }: { onClose: () => void; sessi
             status={status}
             machines={machines.map(machine => ({ id: machine.id, name: machine.name, online: machine.online }))}
             projects={projects}
-            importMachineId={importMachineId}
-            importProjectId={importProjectId}
-            selectedImportServerIds={selectedImportServerIds}
-            preview={preview}
-            onImportMachineChange={setImportMachineId}
-            onImportProjectChange={setImportProjectId}
-            onImportServerSelectionChange={setSelectedImportServerIds}
-            onImportPreview={() => void previewImport()}
-            onImportCommit={() => void commitImport()}
-            onImportCancel={() => {
-              setPreview(null);
-              setSelectedImportServerIds([]);
-            }}
+            onImported={() => void reload().catch(cause => setError(errorText(cause)))}
             onAdd={startNewServer}
             onContinueDraft={continueDraft}
             onToggleServer={updateServer}
@@ -260,7 +200,7 @@ export function McpRegistry({ onClose, sessionId }: { onClose: () => void; sessi
             onProjectOverrideChange={updateProjectOverride}
             onProjectOverrideClear={clearProjectOverride}
             onRefreshStatus={refreshStatus}
-            onMachineRegistryToggle={toggleMachineRegistry}
+            onMachineOverride={machineOverride}
           />
         )}
       </section>

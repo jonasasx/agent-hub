@@ -238,10 +238,24 @@ export async function applyFacts(tx: Tx, o: { userId: string; sessionId: string;
         // change `background-tasks` D2: the call's metadata; the row works only once the result names the task
         await tx
           .insertInto('background_tasks')
-          .values({ session_id: sid, tool_use_id: f.toolUseId, state: 'pending', kind: f.kind, description: f.description, command: f.command, started_at: f.ts })
+          .values({
+            session_id: sid,
+            tool_use_id: f.toolUseId,
+            state: 'pending',
+            kind: f.kind,
+            description: f.description,
+            command: f.command,
+            timeout_ms: f.timeoutMs !== null ? String(f.timeoutMs) : null,
+            persistent: f.persistent,
+            started_at: f.ts,
+            agent_id: f.ownerAgentId,
+          })
           .onConflict(oc =>
             oc.columns(['session_id', 'tool_use_id']).doUpdateSet({
               kind: f.kind,
+              agent_id: sql`COALESCE(background_tasks.agent_id, ${f.ownerAgentId})`,
+              timeout_ms: sql`COALESCE(${f.timeoutMs !== null ? String(f.timeoutMs) : null}::bigint, background_tasks.timeout_ms)`,
+              persistent: sql`background_tasks.persistent OR ${f.persistent}`,
               description: sql`COALESCE(background_tasks.description, ${f.description})`,
               command: sql`COALESCE(background_tasks.command, ${f.command})`,
             }),
@@ -250,7 +264,8 @@ export async function applyFacts(tx: Tx, o: { userId: string; sessionId: string;
         break;
       }
       case 'bgstart': {
-        // a call seen before (pending) starts; an end state already there stays (a chunk sent again)
+        // a call seen before (pending) starts; an end state already there stays (a chunk sent again); an end read before
+        // the result (early_end: the notification of the task came first from another file) is applied instead of `running`
         await tx
           .insertInto('background_tasks')
           .values({
@@ -261,17 +276,32 @@ export async function applyFacts(tx: Tx, o: { userId: string; sessionId: string;
             kind: f.kind,
             timeout_ms: f.timeoutMs !== null ? String(f.timeoutMs) : null,
             persistent: f.persistent,
+            agent_id: f.ownerAgentId,
           })
           .onConflict(oc =>
             oc.columns(['session_id', 'tool_use_id']).doUpdateSet({
-              state: sql`CASE WHEN background_tasks.state = 'pending' THEN 'running' ELSE background_tasks.state END`,
+              agent_id: sql`COALESCE(background_tasks.agent_id, ${f.ownerAgentId})`,
+              state: sql`CASE WHEN background_tasks.state = 'pending' THEN COALESCE(background_tasks.early_end, 'running') ELSE background_tasks.state END`,
               task_id: f.taskId,
               kind: f.kind,
               started_at: sql`COALESCE(${f.ts}::timestamptz, background_tasks.started_at)`,
-              timeout_ms: f.timeoutMs !== null ? String(f.timeoutMs) : null,
-              persistent: f.persistent,
+              // the timeout and `persistent` of the call stay when the result has none (a command; a monitor whose result kept its text only)
+              timeout_ms: sql`COALESCE(${f.timeoutMs !== null ? String(f.timeoutMs) : null}::bigint, background_tasks.timeout_ms)`,
+              persistent: sql`background_tasks.persistent OR ${f.persistent}`,
             }),
           )
+          .execute();
+        break;
+      }
+      case 'bgfail': {
+        // the call never started a task: not `pending` forever (a row that has an early end is a task that started elsewhere)
+        await tx
+          .updateTable('background_tasks')
+          .set({ state: 'failed', ended_at: f.ts })
+          .where('session_id', '=', sid)
+          .where('tool_use_id', '=', f.toolUseId)
+          .where('state', '=', 'pending')
+          .where('early_end', 'is', null)
           .execute();
         break;
       }
@@ -305,13 +335,15 @@ export async function applyFacts(tx: Tx, o: { userId: string; sessionId: string;
         break;
       }
       case 'notify': {
-        // a background command (Bash/PowerShell) ends here; it has no registry row
-        await tx
+        // a background command or a monitor ends here; a notification of a repeated copy finds nothing running and changes nothing
+        const ended = await tx
           .updateTable('background_tasks')
           .set({ state: f.state, ended_at: f.ts })
           .where('session_id', '=', sid)
-          .where('state', '=', 'running')
+          // a real end also corrects a task the sweep has marked expired
+          .where('state', 'in', ['running', 'expired'])
           .where(eb => eb.or([...(f.toolUseId ? [eb('tool_use_id', '=', f.toolUseId)] : []), ...(f.agentId ? [eb('task_id', '=', f.agentId)] : [])]))
+          .returning('tool_use_id')
           .execute();
         // a task of the registry (a subagent)
         const rows = await tx
@@ -323,6 +355,30 @@ export async function applyFacts(tx: Tx, o: { userId: string; sessionId: string;
           .returning('id')
           .execute();
         for (const r of rows) changed.add(r.id);
+        // the end came before the call or its result (another file, read first): keep it on the row, bgstart applies it.
+        // Not for a subagent (it has a row of the registry), not when the row is already ended (a copy of the notification).
+        if (!ended.length && f.toolUseId) {
+          const run = await tx
+            .selectFrom('subagent_runs')
+            .select('id')
+            .where('session_id', '=', sid)
+            .where(eb => eb.or([...(f.agentId ? [eb('agent_id', '=', f.agentId)] : []), eb('tool_use_id', '=', f.toolUseId!)]))
+            .limit(1)
+            .execute();
+          if (!run.length) {
+            await tx
+              .insertInto('background_tasks')
+              .values({ session_id: sid, tool_use_id: f.toolUseId, state: 'pending', early_end: f.state, ended_at: f.ts })
+              .onConflict(oc =>
+                oc
+                  .columns(['session_id', 'tool_use_id'])
+                  .doUpdateSet({ early_end: f.state, ended_at: f.ts })
+                  .where('background_tasks.state', '=', 'pending')
+                  .where('background_tasks.early_end', 'is', null),
+              )
+              .execute();
+          }
+        }
         break;
       }
       case 'resume': {
@@ -400,7 +456,23 @@ export async function applyFacts(tx: Tx, o: { userId: string; sessionId: string;
       }
     }
   }
+  await endTasksOfEndedAgents(tx, sid);
   return changed;
+}
+
+/**
+ * Claude Code ends the background commands and monitors of a subagent with its final response and writes no
+ * notification for them: a running task whose subagent has ended (a result, a notification or SubagentStop) ends
+ * `stopped` at the end of the subagent. Facts of different files come in any order, so this runs after every chunk
+ * (a task read after the end of its subagent ends here too); a task started after the end belongs to a resumed run.
+ */
+async function endTasksOfEndedAgents(tx: Tx, sessionId: string): Promise<void> {
+  await sql`UPDATE background_tasks b SET state = 'stopped', ended_at = r.ended_at
+    FROM subagent_runs r
+    WHERE b.session_id = ${sessionId} AND b.agent_id IS NOT NULL AND b.state = 'running'
+      AND r.session_id = b.session_id AND r.agent_id = b.agent_id
+      AND r.state IN ('completed', 'failed', 'stopped') AND r.ended_at IS NOT NULL
+      AND (b.started_at IS NULL OR b.started_at <= r.ended_at)`.execute(tx);
 }
 
 /**

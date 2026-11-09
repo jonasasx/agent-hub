@@ -12,6 +12,27 @@ const emailList = z
   )
   .pipe(z.array(z.email()).min(1));
 
+/** S3 settings of the hub; the server and the CLI read them alike (change paas-deployment D1). */
+const s3Fields = {
+  AWS_REGION: z.string().default('eu-central-1'),
+  /** S3 bucket for raw transcripts and blobs (D7). Required in production; tests inject a store. */
+  S3_BUCKET_DATA: z.string().optional(),
+  /** S3-compatible endpoint (MinIO, Ceph RGW and others); unset — AWS by region. */
+  S3_ENDPOINT: z.url().optional(),
+  /** Path-style addressing (`<endpoint>/<bucket>/<key>`), needed by most S3-compatible stores. */
+  S3_FORCE_PATH_STYLE: z
+    .enum(['true', 'false', '1', '0'])
+    .default('false')
+    .transform(v => v === 'true' || v === '1'),
+  /** Static keys of the store; unset — the AWS SDK default chain (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY). */
+  S3_ACCESS_KEY_ID: z.string().optional(),
+  S3_SECRET_ACCESS_KEY: z.string().optional(),
+  /** Key prefix inside the bucket (empty in production, `test/` for the integration check). */
+  S3_PREFIX: z.string().default(''),
+};
+
+const s3Schema = z.object(s3Fields);
+
 const schema = z.object({
   NODE_ENV: z.string().default('production'),
   // projects-catalog: the session classifier runs one turn of a small model under the user's subscription on the utility runner
@@ -47,10 +68,25 @@ const schema = z.object({
   PORT: z.coerce.number().int().positive().default(8080),
   DATABASE_URL: z.string().min(1),
   COOKIE_SECRET: z.string().min(32, 'COOKIE_SECRET must be at least 32 characters'),
-  /** Google (multi-user M2): OIDC_GOOGLE_* — the old names OIDC_ISSUER/CLIENT_ID/CLIENT_SECRET are synonyms. */
+  /**
+   * Single provider (change keycloak-auth, D5): the one OIDC issuer the hub signs in through (Keycloak of the installation).
+   * Unset — the former two-provider mode with OIDC_GOOGLE_* and OIDC_KEYCLOAK_*; both modes at once is a configuration error.
+   */
+  OIDC_ISSUER: z.url().optional(),
+  OIDC_CLIENT_ID: z.string().optional(),
+  OIDC_CLIENT_SECRET: z.string().optional(),
+  /** Caption of the main login button; unset — «Войти» in the language of the request. */
+  OIDC_PROVIDER_LABEL: z.string().optional(),
+  /** Login buttons that skip the provider's own page: `hint:Label[@url,url]`, comma-separated, e.g. `corp:Corp@https://a.example`. */
+  OIDC_IDP_HINTS: z.string().default(''),
+  /** «Управление входом» link; unset — `<OIDC_ISSUER>/account` when the issuer is a Keycloak realm (`/realms/`). */
+  OIDC_ACCOUNT_URL: z.url().optional(),
+  /** invite — only invited addresses get an account; open — anyone with a verified address becomes a user. */
+  SIGNUP_MODE: z.enum(['invite', 'open']).default('invite'),
+  /** Google (multi-user M2) of the two-provider mode. */
   OIDC_GOOGLE_ISSUER: z.url().default('https://accounts.google.com'),
-  OIDC_GOOGLE_CLIENT_ID: z.string().min(1),
-  OIDC_GOOGLE_CLIENT_SECRET: z.string().min(1),
+  OIDC_GOOGLE_CLIENT_ID: z.string().optional(),
+  OIDC_GOOGLE_CLIENT_SECRET: z.string().optional(),
   /** Second provider (Keycloak or any OIDC issuer); without an issuer, client id or secret it is off. */
   OIDC_KEYCLOAK_ISSUER: z.url().optional(),
   /** Its name on the login button: «Войти через <label>». */
@@ -87,16 +123,15 @@ const schema = z.object({
   /** Templates install.sh / install.ps1 (deploy/agent/); HUB_URL is substituted; missing file — 404. */
   INSTALLERS_DIR: z.string().default(fileURLToPath(new URL('../../deploy/agent/', import.meta.url))),
   AUTH_DEV_EMAIL: z.email().optional(),
+  /** Web Push (change web-push-notifications): the VAPID pair and the contact (`mailto:` or `https:`); push is on only with all three. */
   VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  VAPID_SUBJECT: z.string().optional(),
   WEB_DIST_DIR: z.string().default(fileURLToPath(new URL('../../web/dist/', import.meta.url))),
   IDLE_TIMEOUT_MIN: z.coerce.number().int().positive().default(30),
   PERMISSION_IDLE_TIMEOUT_MIN: z.coerce.number().int().positive().default(120),
   EXTERNAL_WRITE_GUARD_MIN: z.coerce.number().int().nonnegative().default(10),
-  AWS_REGION: z.string().default('eu-central-1'),
-  /** S3 bucket for raw transcripts and blobs (D7). Required in production; tests inject a store. */
-  S3_BUCKET_DATA: z.string().optional(),
-  /** Key prefix inside the bucket (empty in production, `test/` for the integration check). */
-  S3_PREFIX: z.string().default(''),
+  ...s3Fields,
   /** GET /metrics needs `Authorization: Bearer <METRICS_TOKEN>`; unset — /metrics answers 404 (task 3.10). */
   METRICS_TOKEN: z.string().min(16, 'METRICS_TOKEN must be at least 16 characters').optional(),
   /** The Postgres data volume as mounted into the hub (statfs for free space, D17). */
@@ -127,6 +162,18 @@ const schema = z.object({
   VOICE_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
   /** Simultaneous transcriptions of the hub; one more gets 429 voice_busy. */
   VOICE_CONCURRENCY: z.coerce.number().int().positive().default(2),
+  /** Voice conversation (change voice-conversation, D10): the ElevenLabs agent whose Custom LLM is this hub. */
+  VOICE_AGENT_ID: z.string().min(1).optional(),
+  /** ElevenLabs key that issues the agent's signed URLs (ElevenAgents access); unset — ELEVENLABS_API_KEY. */
+  VOICE_AGENT_API_KEY: z.string().optional(),
+  /** Bearer key of the Custom LLM endpoint (the agent's secret) and the signing key of conversation tokens. */
+  VOICE_LLM_KEY: z.string().min(32, 'VOICE_LLM_KEY must be at least 32 characters').optional(),
+  /**
+   * A voice turn longer than this is not spoken to the end: a phrase ends the stream, the turn goes on, ms. ElevenLabs
+   * ends the whole conversation when a Custom LLM response runs past ~45 s (1002 «took too long»), heartbeat spaces do
+   * not extend it — the default stays below that.
+   */
+  VOICE_TURN_MAX_MS: z.coerce.number().int().positive().default(35_000),
   /**
    * claude-subscriptions P1: AES-256-GCM key of subscription tokens, base64 of exactly 32 bytes (`openssl rand -base64 32`).
    * Unset — the registry is read-only (adding/replacing a token → 503 subscriptions_disabled), sessions run under the
@@ -170,7 +217,21 @@ const schema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 });
 
+/** A login button of the single-provider mode: `/auth/login?hint=<id>` → `kc_idp_hint=<id>`. */
+export interface IdpHint {
+  id: string;
+  label: string;
+  /** Origins showing the button; empty — every public origin. */
+  origins: string[];
+}
+
 export type Config = z.infer<typeof schema> & {
+  /** OIDC_ISSUER is set: one provider, users `provider='oidc'` (keycloak-auth D5). */
+  singleProvider: boolean;
+  /** Parsed OIDC_IDP_HINTS. */
+  idpHints: IdpHint[];
+  /** «Управление входом»: OIDC_ACCOUNT_URL or `<issuer>/account` of a Keycloak realm; null — no link. */
+  accountUrl: string | null;
   /** PUBLIC_URL first, then EXTRA_PUBLIC_URLS. */
   publicUrls: string[];
   /** Their origins, compared with the Origin header of mutating requests and WebSockets. */
@@ -181,24 +242,119 @@ export type Config = z.infer<typeof schema> & {
   keycloakOrigins: string[];
   /** SUBSCRIPTION_TOKEN_KEY is set: tokens can be stored (claude-subscriptions P1). */
   subscriptionsEnabled: boolean;
+  /** VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY and VAPID_SUBJECT are all set: push can be sent (web-push-notifications D1). */
+  pushEnabled: boolean;
+  /** Some of the three are set, but push is off (a key or the contact is missing, or the contact is not mailto:/https:). */
+  pushIncomplete: boolean;
+  /** An ElevenLabs key, the agent and the bridge key are set: voice conversation is on (voice-conversation D10). */
+  voiceTalkEnabled: boolean;
+  /** Key of the signed-URL request: VOICE_AGENT_API_KEY, else ELEVENLABS_API_KEY. */
+  voiceAgentApiKey: string | undefined;
 };
 
-/** Old single-provider names (MVP) are synonyms of OIDC_GOOGLE_*; the new name wins when both are set. */
-const SYNONYMS: Array<[string, string]> = [
-  ['OIDC_ISSUER', 'OIDC_GOOGLE_ISSUER'],
-  ['OIDC_CLIENT_ID', 'OIDC_GOOGLE_CLIENT_ID'],
-  ['OIDC_CLIENT_SECRET', 'OIDC_GOOGLE_CLIENT_SECRET'],
-];
+const SINGLE_PROVIDER_REQUIRED = ['OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET'] as const;
+const LEGACY_REQUIRED = ['OIDC_GOOGLE_CLIENT_ID', 'OIDC_GOOGLE_CLIENT_SECRET'] as const;
+
+/**
+ * OIDC_IDP_HINTS: `hint:Label@url,url` items. An item starting with `id:` opens the next hint; an item without a colon is one
+ * more address of the previous hint (`corp:Corp@https://a,https://b`).
+ */
+function parseIdpHints(raw: string, publicOrigins: string[]): IdpHint[] {
+  const hints: IdpHint[] = [];
+  for (const item of raw
+    .split(',')
+    .map(x => x.trim())
+    .filter(Boolean)) {
+    const head = /^([A-Za-z0-9_.-]+):([^@]+?)(?:@(.+))?$/.exec(item);
+    if (head && !/^https?:\/\//i.test(item)) {
+      const [, id = '', label = '', url] = head;
+      if (hints.some(h => h.id === id)) throw new Error(`OIDC_IDP_HINTS repeats the hint ${id}`);
+      hints.push({ id, label: label.trim(), origins: url ? [hintOrigin(url)] : [] });
+      continue;
+    }
+    const last = hints.at(-1);
+    if (!last || last.origins.length === 0) throw new Error(`OIDC_IDP_HINTS: expected hint:Label[@url], got ${item}`);
+    last.origins.push(hintOrigin(item));
+  }
+  for (const origin of hints.flatMap(h => h.origins)) {
+    if (!publicOrigins.includes(origin)) throw new Error(`OIDC_IDP_HINTS contains an unknown public origin: ${origin}`);
+  }
+  return hints;
+}
+
+function hintOrigin(url: string): string {
+  try {
+    return new URL(url.trim()).origin;
+  } catch {
+    throw new Error(`OIDC_IDP_HINTS contains an invalid address: ${url}`);
+  }
+}
+
+/** Both modes at once (keycloak-auth D5): the old `.env` with OIDC_ISSUER=Google must not start as single-provider. */
+function checkProviderMode(given: Record<string, string | undefined>): void {
+  if (given.OIDC_ISSUER === undefined) {
+    for (const name of SINGLE_PROVIDER_REQUIRED) {
+      if (given[name] !== undefined) throw new Error(`${name} needs OIDC_ISSUER`);
+    }
+    const missing = LEGACY_REQUIRED.filter(name => given[name] === undefined);
+    if (missing.length > 0) throw new Error(`Set OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET, or ${missing.join(' and ')}`);
+    return;
+  }
+  const legacy = Object.keys(given).filter(k => k.startsWith('OIDC_GOOGLE_') || k.startsWith('OIDC_KEYCLOAK_'));
+  if (legacy.length > 0) throw new Error(`OIDC_ISSUER cannot be combined with ${legacy.sort().join(', ')}: remove one of the modes`);
+  const missing = SINGLE_PROVIDER_REQUIRED.filter(name => given[name] === undefined);
+  if (missing.length > 0) throw new Error(`OIDC_ISSUER needs ${missing.join(' and ')}`);
+}
+
+/**
+ * Names a PaaS may give the hub (change paas-deployment, D1): each fills the hub's own name when that
+ * one is not set. `OIDC_*` cannot be a platform secret, hence HUB_ADMIN_EMAILS.
+ */
+const PLATFORM_ALIASES = [
+  ['S3_BUCKET', 'S3_BUCKET_DATA'],
+  ['S3_REGION', 'AWS_REGION'],
+  ['HUB_ADMIN_EMAILS', 'OIDC_ALLOWED_EMAILS'],
+] as const;
+
+/** The environment with empty values dropped (`METRICS_TOKEN=` from .env.example means «not set») and platform aliases applied. */
+export function hubEnv(env: NodeJS.ProcessEnv): Record<string, string | undefined> {
+  const given: Record<string, string | undefined> = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== ''));
+  for (const [alias, name] of PLATFORM_ALIASES) {
+    if (given[name] === undefined && given[alias] !== undefined) given[name] = given[alias];
+  }
+  return given;
+}
+
+/** Static keys come as a pair: one without the other would silently fall back to the AWS SDK default chain. */
+function checkS3Keys(c: { S3_ACCESS_KEY_ID?: string | undefined; S3_SECRET_ACCESS_KEY?: string | undefined }): void {
+  if ((c.S3_ACCESS_KEY_ID === undefined) !== (c.S3_SECRET_ACCESS_KEY === undefined)) {
+    throw new Error('Invalid hub configuration: set both S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY or neither');
+  }
+}
+
+/** S3 settings for the hub CLI: the same names, aliases and validation as loadConfig, without the rest of the hub config. */
+export function loadS3Settings(env: NodeJS.ProcessEnv): z.infer<typeof s3Schema> {
+  const parsed = s3Schema.safeParse(hubEnv(env));
+  if (!parsed.success) {
+    throw new Error(`Invalid hub configuration:
+${z.prettifyError(parsed.error)}`);
+  }
+  checkS3Keys(parsed.data);
+  return parsed.data;
+}
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  // An empty value in .env (`DISK_ALERT_FREE_PCT=`, `METRICS_TOKEN=` from .env.example) means «not set»: the default applies.
-  const given: Record<string, string | undefined> = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== ''));
-  for (const [old, now] of SYNONYMS) if (given[now] === undefined && given[old] !== undefined) given[now] = given[old];
+  const given = hubEnv(env);
+  if (given.OIDC_ALLOWED_EMAILS === undefined) {
+    throw new Error('Invalid hub configuration: set OIDC_ALLOWED_EMAILS or HUB_ADMIN_EMAILS (the bootstrap administrators)');
+  }
+  checkProviderMode(given);
   const parsed = schema.safeParse(given);
   if (!parsed.success) {
     throw new Error(`Invalid hub configuration:\n${z.prettifyError(parsed.error)}`);
   }
   const c = parsed.data;
+  checkS3Keys(c);
   const url = new URL(c.PUBLIC_URL);
   // Requirement: Вход через Google OIDC — the dev login bypass exists only for e2e tests.
   if (c.AUTH_DEV_EMAIL && c.NODE_ENV !== 'test') {
@@ -211,12 +367,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       throw new Error(`OIDC_KEYCLOAK_PUBLIC_URLS contains an unknown public origin: ${origin}`);
     }
   }
+  const singleProvider = c.OIDC_ISSUER !== undefined;
+  if (!singleProvider && c.OIDC_IDP_HINTS !== '') throw new Error('OIDC_IDP_HINTS needs OIDC_ISSUER');
+  const idpHints = parseIdpHints(c.OIDC_IDP_HINTS, publicOrigins);
+  const issuer = c.OIDC_ISSUER?.replace(/\/+$/, '');
+  const accountUrl = c.OIDC_ACCOUNT_URL ?? (issuer && issuer.includes('/realms/') ? `${issuer}/account` : null);
+  const vapidGiven = [c.VAPID_PUBLIC_KEY, c.VAPID_PRIVATE_KEY, c.VAPID_SUBJECT].filter(Boolean).length;
+  const pushEnabled = Boolean(c.VAPID_PUBLIC_KEY && c.VAPID_PRIVATE_KEY && c.VAPID_SUBJECT && /^(mailto:|https:)/.test(c.VAPID_SUBJECT));
   return {
     ...c,
+    singleProvider,
+    idpHints,
+    accountUrl,
     publicUrls: [c.PUBLIC_URL, ...c.EXTRA_PUBLIC_URLS],
     publicOrigins,
     keycloakOrigins,
     keycloakEnabled: Boolean(c.OIDC_KEYCLOAK_ISSUER && c.OIDC_KEYCLOAK_CLIENT_ID && c.OIDC_KEYCLOAK_CLIENT_SECRET),
     subscriptionsEnabled: c.SUBSCRIPTION_TOKEN_KEY !== undefined,
+    pushEnabled,
+    pushIncomplete: vapidGiven > 0 && !pushEnabled,
+    voiceTalkEnabled: Boolean((c.VOICE_AGENT_API_KEY || c.ELEVENLABS_API_KEY) && c.VOICE_AGENT_ID && c.VOICE_LLM_KEY),
+    voiceAgentApiKey: c.VOICE_AGENT_API_KEY || c.ELEVENLABS_API_KEY,
   };
 }

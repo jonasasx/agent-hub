@@ -2,6 +2,7 @@
 import { isLocale, type Locale } from '@agent-hub/shared';
 import type { Db } from '../db/db.js';
 import { hashSecret, newSecret } from './secrets.js';
+import { openSessionIdToken, sealSessionIdToken } from './idToken.js';
 
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const SESSION_COOKIE = 'ah_session';
@@ -11,7 +12,7 @@ export interface AuthUser {
   email: string;
   role: 'admin' | 'user';
   name: string | null;
-  provider: 'google' | 'keycloak';
+  provider: 'google' | 'keycloak' | 'oidc';
   /** change i18n D4: the interface language of the profile; set on a session lookup, `null` — the browser language. */
   locale?: Locale | null;
 }
@@ -33,16 +34,22 @@ export async function upsertUser(db: Db, email: string): Promise<AuthUser> {
 }
 
 /** Creates a server-side session; returns the cookie value (only its hash is stored). */
-export async function createSession(db: Db, userId: string, userAgent: string | undefined, now = new Date()): Promise<string> {
+/**
+ * `idToken` — keycloak-auth D7: kept for the `id_token_hint` of the provider logout, encrypted with `key`
+ * (idtoken-at-rest-denied-logout D1); without a key it is not kept.
+ */
+export async function createSession(db: Db, userId: string, userAgent: string | undefined, now = new Date(), idToken: string | null = null, key: Buffer | null = null): Promise<string> {
   const token = newSecret();
+  const idHash = hashSecret(token);
   await db
     .insertInto('auth_sessions')
     .values({
-      id_hash: hashSecret(token),
+      id_hash: idHash,
       user_id: userId,
       created_at: now,
       expires_at: new Date(now.getTime() + SESSION_TTL_MS),
       user_agent: userAgent?.slice(0, 500) ?? null,
+      id_token_enc: idToken && key ? sealSessionIdToken(key, idHash, idToken) : null,
     })
     .execute();
   return token;
@@ -77,9 +84,13 @@ export async function findSessionUser(db: Db, token: string | undefined, now = n
   return (await findSession(db, token, now))?.user ?? null;
 }
 
-export async function deleteSession(db: Db, token: string | undefined): Promise<void> {
-  if (!token) return;
-  await db.deleteFrom('auth_sessions').where('id_hash', '=', hashSecret(token)).execute();
+/** Deletes the session; returns its id_token (keycloak-auth D7), null — none, unreadable with `key` or no session. */
+export async function deleteSession(db: Db, token: string | undefined, key: Buffer | null = null): Promise<string | null> {
+  if (!token) return null;
+  const idHash = hashSecret(token);
+  const r = await db.deleteFrom('auth_sessions').where('id_hash', '=', idHash).returning('id_token_enc').executeTakeFirst();
+  if (!r?.id_token_enc || !key) return null;
+  return openSessionIdToken(key, idHash, r.id_token_enc);
 }
 
 /** Deletes every browser session of the user except `keep` (sha256 of a cookie); returns the hashes deleted. */

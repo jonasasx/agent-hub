@@ -27,11 +27,11 @@ test('Дерево по проектам: by freshness, «Без проекта�
   expect(personal).not.toBe('');
 });
 
-test('Перенос с закреплением и открепление: «05-agent-hub ▾» → «Перенести в…» → 03-mm-sms-bridge; the tree follows; «Открепить» returns to the classifier', async ({ page }) => {
+test('Перенос с закреплением и открепление: «05-agent-hub ▾» → «Перенести в…» → 03-sms-bridge; the tree follows; «Открепить» returns to the classifier', async ({ page }) => {
   const hub = await start(page);
   const head = page.locator('section.leaf .classline');
   await expect(head).toContainText('определено по путям: 3 правки в 05-agent-hub');
-  await expect(head.getByText('+ 03-mm-sms-bridge')).toBeVisible();
+  await expect(head.getByText('+ 03-sms-bridge')).toBeVisible();
   const btn = head.getByRole('button', { name: 'Проект: 05-agent-hub' });
   await btn.click();
   await expect(page.getByRole('menuitem')).toHaveText(['Перенести в…', 'Закрепить']);
@@ -41,18 +41,18 @@ test('Перенос с закреплением и открепление: «05
   await expect(page.getByRole('listbox', { name: 'Проекты' }).getByRole('option')).toHaveCount(1);
   await page.keyboard.press('Enter');
   await expect(head).toContainText('закреплено вручную');
-  await expect(head.getByRole('button', { name: 'Проект: 03-mm-sms-bridge, закреплён' })).toBeFocused();
+  await expect(head.getByRole('button', { name: 'Проект: 03-sms-bridge, закреплён' })).toBeFocused();
   await expect(page.getByText('Проект закреплён')).toBeVisible();
   const put = hub.requests.find(r => r.method === 'PUT' && r.path.endsWith('/project'))!;
   expect(put.body).toEqual({ projectId: 'p-sms' });
-  // the row is now under 03-mm-sms-bridge in the tree
-  const smsGroup = page.locator('.prow', { hasText: '03-mm-sms-bridge' });
+  // the row is now under 03-sms-bridge in the tree
+  const smsGroup = page.locator('.prow', { hasText: '03-sms-bridge' });
   await expect(smsGroup).toHaveAttribute('aria-expanded', 'true');
   await expect(smsGroup.locator('xpath=following-sibling::div[1]').getByText('GUI-прототип Agent Hub')).toBeVisible();
   // unpin: the classifier puts it back into 05-agent-hub
-  await head.getByRole('button', { name: /Проект: 03-mm-sms-bridge/ }).click();
+  await head.getByRole('button', { name: /Проект: 03-sms-bridge/ }).click();
   await page.getByRole('menuitem', { name: 'Открепить' }).click();
-  await expect(page.getByText('03-mm-sms-bridge → 05-agent-hub')).toBeVisible();
+  await expect(page.getByText('03-sms-bridge → 05-agent-hub')).toBeVisible();
   await expect(head).toContainText('определено по путям: 3 правки в 05-agent-hub');
   await expect(head.getByRole('button', { name: 'Проект: 05-agent-hub' })).toBeVisible();
   await expect(page.locator('.prow', { hasText: '05-agent-hub' }).locator('xpath=following-sibling::div[1]').getByText('GUI-прототип Agent Hub')).toBeVisible();

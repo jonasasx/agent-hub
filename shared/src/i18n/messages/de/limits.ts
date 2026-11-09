@@ -45,12 +45,16 @@ export default {
   'limits.window.seven_day_oauth_apps.short': '7 T. Apps',
   'limits.window.seven_day_oauth_apps.name': '7 Tage · Apps',
   'limits.window.seven_day_oauth_apps.desc': 'Das Wochenlimit für Anfragen von Apps, die über OAuth mit dem Konto verbunden sind. Was hier zählt, entscheidet Anthropic.',
+  'limits.window.seven_day_overage_included.short': '7 T. Fable',
+  'limits.window.seven_day_overage_included.name': '7 Tage · Fable',
+  'limits.window.seven_day_overage_included.desc':
+    'Ein eigenes Wochenlimit für Anfragen an Fable-Modelle. Andere Modelle verbrauchen es nicht; der Dienst sendet dieses Fenster nur als Antwort auf Fable-Anfragen.',
   'limits.window.unknownDesc': 'Fenster ohne Beschreibung: Der Dienst hat einen neuen Limit-Typ zurückgegeben.',
   'limits.text.overage':
     'Nutzung über das Abonnement-Limit hinaus gegen Guthaben oder Geld, falls im Konto aktiviert. Der Hub zeigt nur den Zustand: an, in Benutzung, erschöpft; Beträge zählt er nicht.',
   'limits.text.exhaustion':
     'Erreicht ein Fenster 100%, lehnt das Abonnement Durchläufe ab, bis dieses Fenster zurückgesetzt wird. Ist beim Abonnement der automatische Wechsel aktiviert, setzt der Hub die Sitzung mit dem nächsten Abonnement des Registers fort; andernfalls zeigt der Chat die Schaltfläche „Mit anderem Abonnement fortfahren“.',
-  'limits.text.refresh': 'Aktualisieren sendet eine kurze Dienstanfrage an ein Haiku-Modell mit diesem Abonnement: Das verbraucht einen kleinen Teil des 5-Stunden-Fensters.',
+  'limits.text.refresh': 'Aktualisieren sendet eine kurze Dienstanfrage an ein Haiku-Modell mit diesem Abonnement: Das verbraucht einen kleinen Teil des Abonnementlimits.',
   'limits.text.quiet':
     'Der Durchlauf ist durchgegangen und das Limit ist nicht erschöpft; der Dienst hat keine neuen Prozentwerte gesendet, die bekannten Fensterwerte liegen unter dem Schwellenwert.',
   'limits.text.held': 'Der Dienst sendet die Prozentwerte nicht bei jedem Durchlauf, daher zeigen die Fenster die zuletzt bekannten Werte.',
@@ -110,6 +114,7 @@ export default {
   'limits.card.updatedAt': 'Aktualisiert um {time}',
   'limits.card.updatedAtSource': 'Aktualisiert um {time} · {source}',
   'limits.card.noWindowsYet': 'Noch keine Fensterdaten',
+  'limits.card.noFiveHour': 'Der Dienst begrenzt das 5-Stunden-Fenster für dieses Abonnement nicht.',
   'limits.card.probeAt': 'Prüfdurchlauf um {time}',
   'limits.chip.label': 'Limits {name}: {aria}',
   'limits.window.resetTip': '{window} — Fenster zurückgesetzt',

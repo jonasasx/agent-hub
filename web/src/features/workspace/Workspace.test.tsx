@@ -1,4 +1,4 @@
-// Component tests of the work area (tasks 2.10/2.13): tabs (middle click, ×, numbers, glyphs), eviction toast,
+// Component tests of the work area (tasks 2.10/2.13): tabs (middle click, ×, numbers, glyphs), no tab limit,
 // hotkeys, «Одно окно»/«Вернуть разделение», pane close, phone bar.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 import type { SessionView } from '../../api/types';
 import { useStore } from '../../store';
 import { RUNNERS, mockFetch, resetStore, session } from '../../test/factories';
-import { emptyWorkspace, leaves, mergeAll, restoreSplit, split } from '../layout/layout';
+import { emptyWorkspace, leaves, split } from '../layout/layout';
 import { handleHotkey } from './hotkeys';
 import { openSession } from './actions';
 import { Workspace } from './Workspace';
@@ -98,70 +98,28 @@ describe('Tabs', () => {
     expect(kid!.getAttribute('title')).toContain('субагент сессии «Главная»');
   });
 
-  it('Вытеснение давно не открывавшейся: the ninth tab evicts the oldest tab of this window that is not shown', () => {
+  it('Девятая вкладка (spec tab-strip): the ninth session opens, the eight tabs stay, no toast', () => {
     const list = Array.from({ length: 9 }, (_, i) => session({ title: `S${i + 1}` }));
     setup(list, list.slice(0, 8));
-    useStore.setState({ openedAt: Object.fromEntries(list.map((s, i) => [s.id, i + 1])) });
     act(() => openSession(list[8]!.id));
-    expect(screen.getAllByRole('tab')).toHaveLength(8);
-    // S1 was on screen until the ninth tab opened → kept; S2 is the oldest of the rest
-    expect(screen.getByRole('tab', { name: /^S1/ })).toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: /^S2/ })).not.toBeInTheDocument();
-    expect(useStore.getState().toasts.at(-1)).toMatchObject({ title: 'Вкладка убрана из полосы', text: 'S2, она осталась в списке слева' });
-    expect(useStore.getState().openedAt[list[1]!.id]).toBeUndefined();
+    expect(screen.getAllByRole('tab')).toHaveLength(9);
+    expect(screen.getByRole('tab', { name: /^S9/ })).toHaveAttribute('aria-selected', 'true');
+    expect(useStore.getState().toasts).toEqual([]);
   });
 
-  it('the eviction toast names a session whose card has not loaded yet (UI review M3b)', async () => {
-    const list = Array.from({ length: 9 }, (_, i) => session({ title: `S${i + 1}` }));
-    setup(list, list.slice(0, 8));
-    useStore.setState({ openedAt: Object.fromEntries(list.map((s, i) => [s.id, i + 1])) });
-    // S2's card is not in the window yet (a tab restored from the layout before the sidebar answered)
-    const { [list[1]!.id]: _gone, ...rest } = useStore.getState().sessions;
-    useStore.setState({ sessions: rest });
-    mockFetch({
-      '/api/sessions/': (_i, url) => (url!.endsWith(`/api/sessions/${list[1]!.id}`) ? { status: 200, body: list[1] } : { status: 200, body: { events: [], before: null } }),
-    });
-    act(() => openSession(list[8]!.id));
-    await vi.waitFor(() => expect(useStore.getState().toasts.at(-1)).toMatchObject({ title: 'Вкладка убрана из полосы', text: 'S2, она осталась в списке слева' }));
-    expect(useStore.getState().toasts.some(t => t.text.startsWith('сессия'))).toBe(false);
-  });
-
-  it('eviction keeps tabs active in the layout remembered by «Одно окно»', () => {
-    const list = Array.from({ length: 9 }, (_, i) => session({ title: `S${i + 1}` }));
-    setup(list, list.slice(0, 8));
-    // split: S2 alone on the right, then «Одно окно» — S2 is active in the remembered layout
-    act(() => useStore.setState({ ws: mergeAll(split(useStore.getState().ws, list[1]!.id, 'p1', 'right').ws) }));
-    useStore.setState({ openedAt: Object.fromEntries(list.map((s, i) => [s.id, i + 1])) });
-    act(() => openSession(list[8]!.id));
-    // S1 and S2 are active in the remembered panes → S3, the oldest of the rest
-    expect(screen.getByRole('tab', { name: /^S1/ })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /^S2/ })).toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: /^S3/ })).not.toBeInTheDocument();
-  });
-
-  it('Все вкладки окна активны в панелях: the ninth tab is not opened, the tabs do not change, a toast says why', () => {
+  it('Все вкладки активны в панелях: one more session opens in the focused pane, no «Все 8 вкладок» toast', () => {
     const list = Array.from({ length: 9 }, (_, i) => session({ title: `S${i + 1}` }));
     setup(list, list.slice(0, 4));
-    // 4 panes with one tab each, merged → 4 active in «Одно окно»; then 4 more tabs active in 4 panes is impossible,
-    // so build: 4 panes, each 2 tabs where the remembered layout holds the other active ones
     let ws = useStore.getState().ws;
     ws = split(ws, list[1]!.id, 'p1', 'right').ws;
     ws = split(ws, list[2]!.id, 'p1', 'bottom').ws;
     ws = split(ws, list[3]!.id, leaves(ws.layout)[2]!, 'bottom').ws;
-    ws = mergeAll(ws); // S1–S4 active in the remembered layout
-    ws = restoreSplit(ws);
-    // add S5–S8 as active tabs, one per pane, and remember the S1–S4 layout via a fake «saved»
-    const panes = leaves(ws.layout);
-    const saved = { layout: ws.layout, panes: structuredClone(ws.panes), focus: ws.focus };
-    panes.forEach((pid, i) => {
-      ws.panes[pid]!.tabs.push(list[4 + i]!.id);
-      ws.panes[pid]!.active = list[4 + i]!.id;
-    });
-    act(() => useStore.setState({ ws: { ...ws, saved } }));
-    const before = structuredClone(useStore.getState().ws);
+    act(() => useStore.setState({ ws }));
+    const focus = useStore.getState().ws.focus;
     act(() => openSession(list[8]!.id));
-    expect(useStore.getState().ws).toEqual(before);
-    expect(useStore.getState().toasts.at(-1)).toMatchObject({ title: 'Все 8 вкладок открыты в панелях — закройте одну' });
+    expect(useStore.getState().ws.panes[focus]!.active).toBe(list[8]!.id);
+    expect(screen.getAllByRole('tab')).toHaveLength(5);
+    expect(useStore.getState().toasts).toEqual([]);
   });
 });
 

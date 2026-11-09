@@ -25,7 +25,7 @@ function setup(name: string, o: { maxBytesPerSec?: number; windows?: boolean; cr
     watch: false,
     windows: o.windows ?? true,
     now: () => now,
-    gitInfo: () => Promise.resolve({ remote: o.remote ?? 'git@gitlab.com:jonasasx/agent-hub.git' }),
+    gitInfo: () => Promise.resolve({ remote: o.remote ?? 'git@git.example.com:alice/agent-hub.git' }),
     ...(o.cronMarkersFile ? { cronMarkersFile: o.cronMarkersFile } : {}),
   });
   return { r, sent, projects, advance: (ms: number) => (now += ms) };
@@ -52,7 +52,7 @@ describe('Replicator', () => {
     expect(c).toHaveLength(2);
     expect(c.find(x => x.kind === 'subagent')).toMatchObject({ sessionId: sid, agentId: 'agent-a1', lines: [line(sid, 9)] });
     await new Promise(res => setTimeout(res, 20));
-    expect(sent.find(m => m.type === 'repl.meta')!.payload).toEqual({ sessionId: sid, cwd: 'C:\\Users\\alice\\vault', gitRemote: 'git@gitlab.com:jonasasx/agent-hub.git', gitBranch: 'master' });
+    expect(sent.find(m => m.type === 'repl.meta')!.payload).toEqual({ sessionId: sid, cwd: 'C:\\Users\\alice\\vault', gitRemote: 'git@git.example.com:alice/agent-hub.git', gitBranch: 'master' });
   });
 
   it('subagents 4.1: agent-<id>.meta.json goes as repl.agent_meta after welcome, again only when it changes; over 16 KB not sent', async () => {

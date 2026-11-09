@@ -2,6 +2,10 @@ import type { PluralMessage } from '../../index.js';
 
 export default {
   'files.action.copyPath': 'Copy path',
+  'files.action.download': 'Download',
+  'files.action.downloadFailed': 'Could not download {name}',
+  'files.action.downloadNamed': 'Download {name}',
+  'files.action.downloadOutdated': 'Update the agent on {machine} to download files',
   'files.action.inTree': 'In tree',
   'files.action.mention': 'To message',
   'files.action.mentionTitle': 'Insert the path into the input of session "{title}"',

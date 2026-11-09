@@ -64,8 +64,8 @@ export const MACHINES = [
 const USERS = [
   {
     id: 'u1',
-    email: 'jonasasx@gmail.com',
-    name: 'Иван Волынкин',
+    email: 'alice@example.com',
+    name: 'Алиса Смит',
     provider: 'google',
     role: 'admin',
     status: 'active',
@@ -77,7 +77,7 @@ const USERS = [
   {
     id: 'u2',
     email: 'bob.longname.long.address@example.com',
-    name: 'Борис Волынкина',
+    name: 'Борис Смит',
     provider: 'google',
     role: 'user',
     status: 'active',
@@ -165,8 +165,8 @@ export async function installMultiUser(page: Page, hub: MockHub, opts: MultiUser
     ok(r, {
       user:
         role === 'admin'
-          ? { id: 'u1', email: 'jonasasx@gmail.com', role, name: 'Иван Волынкин', provider: 'google' }
-          : { id: 'u2', email: 'bob@example.com', role, name: 'Борис Волынкина', provider: 'google' },
+          ? { id: 'u1', email: 'alice@example.com', role, name: 'Алиса Смит', provider: 'google' }
+          : { id: 'u2', email: 'bob@example.com', role, name: 'Борис Смит', provider: 'google' },
       vapidPublicKey: null,
     }),
   );

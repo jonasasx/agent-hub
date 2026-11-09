@@ -25,8 +25,10 @@ import {
   mcpRegistryOAuthStatusSchema,
   mcpRegistryOAuthValidateResponseSchema,
   mcpRegistryOAuthConnectResponseSchema,
-  mcpRegistryMachineToggleRequestSchema,
-  mcpRegistryMachineToggleResponseSchema,
+  mcpRegistryMachineOverrideRequestSchema,
+  mcpImportEntrySchema,
+  mcpImportCommitResponseSchema,
+  MCP_IMPORT_V2_CAPABILITY,
   mcpRegistryStatusSchema,
   mcpRegistryValidateResultPayload,
   parseAgentMessage,
@@ -67,8 +69,8 @@ describe('MCP registry protocol 1.13 contracts', () => {
       name: 'API_KEY',
     });
     expect(mcpRegistrySnapshotSchema.parse({ protocol: MCP_REGISTRY_PROTOCOL, revision: 0, generatedAt: 1, servers: [] }).registryEnabled).toBe(false);
-    expect(mcpRegistryMachineToggleRequestSchema.parse({ enabled: true }).enabled).toBe(true);
-    expect(mcpRegistryMachineToggleResponseSchema.parse({ machineId, registryEnabled: true })).toMatchObject({ registryEnabled: true });
+    expect(mcpRegistryMachineOverrideRequestSchema.parse({ revision: 1, enabled: false }).enabled).toBe(false);
+    expect(mcpRegistryMachineOverrideRequestSchema.safeParse({ revision: 1 }).success).toBe(false);
     expect(
       mcpRegistryStatusSchema.parse({ revision: 0, agents: [{ machineId: 'machine', machineName: 'Machine', online: false, protocolVersion: '1.13', capabilities: [] }], gateways: [] }).agents[0]
         ?.registryEnabled,
@@ -333,5 +335,26 @@ describe('MCP registry protocol 1.13 contracts', () => {
       expect(result.message.payload).toMatchObject({ protocol: '1.12' });
       expect(result.message.payload).not.toHaveProperty('capabilities');
     }
+  });
+
+  it('carries import v2 sources, decisions and the agent import state (mcp-hub-only D4, D5, D8)', () => {
+    expect(MCP_IMPORT_V2_CAPABILITY).toBe('mcp.import.v2');
+    expect(MCP_REGISTRY_CAPABILITIES).not.toContain(MCP_IMPORT_V2_CAPABILITY);
+    const preview = mcpImportPreviewPayload.parse({ machineId: runnerId, projectRoot: '/srv', projectRoots: [{ projectId: serverId, path: '/srv/p' }] });
+    expect(preview.projectRoots?.[0]?.projectId).toBe(serverId);
+    const base = { id: serverId, name: 'plugin_apps_apps', enabled: true, transport: 'http', mode: 'remote', url: 'https://apps.example.test/mcp' };
+    const result = mcpImportPreviewResultPayload.parse({
+      importId: serverId,
+      servers: [{ ...base, machineScope: { allMachines: false, machineIds: [runnerId] }, revision: 0, source: 'plugin', origin: 'apps@corp', oauthClientId: 'apps-portal-mcp' }],
+      secretsCaptured: 0,
+      warnings: [],
+    });
+    expect(result.servers[0]).toMatchObject({ source: 'plugin', oauthClientId: 'apps-portal-mcp' });
+    const entry = { id: serverId, name: 'local', transport: 'stdio', source: 'local', decision: 'new', selected: false, selectable: true, warnings: ['unbound-path'], secrets: [] };
+    expect(mcpImportEntrySchema.parse(entry).warnings).toEqual(['unbound-path']);
+    expect(mcpImportEntrySchema.safeParse({ ...entry, decision: 'draft' }).success).toBe(false);
+    expect(mcpImportCommitResponseSchema.parse({ imported: 1, servers: [{ serverId, name: 'local', decision: 'add-machine' }] }).imported).toBe(1);
+    const agent = { machineId: 'x1', machineName: 'X1', online: true, protocolVersion: '1.17', capabilities: [], importState: 'auto-pending' };
+    expect(mcpRegistryStatusSchema.parse({ revision: 0, agents: [agent], gateways: [] }).agents[0]?.importState).toBe('auto-pending');
   });
 });

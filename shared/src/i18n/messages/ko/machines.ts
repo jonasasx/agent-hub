@@ -74,6 +74,8 @@ export default {
   'machines.enroll.path1': '1. 이름과 시스템',
   'machines.enroll.path2': '2. 명령',
   'machines.enroll.path3': '3. 연결',
+  'machines.enroll.path4': '4. MCP',
+  'machines.enroll.mcpTitle': '이 머신의 MCP 서버',
   'machines.enroll.nameLabel': '머신 이름',
   'machines.enroll.nameHint': '나중에 설정 → 머신에서 변경할 수 있습니다.',
   'machines.enroll.osLabel': '시스템',
@@ -97,4 +99,9 @@ export default {
   'machines.enroll.macTitle': 'macOS 보호 폴더에 접근할 수 없습니다.',
   'machines.enroll.macBefore': '에이전트는 ~/Documents, ~/Desktop, ~/Downloads를 읽을 수 없습니다. 시스템 설정 → 개인정보 보호 및 보안 → 전체 디스크 접근 권한을 열고 다음을 추가하세요: ',
   'machines.enroll.macAfter': '. 이 폴더 밖의 디렉터리(예: ~/code)는 그대로 작동합니다.',
+  'machines.defaultDir.label': '기본 폴더',
+  'machines.defaultDir.change': '변경…',
+  'machines.defaultDir.hint': '이 머신의 세션은 여기서 시작됩니다. 프로젝트 폴더는 이 폴더 기준으로 지정합니다.',
+  'machines.defaultDir.failed': '기본 폴더를 변경하지 못했습니다',
+  'machines.menu.defaultDir': '기본 폴더…',
 } satisfies Dict;

@@ -223,6 +223,11 @@ export class AgentGateway {
     return this.conns.get(runnerId);
   }
 
+  /** The live connections of a user's machines. */
+  ofUser(userId: string): AgentConnection[] {
+    return [...this.conns.values()].filter(c => c.userId === userId);
+  }
+
   isOnline(runnerId: string): boolean {
     return this.conns.has(runnerId);
   }
@@ -438,6 +443,8 @@ export class AgentGateway {
           .where('state', '<>', 'disabled')
           .execute();
       }
+      // session-folder D4: a machine without a chosen default folder starts its sessions in the home folder.
+      await this.opts.db.updateTable('runners').set({ default_dir: hello.homeDir }).where('id', '=', runnerId).where('default_dir', 'is', null).execute();
       if (!current) return;
       // The first connection with the token of a new enrollment: the old token stops working now (design M4).
       if (auth.next) await promoteNextToken(this.opts.db, runnerId);

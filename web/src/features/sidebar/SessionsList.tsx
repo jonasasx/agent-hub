@@ -3,7 +3,7 @@
  * «Сессии» tool window on the desktop and of the home screen on the phone.
  * Requirements (workspace-ui): Раздел «Сейчас»; Дерево «Проекты». Requirement (tool-windows-file-explorer): the filter by machine.
  */
-import { useLayoutEffect, useRef, type CSSProperties, type DragEvent } from 'react';
+import { memo, useLayoutEffect, useMemo, useRef, type CSSProperties, type DragEvent } from 'react';
 import { useNow } from '../ui/a11y';
 import { PROVIDER_LABELS, type SessionView } from '../../api/types';
 import { ProviderIcon } from '../chat/ProviderIcon';
@@ -36,7 +36,12 @@ const CHEVRON = (
   </svg>
 );
 
-function SessionRow({ s, runners, shown, now, showRunner }: { s: SessionView; runners: RunnerIndex; shown: boolean; now: number; showRunner: boolean }) {
+/**
+ * A row of the tree. Memoised: a project after «ещё N» holds hundreds of rows, and any change of the store (a session's status, the panes)
+ * re-renders the list — only the rows whose props changed are rendered again; the time is passed as its label, which changes once a minute.
+ */
+const SessionRow = memo(function SessionRow({ s, runners, shown, ago, showRunner }: { s: SessionView; runners: RunnerIndex; shown: boolean; ago: string; showRunner: boolean }) {
+  useT(); // the labels of the row follow the language
   const st = displayStatus(s, runners);
   const runner = runners[s.runnerId]?.name ?? s.runnerId;
   return (
@@ -69,10 +74,10 @@ function SessionRow({ s, runners, shown, now, showRunner }: { s: SessionView; ru
         </span>
       )}
       {showRunner && <span className="rn">{runner}</span>}
-      <span className="meta">{agoLabel(s.lastEventAt ?? s.createdAt, now)}</span>
+      <span className="meta">{ago}</span>
     </button>
   );
-}
+});
 
 /** Rows of the tree while they load (first load, «ещё N»). */
 export function SkeletonRows({ n = 6 }: { n?: number }) {
@@ -103,7 +108,7 @@ export function SessionsList() {
   const filter = useMachineFilter(s => s.runnerId);
   const setFilter = useMachineFilter(s => s.set);
   const now = useNow(60_000);
-  const idx = runnerIndex(runners);
+  const idx = useMemo(() => runnerIndex(runners), [runners]);
   const phone = usePhone();
 
   const byMachine = <T extends { runnerId: string }>(list: T[]): T[] => (filter ? list.filter(s => s.runnerId === filter) : list);
@@ -184,6 +189,7 @@ export function SessionsList() {
         const extra = more[key];
         const all = [...p.sessions, ...(extra ?? []).filter(x => !p.sessions.some(y => y.id === x.id))].map(x => sessions[x.id] ?? x);
         const list = byMachine(all);
+        const showRunner = new Set(list.map(x => x.runnerId)).size > 1;
         const hasShown = list.some(x => shownIn(ws, x.id));
         const open = openState[key] ?? (hasShown || shownProjects.has(key) || sorted.length === 1);
         const archived = !!(p.project as ProjectInfo).archived;
@@ -236,7 +242,7 @@ export function SessionsList() {
             {open && (
               <div className="pchildren">
                 {list.slice(0, extra ? list.length : PREVIEW).map(s => (
-                  <SessionRow key={s.id} s={s} runners={idx} shown={shownIn(ws, s.id)} now={now} showRunner={new Set(list.map(x => x.runnerId)).size > 1} />
+                  <SessionRow key={s.id} s={s} runners={idx} shown={shownIn(ws, s.id)} ago={agoLabel(s.lastEventAt ?? s.createdAt, now)} showRunner={showRunner} />
                 ))}
                 {moreLoading[key] && <SkeletonRows n={Math.min(3, hidden)} />}
                 {!extra && hidden > 0 && (

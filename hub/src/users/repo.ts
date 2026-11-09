@@ -39,7 +39,7 @@ export const INVITE_CODE_RE = /^[A-Za-z0-9_-]{43}$/;
 type InviteRow = {
   id: string;
   email: string;
-  provider: LoginProvider;
+  provider: LoginProvider | null;
   created_at: Date;
   expires_at: Date;
   used_at: Date | null;
@@ -78,7 +78,7 @@ export class InviteError extends Error {
  * Requirement: Приглашение. An address of an existing user is refused («Пользователь уже есть»); an unused invite of
  * the same address is revoked. Returns the code (shown once) and the row.
  */
-export async function createInvite(db: Db, by: string, email: string, provider: LoginProvider, now = new Date()): Promise<{ code: string; invite: InviteView }> {
+export async function createInvite(db: Db, by: string, email: string, provider: TwoProvider | null, now = new Date()): Promise<{ code: string; invite: InviteView }> {
   const address = email.trim().toLowerCase();
   return db.transaction().execute(async tx => {
     const existing = await tx
@@ -134,6 +134,9 @@ export async function findInvite(db: Db, code: string): Promise<(InviteRow & { u
 
 // ---------- admission (design M2) ----------
 
+/** The providers of the two-provider mode. */
+export type TwoProvider = 'google' | 'keycloak';
+
 export type Admission =
   | { ok: true; user: AuthUser; created: boolean }
   | {
@@ -145,7 +148,7 @@ export type Admission =
        */
       reason: 'unverified' | 'not_invited' | 'disabled' | 'mismatch' | 'wrong_provider' | 'expired' | 'used' | 'revoked';
       /** mismatch / wrong_provider: the invited address and provider, for the page. */
-      invite?: { email: string; provider: LoginProvider };
+      invite?: { email: string; provider: TwoProvider };
     };
 
 /**
@@ -154,11 +157,11 @@ export type Admission =
  * (case-insensitive) and provider — the user is created with role `user` and the invite used, in one transaction;
  * anything else is refused before a user exists. One function for the browser and the desktop app.
  */
-export async function admit(db: Db, provider: LoginProvider, identity: OidcIdentity, inviteCode: string | null, now = new Date()): Promise<Admission> {
+export async function admit(db: Db, provider: TwoProvider, identity: OidcIdentity, inviteCode: string | null, now = new Date()): Promise<Admission> {
   const email = identity.email?.toLowerCase() ?? null;
   if (!email || !identity.emailVerified) return { ok: false, reason: 'unverified' };
   const cols = ['id', 'email', 'role', 'name', 'provider', 'status', 'subject'] as const;
-  const touch = async (id: string, set: { subject?: string }): Promise<AuthUser> => {
+  const touch = async (id: string, set: { subject?: string | null; provider?: TwoProvider }): Promise<AuthUser> => {
     const r = await db
       .updateTable('users')
       .set({ ...set, last_login_at: now, ...(identity.name ? { name: identity.name } : {}) })
@@ -184,14 +187,21 @@ export async function admit(db: Db, provider: LoginProvider, identity: OidcIdent
     if (byEmail.status !== 'active') return { ok: false, reason: 'disabled' };
     return { ok: true, user: await touch(byEmail.id, identity.subject ? { subject: identity.subject } : {}), created: false };
   }
+  // keycloak-auth rollback: a user moved to the single provider comes back by the verified address and is bound again
+  if (byEmail && byEmail.provider === 'oidc') {
+    if (byEmail.status !== 'active') return { ok: false, reason: 'disabled' };
+    return { ok: true, user: await touch(byEmail.id, { provider, subject: identity.subject ?? null }), created: false };
+  }
 
   if (!inviteCode) return { ok: false, reason: 'not_invited' };
   const invite = await findInvite(db, inviteCode);
   if (!invite) return { ok: false, reason: 'not_invited' };
   const status = inviteStatus(invite, now);
   if (status !== 'active') return { ok: false, reason: status === 'used' ? 'used' : status === 'revoked' ? 'revoked' : 'expired' };
-  if (invite.provider !== provider) return { ok: false, reason: 'wrong_provider', invite: { email: invite.email, provider: invite.provider } };
-  if (invite.email.toLowerCase() !== email) return { ok: false, reason: 'mismatch', invite: { email: invite.email, provider: invite.provider } };
+  // A provider-less invite (written in single-provider mode) is accepted by either provider.
+  const invited = invite.provider === 'google' || invite.provider === 'keycloak' ? invite.provider : provider;
+  if (invited !== provider) return { ok: false, reason: 'wrong_provider', invite: { email: invite.email, provider: invited } };
+  if (invite.email.toLowerCase() !== email) return { ok: false, reason: 'mismatch', invite: { email: invite.email, provider: invited } };
   // The address belongs to a user of the other provider (created after the invite): not this invite's business.
   if (byEmail) return { ok: false, reason: byEmail.status === 'active' ? 'not_invited' : 'disabled' };
 
@@ -216,6 +226,84 @@ export async function admit(db: Db, provider: LoginProvider, identity: OidcIdent
   });
 }
 
+/** keycloak-auth D6: the outcome of the single provider; `signup` — the user was created without an invite. */
+export type SingleAdmission = { ok: true; user: AuthUser; created: boolean; signup: boolean; migrated: boolean } | { ok: false; reason: 'unverified' | 'not_invited' | 'disabled' | 'mismatch' };
+
+/**
+ * keycloak-auth D6: admission through the single provider of OIDC_ISSUER. In order: the user of (`oidc`, sub); an
+ * unverified address is refused; a user of the address with `google`/`keycloak` is moved to `oidc` once (role, machines and
+ * data stay); an `oidc` user of the address with another sub is refused (`mismatch`); an active invite of the address
+ * creates the user (`invite`); `SIGNUP_MODE=open` creates one without an invite (`signup`); anything else is refused.
+ */
+export async function admitSingle(db: Db, identity: OidcIdentity, mode: 'invite' | 'open', now = new Date()): Promise<SingleAdmission> {
+  try {
+    return await admitSingleOnce(db, identity, mode, now);
+  } catch (err) {
+    // The first login raced another callback of the same user (browser and desktop): the other one created the row
+    if ((err as { code?: string }).code !== '23505') throw err;
+    return admitSingleOnce(db, identity, mode, now);
+  }
+}
+
+async function admitSingleOnce(db: Db, identity: OidcIdentity, mode: 'invite' | 'open', now: Date): Promise<SingleAdmission> {
+  const returning = ['id', 'email', 'role', 'name', 'provider'] as const;
+  const named = identity.name ? { name: identity.name } : {};
+  if (identity.subject) {
+    const bySub = await db.selectFrom('users').select(['id', 'status']).where('provider', '=', 'oidc').where('subject', '=', identity.subject).executeTakeFirst();
+    if (bySub) {
+      if (bySub.status !== 'active') return { ok: false, reason: 'disabled' };
+      const user = await db
+        .updateTable('users')
+        .set({ last_login_at: now, ...named })
+        .where('id', '=', bySub.id)
+        .returning(returning)
+        .executeTakeFirstOrThrow();
+      return { ok: true, user, created: false, signup: false, migrated: false };
+    }
+  }
+  const email = identity.email?.toLowerCase() ?? null;
+  if (!email || !identity.emailVerified || !identity.subject) return { ok: false, reason: 'unverified' };
+
+  const byEmail = await db
+    .selectFrom('users')
+    .select(['id', 'provider', 'status'])
+    .where(sql<boolean>`lower(email) = ${email}`)
+    .executeTakeFirst();
+  if (byEmail) {
+    if (byEmail.provider === 'oidc') return { ok: false, reason: 'mismatch' };
+    if (byEmail.status !== 'active') return { ok: false, reason: 'disabled' };
+    const user = await db
+      .updateTable('users')
+      .set({ provider: 'oidc', subject: identity.subject, last_login_at: now, ...named })
+      .where('id', '=', byEmail.id)
+      .returning(returning)
+      .executeTakeFirstOrThrow();
+    return { ok: true, user, created: false, signup: false, migrated: true };
+  }
+
+  const subject = identity.subject;
+  return db.transaction().execute(async (tx): Promise<SingleAdmission> => {
+    const invite = await tx
+      .updateTable('invites')
+      .set({ used_at: now })
+      .where(sql<boolean>`lower(email) = ${email}`)
+      .where('used_at', 'is', null)
+      .where('revoked_at', 'is', null)
+      .where('expires_at', '>', now)
+      .returning('id')
+      .executeTakeFirst();
+    if (!invite && mode !== 'open') return { ok: false, reason: 'not_invited' };
+    const source = invite ? 'invite' : 'signup';
+    const user = await tx
+      .insertInto('users')
+      .values({ email, role: 'user', provider: 'oidc', subject, name: identity.name, last_login_at: now, source })
+      .returning(returning)
+      .executeTakeFirstOrThrow();
+    if (invite) await tx.updateTable('invites').set({ user_id: user.id }).where('id', '=', invite.id).execute();
+    return { ok: true, user, created: true, signup: !invite, migrated: false };
+  });
+}
+
 // ---------- administration ----------
 
 /** Requirement: Администратор не видит чужие сессии — counts only, no names of machines, no sessions. */
@@ -223,7 +311,7 @@ export async function listAdminUsers(db: Db, online: (runnerId: string) => boole
   const users = await db
     .selectFrom('users as u')
     .leftJoin('invites as i', 'i.user_id', 'u.id')
-    .select(['u.id', 'u.email', 'u.name', 'u.provider', 'u.role', 'u.status', 'u.last_login_at', 'u.created_at', 'i.created_at as invited_at'])
+    .select(['u.id', 'u.email', 'u.name', 'u.provider', 'u.source', 'u.role', 'u.status', 'u.last_login_at', 'u.created_at', 'i.created_at as invited_at'])
     .orderBy('u.created_at')
     .execute();
   // Only ids and owners of machines: the online flag of the gateway, nothing else leaves this function. Only `active`
@@ -236,6 +324,7 @@ export async function listAdminUsers(db: Db, online: (runnerId: string) => boole
       email: u.email,
       name: u.name,
       provider: u.provider,
+      source: u.source,
       role: u.role,
       status: u.status,
       invitedAt: u.invited_at ? new Date(u.invited_at).toISOString() : null,
@@ -302,7 +391,7 @@ export async function listSecurityEvents(db: Db, userId: string, now = new Date(
     at: r.at.toISOString(),
     ip: r.ip,
     userAgent: r.user_agent,
-    provider: r.provider === 'google' || r.provider === 'keycloak' ? r.provider : null,
+    provider: r.provider === 'google' || r.provider === 'keycloak' || r.provider === 'oidc' ? r.provider : null,
     runner: r.runner_id && r.runner_name ? { id: r.runner_id, name: r.runner_name } : null,
   }));
 }

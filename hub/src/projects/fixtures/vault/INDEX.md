@@ -4,22 +4,22 @@
 
 Одна строка — одна папка. Области и их `CLAUDE.md` — в заголовках.
 
-## Сканер (`10-work/01-scanner`)
+## Сканер (`10-work/01-devices`)
 
 **Системы**
 
-- [`01-scanner-product`](10-work/01-scanner/systems/01-scanner-product/) — внутренний сервис · [карточка](10-work/01-scanner/systems/01-scanner-product/CLAUDE.md)
-- [`02-scanner-fleet`](10-work/01-scanner/systems/02-scanner-fleet/) — внутренний сервис · [карточка](10-work/01-scanner/systems/02-scanner-fleet/CLAUDE.md)
-- [`03-scanner-rkd`](10-work/01-scanner/systems/03-scanner-rkd/) — внутренний сервис · `ведётся` · клон `repos/scanner-kd` · [карточка](10-work/01-scanner/systems/03-scanner-rkd/README.md)
-- [`04-scanner-architecture`](10-work/01-scanner/systems/04-scanner-architecture/) — внутренний сервис · клон `repos/scanner-docs` · [карточка](10-work/01-scanner/systems/04-scanner-architecture/CLAUDE.md)
+- [`01-devices-product`](10-work/01-devices/systems/01-devices-product/) — внутренний сервис · [карточка](10-work/01-devices/systems/01-devices-product/CLAUDE.md)
+- [`02-fleet-ops`](10-work/01-devices/systems/02-fleet-ops/) — внутренний сервис · [карточка](10-work/01-devices/systems/02-fleet-ops/CLAUDE.md)
+- [`03-device-docs`](10-work/01-devices/systems/03-device-docs/) — внутренний сервис · `ведётся` · клон `repos/scanner-kd` · [карточка](10-work/01-devices/systems/03-device-docs/README.md)
+- [`04-scanner-architecture`](10-work/01-devices/systems/04-scanner-architecture/) — внутренний сервис · клон `repos/scanner-docs` · [карточка](10-work/01-devices/systems/04-scanner-architecture/CLAUDE.md)
 
 **Проекты**
 
-- [`01-client-a-vpn`](10-work/01-scanner/projects/01-client-a-vpn/) — проект миграции · [карточка](10-work/01-scanner/projects/01-client-a-vpn/CLAUDE.md)
-- [`02-batch-b`](10-work/01-scanner/projects/02-batch-b/) — проект миграции · [карточка](10-work/01-scanner/projects/02-batch-b/CLAUDE.md)
-- [`03-scanner-compliance`](10-work/01-scanner/projects/03-scanner-compliance/) — проект миграции · [карточка](10-work/01-scanner/projects/03-scanner-compliance/scanner.card.document-2026-08-31.md)
-- [`04-site-c`](10-work/01-scanner/projects/04-site-c/) — проект миграции · [карточка](10-work/01-scanner/projects/04-site-c/CLAUDE.md)
-- [`05-solidworks-pdm`](10-work/01-scanner/projects/05-solidworks-pdm/) — проект миграции · клон `repos/kd-pdm` · [карточка](10-work/01-scanner/projects/05-solidworks-pdm/CLAUDE.md)
+- [`01-client-a-vpn`](10-work/01-devices/projects/01-client-a-vpn/) — проект миграции · [карточка](10-work/01-devices/projects/01-client-a-vpn/CLAUDE.md)
+- [`02-batch-b`](10-work/01-devices/projects/02-batch-b/) — проект миграции · [карточка](10-work/01-devices/projects/02-batch-b/CLAUDE.md)
+- [`03-scanner-compliance`](10-work/01-devices/projects/03-scanner-compliance/) — проект миграции · [карточка](10-work/01-devices/projects/03-scanner-compliance/scanner.card.document-2026-08-31.md)
+- [`04-site-c`](10-work/01-devices/projects/04-site-c/) — проект миграции · [карточка](10-work/01-devices/projects/04-site-c/CLAUDE.md)
+- [`05-solidworks-pdm`](10-work/01-devices/projects/05-solidworks-pdm/) — проект миграции · клон `repos/kd-pdm` · [карточка](10-work/01-devices/projects/05-solidworks-pdm/CLAUDE.md)
 
 ## Платформа (`10-work/02-platform`)
 
@@ -61,8 +61,8 @@
 **Системы**
 
 - [`01-itsm`](10-work/04-support/systems/01-itsm/) — внутренний сервис · [карточка](10-work/04-support/systems/01-itsm/README.md)
-- [`02-mm-sd-bot`](10-work/04-support/systems/02-mm-sd-bot/) — внутренний сервис · [карточка](10-work/04-support/systems/02-mm-sd-bot/CLAUDE.md)
-- [`03-mm-sms-bridge`](10-work/04-support/systems/03-mm-sms-bridge/) — внутренний сервис · [карточка](10-work/04-support/systems/03-mm-sms-bridge/CLAUDE.md)
+- [`02-helpdesk-bot`](10-work/04-support/systems/02-helpdesk-bot/) — внутренний сервис · [карточка](10-work/04-support/systems/02-helpdesk-bot/CLAUDE.md)
+- [`03-sms-bridge`](10-work/04-support/systems/03-sms-bridge/) — внутренний сервис · [карточка](10-work/04-support/systems/03-sms-bridge/CLAUDE.md)
 
 **Проекты**
 

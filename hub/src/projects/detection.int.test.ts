@@ -49,7 +49,8 @@ describe('catalog detection and suggestion ownership (Postgres)', () => {
       ])
     ).rows[0].id;
     foreignProject = (await t.tdb.pool.query(`INSERT INTO catalog_projects(user_id,name) VALUES($1,'Foreign secret project') RETURNING id`, [foreign])).rows[0].id;
-    await t.tdb.pool.query(`INSERT INTO project_bindings(user_id,project_id,runner_id,path) VALUES($1,$2,'hp','/work/vpn')`, [owner, project]);
+    await t.tdb.pool.query(`UPDATE runners SET default_dir='/work', home_dir='/home/hp' WHERE id='hp'`);
+    await t.tdb.pool.query(`UPDATE catalog_projects SET folder='vpn' WHERE id=$1`, [project]);
     detection = new CatalogDetection({ db: t.tdb.db, config: t.config, projects: t.hub.projects, classifier: { classify }, changed: id => t.hub.sessions.upsert(id), log: { info: () => undefined } });
     classify.mockImplementation(async () => ({ projectId: project, confidence: 0.6, reasonCode: 'topic_match', alternatives: [], newProjectName: 'VPN для друзей' }));
   });
@@ -352,13 +353,12 @@ describe('catalog detection and suggestion ownership (Postgres)', () => {
     expect(await suggestion(waiting)).toMatchObject({ state: 'pending' });
   });
 
-  it('drops a stale rule link when its binding is gone and lets the classifier decide', async () => {
-    const stale = (await t.tdb.pool.query(`INSERT INTO catalog_projects(user_id,name) VALUES($1,'Stale binding project') RETURNING id`, [owner])).rows[0].id;
-    await t.tdb.pool.query(`INSERT INTO project_bindings(user_id,project_id,runner_id,path) VALUES($1,$2,'hp','/work/stale')`, [owner, stale]);
+  it('drops a stale rule link when its folder is gone and lets the classifier decide', async () => {
+    const stale = (await t.tdb.pool.query(`INSERT INTO catalog_projects(user_id,name,folder) VALUES($1,'Stale binding project','stale') RETURNING id`, [owner])).rows[0].id;
     const id = await session({ cwd: '/work/stale' });
     await detection.evaluate(id, 'hello');
     expect(await links(id)).toEqual([expect.objectContaining({ source: 'auto', reason_code: 'cwd' })]);
-    await t.tdb.pool.query(`DELETE FROM project_bindings WHERE project_id=$1`, [stale]);
+    await t.tdb.pool.query(`UPDATE catalog_projects SET folder=NULL WHERE id=$1`, [stale]);
     await detection.evaluate(id, undefined, true);
     expect(await links(id)).toHaveLength(0);
     expect(await suggestion(id)).toBeUndefined();

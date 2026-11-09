@@ -17,7 +17,7 @@ import { PeersClient } from './peers/client.js';
 import { Replicator } from './transcripts/replicator.js';
 import { httpBase, restoreFile } from './transcripts/restore.js';
 import { readImageFile } from './sessions/images.js';
-import { FsError, listFolder, readFileForView } from './fs/browse.js';
+import { FsError, listFolder, readFileChunk, readFileForView } from './fs/browse.js';
 import { ClaudeProvider } from './providers/claude.js';
 import { ProviderRouter } from './providers/router.js';
 import { findCodexBin, type CodexBin } from './providers/codex/bin.js';
@@ -133,7 +133,9 @@ export function createAgent(o: AgentOptions): Agent {
   // the protocol of the hub's last welcome: limits.event only to a hub of 1.6+ (subscription-limits L3)
   let hubProtocol: string | null = null;
   let runnerId: string | null = null;
-  const registryCache = o.registryCache ?? new RegistryCache(o.stateDir ?? join(homedir(), '.agent-hub'));
+  // AGENT_STATE_DIR keeps test agents off the machine's real ~/.agent-hub (codex-auth-restore)
+  const stateDir = o.stateDir ?? process.env.AGENT_STATE_DIR ?? join(homedir(), '.agent-hub');
+  const registryCache = o.registryCache ?? new RegistryCache(stateDir);
   const registryQueue = new McpRegistryQueue();
   const registryCacheWriter = new RegistryCacheWriter(registryCache, log);
   let registry: RegistrySnapshot | null = null;
@@ -193,7 +195,7 @@ export function createAgent(o: AgentOptions): Agent {
         gateway,
         mcpDraft,
         machineId: () => runnerId,
-        homes: new CodexHomes({ stateDir: o.stateDir ?? join(homedir(), '.agent-hub'), log }),
+        homes: new CodexHomes({ stateDir, log }),
         onSessionStarted: (id, dir) => replicator.followIn(id, dir),
         onSessionExited: id => replicator.release(id),
         onActivity: (id, at) => turns.touch(id, at),
@@ -305,7 +307,7 @@ export function createAgent(o: AgentOptions): Agent {
       return;
     }
     const id = m.id;
-    if (m.type === 'fs.list' || m.type === 'fs.read') {
+    if (m.type === 'fs.list' || m.type === 'fs.read' || m.type === 'fs.read_chunk') {
       // Read-only file explorer (tool-windows-file-explorer). A failure carries a protocol code and no path.
       const failed = (err: unknown): void => {
         const code = err instanceof FsError ? err.code : 'io_error';
@@ -314,6 +316,15 @@ export function createAgent(o: AgentOptions): Agent {
       if (m.type === 'fs.list') {
         listFolder(m.payload.path, m.payload.root, m.payload.showHidden === true).then(result => {
           if (id) client.send('cmd.ok', { result }, { re: id });
+        }, failed);
+        return;
+      }
+      if (m.type === 'fs.read_chunk') {
+        // a piece of a file for download (file-download D1): bytes follow cmd.ok {binary: true} as a binary frame
+        readFileChunk(m.payload.path, m.payload.root, m.payload.offset, m.payload.length).then(answer => {
+          if (!id) return;
+          client.send('cmd.ok', { result: answer.result }, { re: id });
+          if (answer.data) client.sendBinary(answer.data);
         }, failed);
         return;
       }

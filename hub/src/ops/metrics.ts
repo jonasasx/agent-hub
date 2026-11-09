@@ -1,6 +1,7 @@
 // Task 3.10 (design D10 `GET /metrics`, spec replication «Метрики и предупреждение о диске»): Prometheus text with the
 // database size, free space of the Postgres data volume, online runners and replication lag; a Telegram warning when
 // the volume has less than DISK_ALERT_FREE_PCT free, at most once in 12 h while it lasts (the time survives restarts).
+import { existsSync } from 'node:fs';
 import { statfs } from 'node:fs/promises';
 import { countUnlinked } from '../subagents/repo.js';
 import { sql } from 'kysely';
@@ -98,6 +99,15 @@ export async function renderMetrics(
 
 export const DISK_ALERT_KEY = 'disk_free_low';
 export const DISK_ALERT_EVERY_MS = 12 * 3600_000;
+
+/**
+ * Period of the disk check: 0 (off) when the data volume is not mounted — a platform pod has no database volume
+ * (paas-deployment D2). An injected stat (tests) always counts as mounted.
+ */
+export function diskCheckPeriodMs(o: { dataPath: string; periodMs: number; injectedStat: boolean; exists?: (path: string) => boolean }): number {
+  if (o.injectedStat) return o.periodMs;
+  return (o.exists ?? existsSync)(o.dataPath) ? o.periodMs : 0;
+}
 
 /** One check of the data volume: sends the warning when free < threshold and the last one is 12 h old or more. */
 export async function checkDisk(

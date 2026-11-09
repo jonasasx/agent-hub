@@ -45,12 +45,16 @@ export default {
   'limits.window.seven_day_oauth_apps.short': '7 d apps',
   'limits.window.seven_day_oauth_apps.name': '7 días · apps',
   'limits.window.seven_day_oauth_apps.desc': 'El límite semanal para las solicitudes de aplicaciones conectadas a la cuenta mediante OAuth. Anthropic decide qué se cuenta aquí.',
+  'limits.window.seven_day_overage_included.short': '7 d Fable',
+  'limits.window.seven_day_overage_included.name': '7 días · Fable',
+  'limits.window.seven_day_overage_included.desc':
+    'Un límite semanal aparte para las solicitudes a modelos Fable. Los demás modelos no lo usan; el servicio envía esta ventana solo en respuesta a solicitudes a Fable.',
   'limits.window.unknownDesc': 'Ventana sin descripción: el servicio devolvió un tipo de límite nuevo.',
   'limits.text.overage':
     'Uso por encima del límite de la suscripción a cambio de créditos o dinero, si está activado en la cuenta. El hub solo muestra el estado: activado, en uso, agotado; no calcula importes.',
   'limits.text.exhaustion':
     'Cuando una ventana llega al 100%, la suscripción rechaza los turnos hasta que esa ventana se restablezca. Si la suscripción tiene activado el cambio automático, el hub continúa la sesión con la siguiente suscripción del registro; si no, el chat muestra el botón “Continuar con otra suscripción”.',
-  'limits.text.refresh': 'Actualizar hace una breve solicitud al servicio con un modelo Haiku bajo esta suscripción: consume una pequeña parte de la ventana de 5 horas.',
+  'limits.text.refresh': 'Actualizar hace una breve solicitud al servicio con un modelo Haiku bajo esta suscripción: consume una pequeña parte del límite de la suscripción.',
   'limits.text.quiet': 'El turno se completó y el límite no está agotado; el servicio no envió porcentajes nuevos y los valores conocidos de las ventanas están por debajo del umbral.',
   'limits.text.held': 'El servicio no envía porcentajes en cada turno, así que las ventanas muestran los últimos valores conocidos.',
   'limits.reason.token_rejected': 'token rechazado',
@@ -109,6 +113,7 @@ export default {
   'limits.card.updatedAt': 'Actualizado a las {time}',
   'limits.card.updatedAtSource': 'Actualizado a las {time} · {source}',
   'limits.card.noWindowsYet': 'Aún no hay datos de ventanas',
+  'limits.card.noFiveHour': 'El servicio no limita la ventana de 5 horas para esta suscripción.',
   'limits.card.probeAt': 'Turno de sondeo a las {time}',
   'limits.chip.label': 'Límites de {name}: {aria}',
   'limits.window.resetTip': '{window} — ventana restablecida',

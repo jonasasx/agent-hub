@@ -52,6 +52,22 @@ describe('decideNotification', () => {
     expect(decideNotification({ ...base, prev, next: { ...prev, status: 'waiting' as const, unread: true } })).toBeNull();
     expect(decideNotification({ ...base, prev, next: { ...prev, status: 'permission' as const } })?.reason).toBe('permission');
   });
+  it('a turn ends while background tasks or child sessions work — no notification; the end of the last one notifies', () => {
+    const sub = (working: number, hub = 0) => ({ total: 2, running: 0, working, background: 2, hub: { total: 1, working: hub } });
+    const prev = session({ status: 'working', subagents: sub(2) });
+    const ended = { ...prev, status: 'waiting' as const, unread: true };
+    expect(decideNotification({ ...base, prev, next: ended })).toBeNull();
+    const childOnly = { ...ended, subagents: sub(0, 1) };
+    expect(decideNotification({ ...base, prev: ended, next: childOnly })).toBeNull();
+    const done = { ...ended, subagents: sub(0) };
+    expect(decideNotification({ ...base, prev: childOnly, next: done })?.reason).toBe('turn_ended');
+    // read while the children worked — nothing to notify when they end
+    expect(decideNotification({ ...base, prev: { ...ended, unread: false }, next: { ...done, unread: false } })).toBeNull();
+  });
+  it('a permission request notifies while background tasks work', () => {
+    const prev = session({ status: 'working', subagents: { total: 1, running: 1, working: 1 } });
+    expect(decideNotification({ ...base, prev, next: { ...prev, status: 'permission' } })?.reason).toBe('permission');
+  });
   it('cron — no notification', () => {
     const prev = session({ status: 'working', isCron: true });
     expect(decideNotification({ ...base, prev, next: { ...prev, status: 'permission' } })).toBeNull();

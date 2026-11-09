@@ -99,6 +99,7 @@ const AUTO_REASONS = {
   remote: 'projects.reason.remote',
   changed_files: 'projects.reason.changed_files',
   unpinned: 'projects.reason.unpinned',
+  inherited: 'projects.reason.inherited',
 } as const;
 
 /** `note` replaces the evidence on the phone (the state of the session), `noteTitle` is its whole text. */

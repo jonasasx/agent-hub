@@ -5,7 +5,7 @@ import { cookieValue, startTestHub, type TestHub } from '../test/harness.js';
 describe('/auth/dev-login', () => {
   let t: TestHub;
   beforeAll(async () => {
-    t = await startTestHub({ env: { AUTH_DEV_EMAIL: 'jonasasx@gmail.com' } });
+    t = await startTestHub({ env: { AUTH_DEV_EMAIL: 'alice@example.com' } });
   });
   afterAll(async () => t.close());
 

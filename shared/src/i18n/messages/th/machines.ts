@@ -74,6 +74,8 @@ export default {
   'machines.enroll.path1': '1. ชื่อและระบบ',
   'machines.enroll.path2': '2. คำสั่ง',
   'machines.enroll.path3': '3. การเชื่อมต่อ',
+  'machines.enroll.path4': '4. MCP',
+  'machines.enroll.mcpTitle': 'เซิร์ฟเวอร์ MCP ของเครื่องนี้',
   'machines.enroll.nameLabel': 'ชื่อเครื่อง',
   'machines.enroll.nameHint': 'เปลี่ยนภายหลังได้ที่ การตั้งค่า → เครื่อง',
   'machines.enroll.osLabel': 'ระบบ',
@@ -97,4 +99,9 @@ export default {
   'machines.enroll.macTitle': 'ไม่มีสิทธิ์เข้าถึงโฟลเดอร์ที่ได้รับการป้องกันของ macOS',
   'machines.enroll.macBefore': 'เอเจนต์ไม่สามารถอ่าน ~/Documents, ~/Desktop และ ~/Downloads ได้ เปิด การตั้งค่าระบบ → ความเป็นส่วนตัวและความปลอดภัย → การเข้าถึงดิสก์แบบเต็ม แล้วเพิ่ม',
   'machines.enroll.macAfter': ' ไดเรกทอรีนอกโฟลเดอร์เหล่านี้ (เช่น ~/code) ใช้งานได้ตามปกติ',
+  'machines.defaultDir.label': 'โฟลเดอร์เริ่มต้น',
+  'machines.defaultDir.change': 'เปลี่ยน…',
+  'machines.defaultDir.hint': 'เซสชันบนเครื่องนี้เริ่มที่นี่ โฟลเดอร์โปรเจกต์กำหนดโดยนับจากโฟลเดอร์นี้',
+  'machines.defaultDir.failed': 'เปลี่ยนโฟลเดอร์เริ่มต้นไม่สำเร็จ',
+  'machines.menu.defaultDir': 'โฟลเดอร์เริ่มต้น…',
 } satisfies Dict;

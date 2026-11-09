@@ -486,7 +486,7 @@ export class Replication {
           // an event of a monitor moves the sleep like activity of a subagent (change `background-tasks` D3)
           childActivity = facts.some(f => f.t === 'activity' || f.t === 'bgevent');
           // a background command or a monitor started or ended (a notification may also end a subagent: that one is in changedRuns)
-          bgChanged = facts.some(f => f.t === 'bgstart' || f.t === 'notify' || f.t === 'bgstop' || f.t === 'bgexpire');
+          bgChanged = facts.some(f => f.t === 'bgstart' || f.t === 'notify' || f.t === 'bgstop' || f.t === 'bgexpire' || f.t === 'bgfail');
         }
         await tx
           .updateTable('transcript_files')

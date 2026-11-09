@@ -14,12 +14,16 @@ import { insertSlot, isFileTab, leaves, parseFileTabId, slotTarget, topRight, zo
 import { FileIcon, nameKind } from '../files/fileIcons';
 import { FileViewer } from '../files/FileViewer';
 import { useFiles } from '../files/filesStore';
-import { baseName, parentOf } from '../files/paths';
 import { activateTab, closePane, closeTab, dropSplit, dropToPane, focusPane, pinFileTab, setRatio, toggleSingle } from './actions';
 import { backToList } from './phoneHistory';
+import { useTabTitle } from './tabTitle';
+import { baseName } from '../files/paths';
+import { StripThumb, TabList, useTabStrip } from './TabList';
 import { SUBAGENT_STATUS_LABEL, subStatus, subTitle } from '../subagents/model';
 import { SubStatusDot } from '../subagents/SubagentViews';
 import { hubText, useT } from '../../i18n';
+import { ProviderIcon } from '../chat/ProviderIcon';
+import { PROVIDER_LABELS } from '@agent-hub/shared';
 
 const ICON_SINGLE = (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
@@ -50,7 +54,6 @@ function Tab({ sid, paneId, index, active, keyed, dropCls }: { sid: string; pane
   const t = useT();
   const s = useStore(st => st.sessions[sid]);
   const sub = useStore(st => (st.tabKinds[sid] ? st.subagents[sid] : undefined));
-  const isSub = useStore(st => st.tabKinds[sid] === 'subagent');
   // a subagent tab takes its parent's project colour and shows the subagent's own status while it works
   const parent = useStore(st => (sub ? st.sessions[sub.sessionId] : undefined));
   const subSt = sub ? subStatus(sub, parent) : null;
@@ -63,16 +66,7 @@ function Tab({ sid, paneId, index, active, keyed, dropCls }: { sid: string; pane
   const file = parseFileTabId(sid);
   const preview = useFiles(f => !!file && !f.pinned.includes(sid));
   const fileMachine = useStore(st => (file ? st.runners.find(r => r.id === file.runnerId)?.name : undefined));
-  // two open files with one name: the name of the folder helps to tell them apart
-  const sameName = useStore(st => !!file && Object.values(st.ws.panes).some(p => p.tabs.some(tab => tab !== sid && baseName(parseFileTabId(tab)?.path ?? '') === baseName(file.path))));
-  const title = file
-    ? baseName(file.path)
-    : isSub
-      ? sub
-        ? t('workspace.panes.subagentTitle', { title: subTitle(sub) })
-        : t('workspace.panes.subagentLoading')
-      : (s?.title ?? t('workspace.panes.loading'));
-  const fileHint = file && sameName ? baseName(parentOf(file.path) ?? '') : '';
+  const { title, fileHint } = useTabTitle(sid);
   const close = (e: MouseEvent) => {
     e.stopPropagation();
     closeTab(sid);
@@ -135,6 +129,9 @@ function Tab({ sid, paneId, index, active, keyed, dropCls }: { sid: string; pane
   );
 }
 
+/** A stable empty list for a pane that is gone (the hooks run before the early return). */
+const NO_TABS: readonly string[] = [];
+
 function TabBar({ paneId, multi }: { paneId: string; multi: boolean }) {
   const t = useT();
   const pane = useStore(st => st.ws.panes[paneId]);
@@ -144,6 +141,7 @@ function TabBar({ paneId, multi }: { paneId: string; multi: boolean }) {
   const dragSid = useStore(st => st.dragSid);
   const [slot, setSlot] = useState<InsertSlot | null>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
+  const edge = useTabStrip(tabsRef, pane?.tabs ?? NO_TABS, pane?.active ?? null);
   useEffect(() => {
     if (!dragSid) setSlot(null);
   }, [dragSid]);
@@ -180,15 +178,21 @@ function TabBar({ paneId, multi }: { paneId: string; multi: boolean }) {
 
   return (
     <div className="tabbar" data-tabbar={paneId} onDragOver={onDragOver} onDragLeave={e => !e.currentTarget.contains(e.relatedTarget as Node) && setSlot(null)} onDrop={onDrop}>
-      <div className={`tabs${slot?.kind === 'empty' ? ' drop-empty' : ''}`} role="tablist" aria-label={t('workspace.panes.tabList')} ref={tabsRef}>
-        {pane.tabs.length ? (
-          pane.tabs.map((sid, i) => <Tab key={sid} sid={sid} paneId={paneId} index={i} active={sid === pane.active} keyed={paneId === focus} dropCls={cls(sid)} />)
-        ) : (
-          <span className="hint" style={{ padding: '0 8px 10px' }}>
-            {t('workspace.panes.tabsEmpty')}
-          </span>
-        )}
+      <div className="tabs-wrap">
+        <div className={`tabs${slot?.kind === 'empty' ? ' drop-empty' : ''}`} role="tablist" aria-label={t('workspace.panes.tabList')} ref={tabsRef}>
+          {pane.tabs.length ? (
+            pane.tabs.map((sid, i) => <Tab key={sid} sid={sid} paneId={paneId} index={i} active={sid === pane.active} keyed={paneId === focus} dropCls={cls(sid)} />)
+          ) : (
+            <span className="hint" style={{ padding: '0 8px 10px' }}>
+              {t('workspace.panes.tabsEmpty')}
+            </span>
+          )}
+        </div>
+        {edge.left && <span className="tab-fade l" aria-hidden="true" />}
+        {edge.right && <span className="tab-fade r" aria-hidden="true" />}
+        <StripThumb strip={tabsRef} edge={edge} />
       </div>
+      {(edge.left || edge.right) && <TabList paneId={paneId} tabs={pane.tabs} active={pane.active} strip={tabsRef} />}
       {multi && paneId === topRight(layout) && (
         <button type="button" className="icon-btn layout-btn" title={t('workspace.panes.singleTitle')} aria-label={t('workspace.panes.singleLabel')} onClick={toggleSingle}>
           {ICON_SINGLE}
@@ -369,7 +373,15 @@ function PhoneBar() {
             </span>
           </>
         ) : s && !sub ? (
-          <SessionTitle sessionId={s.id} title={s.title} />
+          <>
+            <SessionTitle sessionId={s.id} title={s.title} />
+            {/* the phone has no chat head: a session of another vendor than the default Claude shows its mark here */}
+            {s.provider && s.provider !== 'claude' && (
+              <span className="provider-badge" title={t('chat.head.providerBadge', { provider: PROVIDER_LABELS[s.provider] })}>
+                <ProviderIcon provider={s.provider} size={16} />
+              </span>
+            )}
+          </>
         ) : (
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub ? t('workspace.panes.subagentTitle', { title: subTitle(sub) }) : ''}</span>
         )}

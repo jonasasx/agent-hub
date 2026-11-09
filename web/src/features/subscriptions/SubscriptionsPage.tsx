@@ -41,7 +41,8 @@ function TokenInput({ id, inputRef, invalid, describedBy, label }: { id: string;
       ref={inputRef}
       className="input mono"
       type="password"
-      autoComplete="off"
+      // Chrome ignores off on a password field and fills the site password; new-password stops that (push-voice-fixes D7)
+      autoComplete="new-password"
       autoCorrect="off"
       autoCapitalize="off"
       spellCheck={false}
@@ -459,6 +460,7 @@ function RenameForm({ id, s, onDone }: { id: string; s: SubscriptionView; onDone
           className="input"
           value={name}
           maxLength={60}
+          autoComplete="off"
           autoFocus
           onChange={e => setName(e.target.value)}
           aria-invalid={!!err}
@@ -564,6 +566,7 @@ function CodexAddForm({ enabled, names }: { enabled: boolean; names: string[] })
           className="input"
           value={name}
           maxLength={60}
+          autoComplete="off"
           disabled={!enabled}
           placeholder={t('subscriptions.codex.namePlaceholder')}
           onChange={e => {
@@ -677,6 +680,7 @@ function AddForm({ enabled, names, autoFocusName }: { enabled: boolean; names: s
             className="input"
             value={name}
             maxLength={60}
+            autoComplete="off"
             disabled={!enabled}
             placeholder={t('subscriptions.add.namePlaceholder')}
             onChange={e => {
@@ -697,7 +701,7 @@ function AddForm({ enabled, names, autoFocusName }: { enabled: boolean; names: s
           {enabled ? (
             <TokenInput id={`${id}-t`} inputRef={tokenRef} invalid={!!errors.token} describedBy={errors.token ? `${id}-t-err` : `${id}-t-hint`} />
           ) : (
-            <input id={`${id}-t`} className="input" type="password" disabled autoComplete="off" />
+            <input id={`${id}-t`} className="input" type="password" disabled autoComplete="new-password" />
           )}
           {errors.token ? (
             <span className="field-error" id={`${id}-t-err`} role="alert">

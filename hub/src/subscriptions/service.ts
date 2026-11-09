@@ -32,6 +32,8 @@ export interface SubscriptionServiceOptions {
   key: string | undefined;
   connectorsHint: boolean;
   now?: () => Date;
+  /** provider-parity R3: the Codex homes on the user's machines follow the registry (CodexHomesSync). */
+  codexHomesChanged?: (userId: string, forget: string[]) => void;
 }
 
 /** The subscription a process is launched under; the token is passed to the agent and dropped. */
@@ -241,6 +243,7 @@ export class SubscriptionService {
     }
     // subscription-limits L4: retiring or bringing back starts the limits from «ещё не проверялась»
     if (set.retired_at !== undefined && (await deleteLimits(this.o.db, userId, s.id))) this.limitsChanged(userId);
+    if (set.retired_at !== undefined && s.provider === 'codex') this.o.codexHomesChanged?.(userId, []);
     return toSubscriptionView(await this.own(userId, id), this.now());
   }
 
@@ -264,6 +267,8 @@ export class SubscriptionService {
     this.changed(userId);
     // subscription-limits L4: the new token may be another account — the old snapshot goes
     if (await deleteLimits(this.o.db, userId, s.id)) this.limitsChanged(userId);
+    // R3: an auth.json of the old sign-in left on a machine is not the subscription any more
+    if (codex) this.o.codexHomesChanged?.(userId, [s.id]);
     return toSubscriptionView(await this.own(userId, id), this.now());
   }
 

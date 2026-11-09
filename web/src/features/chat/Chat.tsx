@@ -13,7 +13,7 @@ import { ProjectSuggestion } from '../projects/ProjectSuggestion';
  * API: GET /api/sessions/:id/events, POST …/messages, …/wake, …/interrupt, PATCH /api/sessions/:id,
  * POST …/permissions/:requestId (D10).
  */
-import { Fragment, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type RefObject } from 'react';
 import { useMenu } from '../ui/a11y';
 import { IDLE_TIMEOUT_CHOICES, PROVIDER_LABELS, UI_PERMISSION_MODES, bypassUnavailable, type SessionView, type UiPermissionMode } from '../../api/types';
 import { providerModels } from '../newSession/ProviderField';
@@ -27,7 +27,9 @@ import { AgentProvider } from './agentName';
 import { ProviderIcon } from './ProviderIcon';
 import { SessionTitle } from './SessionTitle';
 import { ProjectLine } from '../projects/ProjectButton';
-import { ImageSourceContext, Markdown } from './Markdown';
+import { paneOf } from '../layout/layout';
+import { FileLinkContext, ImageSourceContext, Markdown } from './Markdown';
+import { fileLinkResolver } from '../files/links';
 import { buildChat, finishedMessageIds, knownLocalImages, matchPending, pendingSlot, type Undelivered } from './transcript';
 import { addFiles, busy as attachmentsBusy, filesOf, restoreAttachments, settleOptimistic, useAttachments } from '../images/attachments';
 import { AttachButton, AttachmentStrip } from '../images/AttachmentStrip';
@@ -38,6 +40,8 @@ import { CommandBox } from '../machines/EnrollModal';
 import { claudeLoginCommand, needsClaudeLogin } from '../machines/machines';
 import { MicButton } from '../voice/MicButton';
 import { VoiceBar, VoiceNote, shownHere } from '../voice/VoiceBar';
+import { TalkBar, TalkButton, talkHere } from '../voice/TalkBar';
+import { endTalk, reportTalk, useTalk } from '../voice/talk';
 import { claimDictation, finishDictation, useVoice } from '../voice/voice';
 import { HeadSubscription } from '../subscriptions/HeadSubscription';
 import { LimitChip } from '../limits/LimitChip';
@@ -409,10 +413,10 @@ function Composer({ s, paneId }: { s: SessionView; paneId: string }) {
   const loading = !!atts && attachmentsBusy(s.id);
   // with an image the message may go without text (chat-images «Прикрепление изображений к сообщению»)
   const empty = !draft.trim() && !ready;
-  // the phone composer is one row: the field grows with the text up to five lines
+  // the phone composer is a capsule: the field on the full width, the tools and one main button under it
   const phone = useStore(x => x.device === 'phone');
-  // one line on the phone: the placeholder must not wrap the empty field into two lines
   const bypass = s.permissionMode === 'bypassPermissions';
+  // one line on the phone: the placeholder must not wrap the empty field into two lines
   const placeholder = disabled
     ? t('chat.composer.unavailable')
     : st === 'sleeping' || st === 'closed'
@@ -420,14 +424,29 @@ function Composer({ s, paneId }: { s: SessionView; paneId: string }) {
         ? t('chat.composer.placeholderResumePhone')
         : t('chat.composer.placeholderResume')
       : phone
-        ? bypass
-          ? t('chat.composer.placeholderBypass')
-          : t('chat.composer.placeholderPhone')
+        ? t('chat.composer.placeholderPhone')
         : t('chat.composer.placeholder', { provider: PROVIDER_LABELS[s.provider ?? 'claude'] });
   const area = useRef<HTMLTextAreaElement>(null);
   // dictation (voice-input): the button only when the hub has an ElevenLabs key; the bar instead of the field
   const voiceOn = useStore(x => x.auth.kind === 'signed_in' && !!x.auth.me.voiceInput);
   const recordingHere = useVoice(v => shownHere(v.active, s.id, paneId));
+  // voice conversation (voice-conversation): the button when the hub has an ElevenLabs agent; the bar instead of the field
+  const talkOn = useStore(x => x.auth.kind === 'signed_in' && !!x.auth.me.voiceTalk);
+  const talkingHere = useTalk(x => talkHere(x.active, s.id, paneId));
+  // a long voice turn ended or asks: the conversation speaks its result or question (voice-conversation D4.8)
+  const statusWas = useRef(s.status);
+  useEffect(() => {
+    const was = statusWas.current;
+    statusWas.current = s.status;
+    if (talkingHere && was === 'working' && (s.status === 'waiting' || s.status === 'permission')) reportTalk(s.id);
+  }, [s.status, s.id, talkingHere]);
+  // the composer of the conversation goes away (another tab, the pane closed): the conversation ends, minutes are paid
+  useEffect(
+    () => () => {
+      if (talkHere(useTalk.getState().active, s.id, paneId)) void endTalk();
+    },
+    [s.id, paneId],
+  );
   // a dictation of this session left without a composer comes back to the first composer of the session on screen
   const orphan = useVoice(v => !!v.active && v.active.sessionId === s.id && v.active.paneId === null && v.active.phase !== 'starting');
   useLayoutEffect(() => {
@@ -452,7 +471,7 @@ function Composer({ s, paneId }: { s: SessionView; paneId: string }) {
     const pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
     const min = parseFloat(cs.minHeight) || 0;
     el.style.height = `${Math.max(min, Math.min(el.scrollHeight + parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth), line * 5 + pad))}px`;
-  }, [draft, phone, recordingHere]);
+  }, [draft, phone, recordingHere, talkingHere]);
   const send = () => {
     if (!disabled && !empty && !loading) void sendMessage(s.id, draft);
   };
@@ -480,7 +499,12 @@ function Composer({ s, paneId }: { s: SessionView; paneId: string }) {
   return (
     <div className={`composer${bypass ? ' bypass' : ''}`}>
       <div className="composer-inner">
-        {recordingHere ? (
+        {talkingHere ? (
+          <div className="voice-row">
+            <TalkBar />
+            {interruptBtn}
+          </div>
+        ) : recordingHere ? (
           <div className="voice-row">
             <VoiceBar sessionId={s.id} />
             {interruptBtn}
@@ -505,6 +529,7 @@ function Composer({ s, paneId }: { s: SessionView; paneId: string }) {
               <div className="left">
                 <AttachButton akey={s.id} disabled={disabled} />
                 {voiceOn && <MicButton sessionId={s.id} paneId={paneId} disabled={disabled} />}
+                {talkOn && <TalkButton sessionId={s.id} paneId={paneId} disabled={disabled} />}
                 {/* the head shows model and mode in a wide pane; here only in a narrow one, bypassPermissions always */}
                 <span className="mono narrow-only">{modelName}</span>
                 {bypass ? (
@@ -516,27 +541,31 @@ function Composer({ s, paneId }: { s: SessionView; paneId: string }) {
                 )}
               </div>
               <div className="left">
-                {interruptBtn}
+                {/* the phone has one main button: «Прервать» while the turn runs and the field is empty, else «Отправить» */}
+                {(!phone || empty) && interruptBtn}
                 {/* while the sleep banner offers «Продолжить», an empty composer does not compete with it */}
-                <button
-                  type="button"
-                  className={`btn c-send${st === 'sleeping' && empty ? '' : ' primary'}`}
-                  aria-label={t('chat.composer.send')}
-                  disabled={disabled || empty || loading}
-                  onClick={send}
-                  title={loading ? t('chat.composer.imagesLoading') : t('chat.composer.send')}
-                >
-                  <svg className="ico" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
-                  </svg>
-                  <span className="lbl">{t('chat.composer.send')}</span>
-                </button>
+                {!(phone && empty && interruptBtn) && (
+                  <button
+                    type="button"
+                    className={`btn c-send${st === 'sleeping' && empty ? '' : ' primary'}`}
+                    aria-label={t('chat.composer.send')}
+                    disabled={disabled || empty || loading}
+                    onClick={send}
+                    title={loading ? t('chat.composer.imagesLoading') : t('chat.composer.send')}
+                  >
+                    <svg className="ico" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
+                    </svg>
+                    <span className="lbl">{t('chat.composer.send')}</span>
+                  </button>
+                )}
               </div>
             </div>
           </>
         )}
-        <VoiceNote sessionId={s.id} />
       </div>
+      {/* the hint goes under the composer, outside the phone capsule's border and rounding (voice-input, task 6.7) */}
+      <VoiceNote sessionId={s.id} />
     </div>
   );
 }
@@ -618,6 +647,10 @@ function Messages({ s, viewOnly = false, scope }: { s: SessionView; viewOnly?: b
   const provider = s.provider ?? 'claude';
   const agent = PROVIDER_LABELS[provider];
   const imageSource = useMemo(() => ({ sessionId: imageSessionId, runnerName, known }), [imageSessionId, runnerName, known]);
+  // links to files open in the viewer beside the pane of this feed: relative ones from the folder of the session
+  // (change chat-file-links)
+  const pane = useStore(st => paneOf(st.ws, s.id)?.id);
+  const fileLinks = useMemo(() => fileLinkResolver({ runnerId: s.runnerId, base: s.cwd, cwd: s.cwd, sessionId: imageSessionId, ...(pane ? { pane } : {}) }), [s.runnerId, s.cwd, imageSessionId, pane]);
   const optimisticRaw = useAttachments(a => a.optimistic[s.id]);
   const optimistic = viewOnly ? undefined : optimisticRaw;
   const matched = useMemo(() => matchPending(items, log?.events ?? [], optimistic ?? []), [items, log?.events, optimistic]);
@@ -724,67 +757,69 @@ function Messages({ s, viewOnly = false, scope }: { s: SessionView; viewOnly?: b
   return (
     <SubagentScope.Provider value={scope ?? s.id}>
       <ImageSourceContext.Provider value={imageSource}>
-        <AgentProvider.Provider value={provider}>
-          <div
-            className="messages"
-            ref={box}
-            onScroll={e => {
-              const el = e.currentTarget;
-              if (ownTop.current !== null && Math.abs(el.scrollTop - ownTop.current) <= 1) {
+        <FileLinkContext.Provider value={fileLinks}>
+          <AgentProvider.Provider value={provider}>
+            <div
+              className="messages"
+              ref={box}
+              onScroll={e => {
+                const el = e.currentTarget;
+                if (ownTop.current !== null && Math.abs(el.scrollTop - ownTop.current) <= 1) {
+                  ownTop.current = null;
+                  return;
+                }
                 ownTop.current = null;
-                return;
-              }
-              ownTop.current = null;
-              stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-            }}
-          >
-            {log?.before && (
-              <button type="button" className="btn ghost load-older" disabled={log.loading} aria-busy={log.loading} onClick={older}>
-                {log.loading && <span className="spinner" aria-hidden="true" />}
-                {t('chat.feed.older')}
-              </button>
-            )}
-            {log?.error && (
-              <div className="sysnote err" role="alert">
-                {log.error}
-                <button type="button" className="btn note-retry" onClick={() => retryLog(s.id)}>
-                  {t('chat.feed.retry')}
+                stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+              }}
+            >
+              {log?.before && (
+                <button type="button" className="btn ghost load-older" disabled={log.loading} aria-busy={log.loading} onClick={older}>
+                  {log.loading && <span className="spinner" aria-hidden="true" />}
+                  {t('chat.feed.older')}
                 </button>
-              </div>
-            )}
-            {log?.loading && !log.events.length && <HistorySkeleton />}
-            {items.map((it, i) => (
-              <Fragment key={it.id}>
-                {pendingView(pending.get(i))}
-                <ItemBoundary id={it.id}>
-                  <ChatItemView item={it} readOnly={ro} onDecide={(rid, d, extra) => void decide(s.id, rid, d, extra)} onRetry={retry} onSwitch={viewOnly ? undefined : onSwitch} />
-                </ItemBoundary>
-              </Fragment>
-            ))}
-            {showPartial && (
-              <div className="msg assistant partial">
-                <span className="who">
-                  <ProviderIcon provider={provider} size={15} />
-                </span>
-                <div className="bubble md">
-                  <Markdown text={partial.text} />
+              )}
+              {log?.error && (
+                <div className="sysnote err" role="alert">
+                  {log.error}
+                  <button type="button" className="btn note-retry" onClick={() => retryLog(s.id)}>
+                    {t('chat.feed.retry')}
+                  </button>
                 </div>
-              </div>
-            )}
-            {pendingView(pending.get(items.length))}
-            {st === 'working' && (
-              <div className="thinking" role="status">
-                <span className="g-work" />
-                <span className="t-label">{children ? childrenLabel(children) : turnLabel(items, !!showPartial, runnerName, agent)}</span>
-                <span className="dots" aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
-                </span>
-              </div>
-            )}
-          </div>
-        </AgentProvider.Provider>
+              )}
+              {log?.loading && !log.events.length && <HistorySkeleton />}
+              {items.map((it, i) => (
+                <Fragment key={it.id}>
+                  {pendingView(pending.get(i))}
+                  <ItemBoundary id={it.id}>
+                    <ChatItemView item={it} readOnly={ro} onDecide={(rid, d, extra) => void decide(s.id, rid, d, extra)} onRetry={retry} onSwitch={viewOnly ? undefined : onSwitch} />
+                  </ItemBoundary>
+                </Fragment>
+              ))}
+              {showPartial && (
+                <div className="msg assistant partial">
+                  <span className="who">
+                    <ProviderIcon provider={provider} size={15} />
+                  </span>
+                  <div className="bubble md">
+                    <Markdown text={partial.text} />
+                  </div>
+                </div>
+              )}
+              {pendingView(pending.get(items.length))}
+              {st === 'working' && (
+                <div className="thinking" role="status">
+                  <span className="g-work" />
+                  <span className="t-label">{children ? childrenLabel(children) : turnLabel(items, !!showPartial, runnerName, agent)}</span>
+                  <span className="dots" aria-hidden="true">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                </div>
+              )}
+            </div>
+          </AgentProvider.Provider>
+        </FileLinkContext.Provider>
       </ImageSourceContext.Provider>
     </SubagentScope.Provider>
   );
@@ -822,6 +857,8 @@ export function Chat({ session: s, paneId }: { session: SessionView; paneId: str
           addFiles(s.id, filesOf(e.dataTransfer));
         },
       };
+  const head = useRef<HTMLDivElement>(null);
+  const narrowHead = useNarrowLeaf(head);
   return (
     <section className={`chat${dropping ? ' file-drop' : ''}${phone ? ' phone' : ''}`} style={{ '--gc': colorVar(s.project.colorKey) } as CSSProperties} aria-label={s.title} {...dropProps}>
       {dropping && (
@@ -829,7 +866,7 @@ export function Chat({ session: s, paneId }: { session: SessionView; paneId: str
           {t('chat.head.dropHint')}
         </div>
       )}
-      <div className="chat-head">
+      <div className="chat-head" ref={head}>
         <div className="chat-title">
           <div className="title-row">
             <SessionTitle sessionId={s.id} title={s.title} />
@@ -846,6 +883,12 @@ export function Chat({ session: s, paneId }: { session: SessionView; paneId: str
             <span className="provider-badge" title={t('chat.head.providerBadge', { provider: PROVIDER_LABELS[s.provider ?? 'claude'] })}>
               <ProviderIcon provider={s.provider ?? 'claude'} size={18} />
             </span>
+            {/* a narrow pane: «⋯» stays in the title row instead of wrapping onto a row of its own under the chips */}
+            {narrowHead && (
+              <span className="title-more">
+                <ModeModelMenu s={s} />
+              </span>
+            )}
           </div>
           <span className="sub mono">
             {runnerName} ·{' '}
@@ -906,7 +949,7 @@ export function Chat({ session: s, paneId }: { session: SessionView; paneId: str
           </span>
           {s.cwd && (
             <button type="button" className="btn fx-files-btn" title={t('chat.head.filesBtnTitle')} onClick={() => openFilesForSession(s.id)}>
-              {ICON_FOLDER_BTN} {t('chat.head.filesBtn')}
+              {ICON_FOLDER_BTN} <span className="btn-label">{t('chat.head.filesBtn')}</span>
             </button>
           )}
           <SubagentsButton s={s} />
@@ -915,7 +958,7 @@ export function Chat({ session: s, paneId }: { session: SessionView; paneId: str
           <button type="button" className="btn fork-btn" title={t('chat.head.forkTitle')} onClick={() => useStore.setState({ modal: { type: 'fork', sessionId: s.id } })}>
             {t('chat.head.fork')}
           </button>
-          <ModeModelMenu s={s} />
+          {!narrowHead && <ModeModelMenu s={s} />}
         </div>
       </div>
       {phone ? (
@@ -938,6 +981,22 @@ export function Chat({ session: s, paneId }: { session: SessionView; paneId: str
       <McpPanelHost s={s} />
     </section>
   );
+}
+
+/** The pane matches `@container leaf (max-width: 520px) or (max-height: 520px)` of app.css: the chat head moves «⋯» to the title row. */
+function useNarrowLeaf(ref: RefObject<HTMLElement | null>): boolean {
+  const [narrow, setNarrow] = useState(false);
+  // measured before the first paint, so a chat opened in a narrow pane does not move «⋯» after it shows
+  useLayoutEffect(() => {
+    const leaf = ref.current?.closest('.leaf');
+    if (!leaf || typeof ResizeObserver === 'undefined') return;
+    const measure = () => setNarrow(leaf.clientWidth <= 520 || leaf.clientHeight <= 520);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(leaf);
+    return () => ro.disconnect();
+  }, [ref]);
+  return narrow;
 }
 
 /**

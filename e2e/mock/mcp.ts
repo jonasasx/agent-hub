@@ -17,13 +17,13 @@ const srv = (over: Json): Json => ({ status: 'connected', transport: 'stdio', sc
 export const MCP_SERVERS: Json[] = [
   srv({ name: 'vaultwarden', target: 'node C:/Users/alice/mcp/vaultwarden/dist/index.js --session •••', serverInfo: { name: 'vaultwarden-mcp', version: '1.4.0' }, toolCount: 12 }),
   srv({
-    name: 'scanner-fleet',
+    name: 'fleet-ops',
     status: 'failed',
     transport: 'http',
     target: 'https://scanners.example.com/mcp',
     scope: 'project',
     canAuth: true,
-    error: 'MCP error -32000: Connection closed: connect ECONNREFUSED 10.3.16.20:443',
+    error: 'MCP error -32000: Connection closed: connect ECONNREFUSED 10.20.16.20:443',
   }),
   srv({ name: 'notion', status: 'needs-auth', transport: 'http', target: 'https://mcp.notion.com/mcp', canAuth: true }),
   srv({ name: 'krisp', status: 'pending', transport: 'http', target: 'https://mcp.krisp.ai/mcp', canAuth: true }),
@@ -186,10 +186,10 @@ export function mcpSpecs(device: 'desktop' | 'phone') {
       await shot(page, `mcp-${device}-${theme}-5-auth-localhost`);
 
       // a reconnect in flight, then a sleeping session
-      mcp.set(s1.id, { authFlows: [], servers: MCP_SERVERS.map(s => (s.name === 'scanner-fleet' ? { ...s, pendingAction: 'reconnect' } : s)) });
-      await expect(panel.getByRole('listitem', { name: 'scanner-fleet: подключается' })).toBeVisible();
-      await expect(panel.getByRole('listitem', { name: /^scanner-fleet/ }).getByRole('button', { name: 'Переподключить' })).toHaveCount(0);
-      await panel.getByRole('listitem', { name: /^scanner-fleet/ }).scrollIntoViewIfNeeded();
+      mcp.set(s1.id, { authFlows: [], servers: MCP_SERVERS.map(s => (s.name === 'fleet-ops' ? { ...s, pendingAction: 'reconnect' } : s)) });
+      await expect(panel.getByRole('listitem', { name: 'fleet-ops: подключается' })).toBeVisible();
+      await expect(panel.getByRole('listitem', { name: /^fleet-ops/ }).getByRole('button', { name: 'Переподключить' })).toHaveCount(0);
+      await panel.getByRole('listitem', { name: /^fleet-ops/ }).scrollIntoViewIfNeeded();
       await shot(page, `mcp-${device}-${theme}-6-reconnect`);
       mcp.set(s1.id, { live: false, servers: MCP_SERVERS });
       await expect(panel.getByText('Сессия спит. Любое действие разбудит её.')).toBeVisible();

@@ -8,6 +8,7 @@ import { backfillPayloads } from './replication/backfill.js';
 import { reclassifySessions } from './replication/reclassify.js';
 import { formatReport, googleDriveClient, importDrive, type DriveClient } from './import/drive.js';
 import { reclassifyProjects } from './projects/reclassify.js';
+import { loadConfig, type Config } from './config.js';
 import { backfillSubagents } from './subagents/backfill.js';
 import { ProjectCatalog } from './projects/catalogService.js';
 import { ProjectService } from './projects/service.js';
@@ -20,9 +21,7 @@ const USAGE = `Usage:
                                                unique among the runners of the same owner
   cli.js events:backfill-blobs [--dry-run]   move big tool-result copies of stored events to S3 (D4), idempotent
   cli.js sessions:reclassify [--dry-run]     recompute session sources from main transcripts (D5), idempotent
-  cli.js projects:reclassify [--dry-run] [--fresh]
-                                               rebuild path signals from events and decide projects (D9), pinned sessions untouched;
-                                               --fresh: from scratch, without the stored auto project (no hysteresis)
+  cli.js projects:reclassify [--dry-run]     rebuild path signals from events and re-run the catalog rules (D9), pinned sessions untouched
   cli.js subagents:backfill [--session <id>] [--dry-run]
                                                the registry of subagents for history: raw copies in S3,
                                                sessions without them from events; one session at a time, idempotent
@@ -30,7 +29,13 @@ const USAGE = `Usage:
                                                without --user: the administrator (OIDC_ALLOWED_EMAILS);
                                                needs DRIVE_TOKEN_FILE (read-only token_personal_sessions.json) and S3`;
 
-export async function runCli(argv: string[], db: Db, out: (s: string) => void, env: NodeJS.ProcessEnv = process.env, deps: { store?: ObjectStore; drive?: DriveClient } = {}): Promise<number> {
+export async function runCli(
+  argv: string[],
+  db: Db,
+  out: (s: string) => void,
+  env: NodeJS.ProcessEnv = process.env,
+  deps: { store?: ObjectStore; drive?: DriveClient; config?: Config } = {},
+): Promise<number> {
   const [cmd, ...rest] = argv;
   switch (cmd) {
     case 'runner:set-hostname': {
@@ -131,15 +136,15 @@ export async function runCli(argv: string[], db: Db, out: (s: string) => void, e
       return 0;
     }
     case 'projects:reclassify': {
-      const { values } = parseArgs({ args: rest, options: { 'dry-run': { type: 'boolean' }, fresh: { type: 'boolean' } } });
+      const { values } = parseArgs({ args: rest, options: { 'dry-run': { type: 'boolean' } } });
       const dryRun = values['dry-run'] ?? false;
       const r = await reclassifyProjects(db, {
+        config: deps.config ?? loadConfig(env),
         dryRun,
-        fresh: values.fresh ?? false,
         log: out,
       });
-      out(`${dryRun ? 'dry run: ' : ''}${values.fresh ? 'fresh: ' : ''}sessions ${r.sessions}: with a project ${r.withProject}, without ${r.withoutProject}, pinned ${r.manual}, errors ${r.errors}`);
-      for (const p of r.byProject) out(`  ${String(p.sessions).padStart(5)}  ${p.title}  ${p.path}`);
+      out(`${dryRun ? 'dry run: ' : ''}sessions ${r.sessions}: with a project ${r.withProject}, without ${r.withoutProject}, pinned ${r.manual}, errors ${r.errors}`);
+      for (const p of r.byProject) out(`  ${String(p.sessions).padStart(5)}  ${p.title}`);
       return r.errors ? 1 : 0;
     }
     case 'import:drive': {

@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { CloseCode, PROTOCOL_VERSION, envelope } from '@agent-hub/shared';
-import { ALLOWED_EMAIL, PUBLIC_URL, agentSend, connectFakeAgent, connectUi, startTestHub, waitFor, type TestHub } from '../test/harness.js';
+import { ALLOWED_EMAIL, PUBLIC_URL, agentSend, autoReply, connectFakeAgent, connectUi, startTestHub, waitFor, type TestHub } from '../test/harness.js';
 import { PENDING_RUNNER_TTL_MS, deleteStalePendingRunners } from '../runners/repo.js';
 
 const KATE = 'kate@example.com';
@@ -479,6 +479,38 @@ describe('multi-user (integration)', () => {
       expect((await get(`/api/runners/${c.runner.id}`, user)).json().state).toBe('pending');
     });
 
+    // session-folder: the default folder of a machine — the first hello fills it with the home folder, PATCH changes it.
+    it('default folder: hello fills it once; PATCH checks the OS, «..», the folder on the machine and the owner', async () => {
+      const c = await create('Папка по умолчанию');
+      const token = (await enroll(c.code)).json().token as string;
+      const offline = await send('PATCH', `/api/runners/${c.runner.id}`, user, { defaultDir: '/home/folder' });
+      expect(offline.statusCode).toBe(409);
+      expect(offline.json()).toMatchObject({ error: 'runner_offline' });
+      const a = connectFakeAgent(t.wsBase, token, { hostname: 'folder-host', os: 'Ubuntu 24.04', homeDir: '/home/folder' });
+      autoReply(a, (type, payload) => {
+        if (type === 'fs.stat') return { exists: payload.path !== '/home/folder/missing', isDir: true };
+        throw Object.assign(new Error(`${type} not scripted`), { code: 'not_implemented' });
+      });
+      await a.next('welcome');
+      expect((await get(`/api/runners/${c.runner.id}`, user)).json().defaultDir).toBe('/home/folder');
+      expect((await send('PATCH', `/api/runners/${c.runner.id}`, user, { defaultDir: 'C:\\Users\\folder' })).json()).toMatchObject({ error: 'invalid_path' });
+      expect((await send('PATCH', `/api/runners/${c.runner.id}`, user, { defaultDir: '/home/folder/../x' })).json()).toMatchObject({ error: 'invalid_path' });
+      const missing = await send('PATCH', `/api/runners/${c.runner.id}`, user, { defaultDir: '/home/folder/missing' });
+      expect(missing.statusCode).toBe(422);
+      expect(missing.json()).toMatchObject({ error: 'cwd_not_found' });
+      expect((await send('PATCH', `/api/runners/${c.runner.id}`, ivan, { defaultDir: '/home/folder/vault' })).statusCode).toBe(404);
+      const ok = await send('PATCH', `/api/runners/${c.runner.id}`, user, { defaultDir: '/home/folder/vault' });
+      expect(ok.statusCode).toBe(200);
+      expect(ok.json().defaultDir).toBe('/home/folder/vault');
+      // a reconnect does not overwrite the chosen folder with the home folder
+      a.ws.close();
+      await a.closed;
+      const again = connectFakeAgent(t.wsBase, token, { hostname: 'folder-host', os: 'Ubuntu 24.04', homeDir: '/home/folder' });
+      await again.next('welcome');
+      expect((await get(`/api/runners/${c.runner.id}`, user)).json().defaultDir).toBe('/home/folder/vault');
+      again.ws.close();
+    });
+
     it('agent.status from a 1.5 agent updates the Claude login («Нет входа в Claude»)', async () => {
       const c = await create('Статус');
       const a = connectFakeAgent(t.wsBase, (await enroll(c.code)).json().token, { hostname: 'status-host', claude: { login: 'ok', version: '2.1.310' } });
@@ -562,6 +594,7 @@ describe('multi-user (integration)', () => {
         'GET /auth/callback',
         'POST /auth/logout',
         'GET /auth/disabled',
+        'GET /auth/provider-logout',
         'GET /auth/desktop/start',
         'GET /auth/desktop/callback',
         'POST /auth/desktop/exchange',
@@ -573,6 +606,8 @@ describe('multi-user (integration)', () => {
         'POST /enroll',
         // mcp-management: the handler redirects to the login itself
         'GET /mcp/oauth/callback',
+        // voice-conversation: the Custom LLM of the ElevenLabs agent checks its own key (VOICE_LLM_KEY), not the cookie
+        'POST /voice-llm/v1/chat/completions',
       ];
       // /agent-api/* and /ws/agent answer only to a runner token: without one they are 401 like the rest
       expect(open.sort()).toEqual(allowed.sort());

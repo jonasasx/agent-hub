@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { MCP_REGISTRY_CAPABILITIES, type SessionView } from '@agent-hub/shared';
+import { MCP_REGISTRY_CAPABILITIES, OAUTH_LOOPBACK_REDIRECT_URI, type SessionView } from '@agent-hub/shared';
 import { agentSend, autoReply, connectFakeAgent, PUBLIC_URL, startTestHub, waitFor, type FakeAgent, type TestHub } from '../test/harness.js';
 import { decryptToken, tokenKey } from '../subscriptions/crypto.js';
 
@@ -112,16 +112,7 @@ describe('MCP registry draft tools', () => {
                     : {};
     });
     await agent.next('welcome');
-    userId = (await t.tdb.pool.query<{ id: string }>(`select id from users where email=$1`, ['jonasasx@gmail.com'])).rows[0]!.id;
-    const registryEnabled = await t.hub.app.inject({
-      method: 'PUT',
-      url: `/api/mcp/registry/machines/${runnerId}`,
-      cookies: { ah_session: cookie },
-      headers: { origin: PUBLIC_URL },
-      payload: { enabled: true },
-    });
-    expect(registryEnabled.statusCode, registryEnabled.body).toBe(200);
-    expect(registryEnabled.json()).toMatchObject({ machineId: runnerId, registryEnabled: true });
+    userId = (await t.tdb.pool.query<{ id: string }>(`select id from users where email=$1`, ['alice@example.com'])).rows[0]!.id;
     catalogProjectId = (await t.tdb.pool.query<{ id: string }>(`insert into catalog_projects(user_id,name) values($1,$2) returning id`, [userId, 'mcp_registry_project_scope'])).rows[0]!.id;
     await t.tdb.pool.query(`insert into project_bindings(user_id,project_id,runner_id,path) values($1,$2,$3,$4)`, [userId, catalogProjectId, runnerId, 'C:/work']);
     const started = await t.hub.app.inject({
@@ -746,6 +737,7 @@ describe('MCP registry draft tools', () => {
           transport: 'http',
           mode: 'remote',
           url: 'https://oauth-mcp.example.test/mcp',
+          oauthClientId: 'pre-registered-client',
           machineScope: { allMachines: false, machineIds: [runnerId] },
         },
       },
@@ -769,25 +761,38 @@ describe('MCP registry draft tools', () => {
     });
     expect(started.statusCode, started.body).toBe(202);
     const startResult = started.json() as { state: string; authorizationUrl: string; expiresAt: number; serverId: string; machineId: string };
-    expect(startResult).toMatchObject({ state: 'pending', serverId, machineId: runnerId });
+    expect(startResult).toMatchObject({ state: 'pending', serverId, machineId: runnerId, callback: 'manual' });
     expect(startResult.expiresAt).toBeGreaterThan(Date.now());
     expect(startResult).not.toHaveProperty('oauthState');
     const startCommand = agent.messages.find(message => message.type === 'mcp.oauth.start' && message.payload.serverId === serverId)!;
     expect(startCommand.payload).toMatchObject({
       serverId,
       machineId: runnerId,
-      redirectUri: `${PUBLIC_URL}/mcp/oauth/callback`,
+      redirectUri: OAUTH_LOOPBACK_REDIRECT_URI,
       serverUrl: 'https://oauth-mcp.example.test/mcp',
       transport: 'http',
+      oauthClientId: 'pre-registered-client',
     });
     const oauthState = new URL(startResult.authorizationUrl).searchParams.get('state')!;
     const callbackCode = 'oauth-callback-code-should-not-leak';
-    const callback = await t.hub.app.inject({
-      method: 'GET',
-      url: `/mcp/oauth/callback?code=${callbackCode}&state=${encodeURIComponent(oauthState)}`,
-      cookies: { ah_session: cookie },
-    });
+    const complete = (machineId: string, callbackUrl: string) =>
+      t.hub.app.inject({
+        method: 'POST',
+        url: `/api/mcp/registry/servers/${serverId}/oauth/complete`,
+        cookies: { ah_session: cookie },
+        headers: { origin: PUBLIC_URL },
+        payload: { machineId, callbackUrl },
+      });
+    const pastedUrl = `${OAUTH_LOOPBACK_REDIRECT_URI}?code=${callbackCode}&state=${encodeURIComponent(oauthState)}`;
+    expect((await complete(runnerId, 'not a link')).json()).toMatchObject({ error: 'oauth_callback_invalid' });
+    const foreignPath = await complete(runnerId, `https://evil.example.test/callback?code=${callbackCode}&state=${encodeURIComponent(oauthState)}`);
+    expect(foreignPath.statusCode).toBe(400);
+    expect((await complete(runnerId, `${OAUTH_LOOPBACK_REDIRECT_URI}?code=${callbackCode}&state=unknown-state-value`)).statusCode).toBe(404);
+    expect((await complete(randomUUID(), pastedUrl)).statusCode).toBe(404);
+    expect(agent.messages.some(message => message.type === 'mcp.oauth.callback' && message.payload.flowId === startCommand.payload.flowId)).toBe(false);
+    const callback = await complete(runnerId, `  ${pastedUrl}\n`);
     expect(callback.statusCode, callback.body).toBe(200);
+    expect(callback.json()).toEqual({ serverId, machineId: runnerId, state: 'pending' });
     expect(callback.body).not.toContain(callbackCode);
     expect(logs.join('\n')).not.toContain(callbackCode);
     expect(logs.join('\n')).not.toContain(oauthState);
@@ -853,6 +858,38 @@ describe('MCP registry draft tools', () => {
     expect(revoked.json()).toMatchObject({ serverId, machineId: runnerId, state: 'needs-login' });
     expect(agent.messages.some(message => message.type === 'mcp.oauth.revoke' && message.payload.serverId === serverId)).toBe(true);
     expect((await t.tdb.pool.query(`select 1 from mcp_oauth_tokens where user_id=$1 and server_id=$2`, [userId, serverId])).rowCount).toBe(0);
+  });
+
+  it('returns the provider to the hub callback when the server registers its client dynamically', async () => {
+    const created = await t.hub.app.inject({
+      method: 'POST',
+      url: '/api/mcp/registry',
+      cookies: { ah_session: cookie },
+      headers: { origin: PUBLIC_URL },
+      payload: {
+        server: {
+          ...candidate(`registry_oauth_dcr_${randomUUID().slice(0, 8)}`).server,
+          transport: 'http',
+          mode: 'remote',
+          url: 'https://oauth-dcr.example.test/mcp',
+          machineScope: { allMachines: false, machineIds: [runnerId] },
+        },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const serverId = (created.json() as { id: string }).id;
+    const started = await t.hub.app.inject({
+      method: 'POST',
+      url: `/api/mcp/registry/servers/${serverId}/oauth/start`,
+      cookies: { ah_session: cookie },
+      headers: { origin: PUBLIC_URL },
+      payload: { machineId: runnerId },
+    });
+    expect(started.statusCode, started.body).toBe(202);
+    expect(started.json()).toMatchObject({ callback: 'hub' });
+    const startCommand = agent.messages.find(message => message.type === 'mcp.oauth.start' && message.payload.serverId === serverId)!;
+    expect(startCommand.payload.redirectUri).toBe(`${PUBLIC_URL}/mcp/oauth/callback`);
+    expect(startCommand.payload).not.toHaveProperty('oauthClientId');
   });
 
   it('rejects OAuth start when the server URL contains a secret placeholder', async () => {
@@ -944,15 +981,15 @@ describe('MCP registry draft tools', () => {
     }
   });
 
-  it('keeps registry consumption off by default and applies a machine toggle on the next sync', async () => {
+  it('keeps registry consumption off while a machine waits for its auto-import', async () => {
     const machineId = randomUUID();
-    const token = await t.addRunner(machineId, 'mcp_registry_disabled_by_default');
+    const token = await t.addRunner(machineId, 'mcp_registry_auto_pending');
+    await t.tdb.pool.query(`UPDATE runners SET mcp_import_state = 'auto-pending' WHERE id = $1`, [machineId]);
     const machine = connectAgent(token, { protocol: '1.13', capabilities: [...MCP_REGISTRY_CAPABILITIES] });
     autoReply(machine, () => ({}));
     try {
       await machine.next('welcome');
-      const name = `registry_machine_toggle_${randomUUID().slice(0, 8)}`;
-      const secretValue = 'MCP_MACHINE_TOGGLE_SECRET_4f29';
+      const name = `registry_auto_pending_${randomUUID().slice(0, 8)}`;
       const created = await t.hub.app.inject({
         method: 'POST',
         url: '/api/mcp/registry',
@@ -963,7 +1000,7 @@ describe('MCP registry draft tools', () => {
             ...candidate(name).server,
             machineScope: { allMachines: false, machineIds: [machineId] },
           },
-          secrets: [{ name: 'API_KEY', value: secretValue }],
+          secrets: [{ name: 'API_KEY', value: 'MCP_AUTO_PENDING_SECRET_4f29' }],
         },
       });
       expect(created.statusCode, created.body).toBe(201);
@@ -972,44 +1009,6 @@ describe('MCP registry draft tools', () => {
       expect(disabledSync.payload.servers).toEqual([]);
       expect(disabledSync.id).toEqual(expect.any(String));
       expect(machine.messages.some(message => message.type === 'mcp.secrets.deliver' && message.payload.serverId === serverId)).toBe(false);
-
-      const enabled = await t.hub.app.inject({
-        method: 'PUT',
-        url: `/api/mcp/registry/machines/${machineId}`,
-        cookies: { ah_session: cookie },
-        headers: { origin: PUBLIC_URL },
-        payload: { enabled: true },
-      });
-      expect(enabled.statusCode, enabled.body).toBe(200);
-      expect(enabled.json()).toMatchObject({ machineId, registryEnabled: true });
-      const enabledSync = await waitFor(
-        () =>
-          machine.messages.find(
-            message =>
-              message.type === 'mcp.registry.sync' && message.payload.registryEnabled === true && (message.payload.servers as { id: string }[] | undefined)?.some(server => server.id === serverId),
-          ) ?? null,
-      );
-      expect(enabledSync.payload.servers).toEqual(expect.arrayContaining([expect.objectContaining({ id: serverId, name })]));
-      expect(enabledSync.id).toEqual(expect.any(String));
-      const secretDelivery = await waitFor(() => machine.messages.find(message => message.type === 'mcp.secrets.deliver' && message.payload.serverId === serverId) ?? null);
-      expect(secretDelivery.payload.secrets).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'API_KEY', value: secretValue })]));
-      expect(secretDelivery.id).toEqual(expect.any(String));
-
-      const disabled = await t.hub.app.inject({
-        method: 'PUT',
-        url: `/api/mcp/registry/machines/${machineId}`,
-        cookies: { ah_session: cookie },
-        headers: { origin: PUBLIC_URL },
-        payload: { enabled: false },
-      });
-      expect(disabled.statusCode, disabled.body).toBe(200);
-      expect(disabled.json()).toMatchObject({ machineId, registryEnabled: false });
-      const disabledAgain = await waitFor(
-        () =>
-          machine.messages.find(message => message.type === 'mcp.registry.sync' && message.payload.registryEnabled === false && (message.payload.servers as unknown[] | undefined)?.length === 0) ??
-          null,
-      );
-      expect(disabledAgain.payload.servers).toEqual([]);
     } finally {
       machine.ws.close();
     }
@@ -1074,7 +1073,7 @@ describe('MCP registry draft tools', () => {
       payload: candidate(`${name}_override`),
     });
     const overrideServerId = (overrideServer.json() as { id: string }).id;
-    const userId = (await t.tdb.pool.query<{ id: string }>(`select id from users where email=$1`, ['jonasasx@gmail.com'])).rows[0]!.id;
+    const userId = (await t.tdb.pool.query<{ id: string }>(`select id from users where email=$1`, ['alice@example.com'])).rows[0]!.id;
     const projectId = (await t.tdb.pool.query<{ id: string }>(`insert into catalog_projects(user_id,name) values($1,$2) returning id`, [userId, `override_${name}`])).rows[0]!.id;
     const override = await t.hub.app.inject({
       method: 'PUT',
@@ -1164,14 +1163,14 @@ describe('MCP registry draft tools', () => {
     expect(legacyEntry).toMatchObject({ id: serverId, machineScope: { allMachines: false, machineIds: [] } });
 
     const syncBefore = agent.messages.filter(message => message.type === 'mcp.registry.sync').length;
-    const enabled = await t.hub.app.inject({
-      method: 'PUT',
-      url: `/api/mcp/registry/machines/${runnerId}`,
+    const trigger = await t.hub.app.inject({
+      method: 'POST',
+      url: '/api/mcp/registry',
       cookies: { ah_session: cookie },
       headers: { origin: PUBLIC_URL },
-      payload: { enabled: true },
+      payload: { server: candidate(`registry_legacy_trigger_${randomUUID().slice(0, 8)}`).server },
     });
-    expect(enabled.statusCode, enabled.body).toBe(200);
+    expect(trigger.statusCode, trigger.body).toBe(201);
     await waitFor(() => agent.messages.filter(message => message.type === 'mcp.registry.sync').length > syncBefore);
     expect(agent.messages.filter(message => message.type === 'mcp.registry.sync').at(-1)?.payload.servers).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: serverId })]));
   });
@@ -1218,7 +1217,7 @@ describe('MCP registry draft tools', () => {
       const status = await t.hub.app.inject({ method: 'GET', url: '/api/mcp/registry/status', cookies: { ah_session: cookie }, headers: { origin: PUBLIC_URL } });
       const agents = (status.json() as { agents: Array<Record<string, unknown>> }).agents;
       expect(agents.find(runner => runner.machineId === oldRunnerId)).toMatchObject({ protocolVersion: '1.12', online: true, capabilities: [] });
-      const userId = (await t.tdb.pool.query<{ id: string }>(`select id from users where email=$1`, ['jonasasx@gmail.com'])).rows[0]!.id;
+      const userId = (await t.tdb.pool.query<{ id: string }>(`select id from users where email=$1`, ['alice@example.com'])).rows[0]!.id;
       await t.tdb.pool.query(`insert into project_bindings(user_id,project_id,runner_id,path) values($1,$2,$3,$4)`, [userId, catalogProjectId, oldRunnerId, 'C:/work/old']);
       autoReply(oldAgent, type => (type === 'fs.stat' ? { exists: true, isDir: true } : type === 'session.start' ? { models: [] } : {}));
       const oldSession = await t.hub.app.inject({
@@ -1444,7 +1443,8 @@ describe('MCP registry draft tools', () => {
 
   it('filters tool names that exceed the validation result schema limit', async () => {
     const originalValidate = t.hub.mcpRegistry.validate.bind(t.hub.mcpRegistry);
-    t.hub.mcpRegistry.validate = async () => ({
+    // A partial result is enough: the route only reads the state and the validation.
+    t.hub.mcpRegistry.validate = (async () => ({
       state: 'checked',
       validation: {
         ok: true,
@@ -1452,7 +1452,7 @@ describe('MCP registry draft tools', () => {
         tools: [{ name: 't'.repeat(129) }, { name: 'valid_tool' }],
         oauthRequired: false,
       },
-    });
+    })) as unknown as typeof originalValidate;
     try {
       const response = await request('add', { server: candidate(`registry_long_tool_name_${randomUUID().slice(0, 8)}`).server });
       expect(response.payload).toMatchObject({ ok: true, result: { validation: { tools: [{ name: 'valid_tool' }], truncated: true } } });
@@ -1512,7 +1512,7 @@ describe('MCP registry draft tools', () => {
     });
     const validationCommand = agent.messages.filter(message => message.type === 'mcp.registry.validate').at(-1);
     expect(validationCommand?.payload).toMatchObject({ secretDelivery: { secrets: [{ name: 'API_TOKEN', value: replacementSecret }] } });
-    expect(validationCommand?.payload.server.id).toBe(draftId);
+    expect((validationCommand?.payload as { server: { id: string } } | undefined)?.server.id).toBe(draftId);
     const unchanged = await t.hub.app.inject({ method: 'GET', url: `/api/mcp/registry/servers/${serverId}`, cookies: { ah_session: cookie } });
     expect(unchanged.json()).toMatchObject({ revision: 1, command: 'node' });
     expect(unchanged.json().env.API_TOKEN.secretId).toBe(originalRef);
@@ -1692,101 +1692,6 @@ describe('MCP registry draft tools', () => {
       headers: { origin: PUBLIC_URL },
     });
     expect(updatedDraft.json()).toMatchObject({ sessionUpdate: { activation: 'available-next-thread', applied: true } });
-  });
-
-  it('encrypts one-time import values and returns only masked metadata', async () => {
-    const importedValue = 'MCP_IMPORT_SECRET_1a91cd';
-    const importId = randomUUID();
-    const listener = (data: Buffer) => {
-      const m = JSON.parse(data.toString()) as { type: string };
-      if (m.type !== 'mcp.import.preview') return;
-      agentSend(agent, 'mcp.import.preview.result', {
-        importId,
-        servers: [
-          {
-            id: randomUUID(),
-            name: 'imported_probe',
-            enabled: true,
-            transport: 'http',
-            mode: 'per-session',
-            url: 'https://mcp.example.test/mcp?api_key=__AGENT_HUB_SECRET__',
-            urlSecretId: randomUUID(),
-            machineScope: { allMachines: false, machineIds: [runnerId] },
-            projectIds: [],
-            revision: 1,
-            source: 'project',
-          },
-        ],
-        secretsCaptured: 1,
-        warnings: [],
-        secretValues: [
-          { serverName: 'imported_probe', location: 'url', key: 'api_key', value: importedValue },
-          { serverName: 'imported_probe', location: 'url', key: 'token', value: `${importedValue}_second` },
-        ],
-      });
-    };
-    agent.ws.on('message', listener);
-    try {
-      const response = await t.hub.app.inject({
-        method: 'POST',
-        url: '/api/mcp/registry/import/preview',
-        cookies: { ah_session: cookie },
-        headers: { origin: PUBLIC_URL },
-        payload: { machineId: runnerId, projectRoot: 'C:/work' },
-      });
-      expect(response.statusCode, JSON.stringify({ body: response.body, logs })).toBe(200);
-      expect(response.body).not.toContain(importedValue);
-      expect(response.json()).toMatchObject({
-        revision: 1,
-        secretsCaptured: 2,
-        servers: [
-          {
-            source: 'project',
-            url: 'https://mcp.example.test/mcp?api_key=__AGENT_HUB_SECRET__&token=__AGENT_HUB_SECRET__',
-            secrets: [
-              { masked: true, state: 'set' },
-              { masked: true, state: 'set' },
-            ],
-          },
-        ],
-      });
-      const stored = (await t.tdb.pool.query<{ ciphertext: Buffer }>(`select ciphertext from mcp_secrets where import_id=$1`, [importId])).rows;
-      expect(stored).toHaveLength(2);
-      expect(stored.every(row => !row.ciphertext.includes(Buffer.from(importedValue)))).toBe(true);
-      expect(logs.join('\n')).not.toContain(importedValue);
-      const preview = response.json() as { servers: Array<{ id: string }> };
-      const emptyCommit = await t.hub.app.inject({
-        method: 'POST',
-        url: '/api/mcp/registry/import/commit',
-        cookies: { ah_session: cookie },
-        headers: { origin: PUBLIC_URL },
-        payload: { importId, revision: 1, serverIds: [], userConfirmed: true },
-      });
-      expect(emptyCommit.statusCode).toBe(400);
-      const committed = await t.hub.app.inject({
-        method: 'POST',
-        url: '/api/mcp/registry/import/commit',
-        cookies: { ah_session: cookie },
-        headers: { origin: PUBLIC_URL },
-        payload: { importId, revision: 1, serverIds: [preview.servers[0]!.id], userConfirmed: true },
-      });
-      expect(committed.statusCode, committed.body).toBe(200);
-      expect(committed.json()).toMatchObject({ imported: 1, drafts: [{ server: { name: 'imported_probe' } }] });
-    } finally {
-      agent.ws.off('message', listener);
-    }
-  });
-
-  it('returns a typed timeout when the target agent does not answer an import scan', async () => {
-    const response = await t.hub.app.inject({
-      method: 'POST',
-      url: '/api/mcp/registry/import/preview',
-      cookies: { ah_session: cookie },
-      headers: { origin: PUBLIC_URL },
-      payload: { machineId: runnerId, projectRoot: 'C:/work' },
-    });
-    expect(response.statusCode).toBe(504);
-    expect(response.json()).toMatchObject({ error: 'timeout' });
   });
 
   it('records a failed draft check and returns a typed timeout when the agent check times out', async () => {

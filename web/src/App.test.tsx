@@ -5,6 +5,8 @@ import userEvent from '@testing-library/user-event';
 import type { RunnerView, SidebarResponse } from './api/types';
 import { App } from './App';
 import { useStore } from './store';
+import { PUSH_INTENT_KEY } from './features/push/pushClient';
+import { VAPID, installPushBrowser, makeSub, removePushBrowser } from './test/pushBrowser';
 
 const runner = (over: Partial<RunnerView>): RunnerView => ({
   id: 'x1',
@@ -17,7 +19,7 @@ const runner = (over: Partial<RunnerView>): RunnerView => ({
   claudeVersion: '2.1.310',
   protocolVersion: '1.0',
   incompatible: false,
-  vaultRoot: null,
+  defaultDir: null,
   homeDir: null,
   ...over,
 });
@@ -65,9 +67,9 @@ function mockFetch(routes: Record<string, Route>) {
 }
 
 const signedIn: Record<string, Route> = {
-  '/api/me': () => ({ status: 200, body: { user: { id: 'u1', email: 'jonasasx@gmail.com' }, vapidPublicKey: null } }),
+  '/api/me': () => ({ status: 200, body: { user: { id: 'u1', email: 'alice@example.com' }, vapidPublicKey: null } }),
   '/api/sidebar': () => ({ status: 200, body: sidebar }),
-  '/auth/logout': () => ({ status: 204 }),
+  '/auth/logout': () => ({ status: 200, body: { redirect: '/' } }),
 };
 
 describe('App', () => {
@@ -110,6 +112,18 @@ describe('App', () => {
     expect(sessionStorage.getItem('ah-signed-out')).toBe('1');
   });
 
+  it('«Выйти» with a single provider goes on to its end_session_endpoint after the push release', async () => {
+    const end = 'https://id.example/realms/agent-hub/protocol/openid-connect/logout?id_token_hint=t';
+    mockFetch({ ...signedIn, '/auth/logout': () => ({ status: 200, body: { redirect: end } }) });
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, pathname: '/', search: '', assign });
+    render(<App />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Профиль' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Выйти' }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith(end));
+    expect(sessionStorage.getItem('ah-signed-out')).toBe('1');
+  });
+
   it('«Выйти» that fails on the server keeps the workspace and shows an error', async () => {
     mockFetch({ ...signedIn, '/auth/logout': () => ({ status: 502, body: {} }) });
     render(<App />);
@@ -119,6 +133,62 @@ describe('App', () => {
     expect(screen.queryByRole('heading', { name: 'Вы вышли' })).not.toBeInTheDocument();
     expect(screen.getByRole('list', { name: 'Машины' })).toBeInTheDocument();
     expect(sessionStorage.getItem('ah-signed-out')).toBeNull();
+  });
+
+  it('a user signing in after a push intent of another user is not subscribed without a click; the stale subscription is dropped', async () => {
+    const b = installPushBrowser({ permission: 'granted', sub: makeSub('https://push.example.org/a', VAPID) });
+    const sub = b.sub!;
+    localStorage.setItem(PUSH_INTENT_KEY, 'u-other');
+    const calls = mockFetch({ ...signedIn, '/api/me': () => ({ status: 200, body: { user: { id: 'u1', email: 'alice@example.com' }, vapidPublicKey: VAPID } }) });
+    try {
+      render(<App />);
+      await waitFor(() => expect(sub.unsubscribe).toHaveBeenCalled());
+      expect(calls.some(c => c.url === '/api/push/subscriptions' && c.init?.method === 'POST')).toBe(false);
+      expect(b.subscribe).not.toHaveBeenCalled();
+      expect(localStorage.getItem(PUSH_INTENT_KEY)).toBeNull();
+    } finally {
+      removePushBrowser();
+    }
+  });
+
+  it('«Выйти» with push on: the device is released first, and a failing hub does not block the sign-out', async () => {
+    const b = installPushBrowser({ permission: 'granted', sub: makeSub('https://push.example.org/a', VAPID) });
+    const sub = b.sub!;
+    localStorage.setItem(PUSH_INTENT_KEY, 'u1');
+    const calls = mockFetch({ ...signedIn, '/api/push/subscriptions': () => ({ status: 500, body: {} }) });
+    try {
+      render(<App />);
+      await userEvent.click(await screen.findByRole('button', { name: 'Профиль' }));
+      await userEvent.click(screen.getByRole('menuitem', { name: 'Выйти' }));
+      expect(await screen.findByRole('heading', { name: 'Вы вышли' })).toBeInTheDocument();
+      const urls = calls.map(c => c.url);
+      expect(urls.findIndex(u => u.startsWith('/api/push/subscriptions?endpointHash='))).toBeGreaterThan(-1);
+      expect(urls.findIndex(u => u.startsWith('/api/push/subscriptions?endpointHash='))).toBeLessThan(urls.indexOf('/auth/logout'));
+      expect(sub.unsubscribe).toHaveBeenCalled();
+      expect(localStorage.getItem(PUSH_INTENT_KEY)).toBeNull();
+    } finally {
+      removePushBrowser();
+      localStorage.clear();
+    }
+  });
+
+  it('a service worker message opens the session without a reload; other messages are ignored', async () => {
+    const b = installPushBrowser();
+    const sid = '11111111-2222-4333-8444-555555555555';
+    const calls = mockFetch(signedIn);
+    try {
+      render(<App />);
+      await screen.findByRole('list', { name: 'Машины' });
+      await waitFor(() => expect(b.messageListeners.length).toBeGreaterThan(0));
+      act(() => b.messageListeners.forEach(h => h({ data: { type: 'agent-hub:open-session', sessionId: 'not-a-uuid' } })));
+      act(() => b.messageListeners.forEach(h => h({ data: { type: 'other', sessionId: sid } })));
+      expect(calls.some(c => c.url.includes(sid))).toBe(false);
+      act(() => b.messageListeners.forEach(h => h({ data: { type: 'agent-hub:open-session', sessionId: sid } })));
+      await waitFor(() => expect(calls.some(c => c.url.includes(sid))).toBe(true));
+      expect(useStore.getState().inChat).toBe(true);
+    } finally {
+      removePushBrowser();
+    }
   });
 
   it('theme: dark by default, the switch makes it light and remembers the choice', async () => {

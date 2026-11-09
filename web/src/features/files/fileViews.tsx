@@ -2,16 +2,20 @@
  * The views of the file viewer by class (change tool-windows-file-explorer, task 6.5). Markup after
  * docs/prototypes/file-explorer.html (`fileView`): `.v-img`, `.md-body`, `.src`, `.v-empty`.
  * Requirement (file-explorer): Просмотрщик — pictures, Markdown (a source toggle, pictures only inside the root),
- * text with line numbers, «Нельзя показать» without a download for the binary class, «Файл слишком большой».
+ * text with line numbers, «Нельзя показать» for the binary class and «Файл слишком большой», both with «Скачать»
+ * (change file-download).
  */
-import { useMemo, type ReactNode } from 'react';
-import { FileImageContext, Markdown } from '../chat/Markdown';
+import { useMemo, useState, type ReactNode } from 'react';
+import { FileImageContext, FileLinkContext, Markdown } from '../chat/Markdown';
 import { useT } from '../../i18n';
 import { clampScale } from '../images/zoom';
 import { formatBytes } from '../images/format';
 import { openLightbox } from '../images/ImagePreview';
+import { downloadFile } from './fileActions';
+import { ICON_DOWNLOAD } from './fileIcons';
 import { fsFileUrl } from './filesApi';
-import { isInside, parentOf, resolveRelative } from './paths';
+import { fileLinkResolver } from './links';
+import { baseName, isInside, parentOf, resolveRelative } from './paths';
 
 export type ImageZoom = 'fit' | '1' | '2';
 
@@ -77,11 +81,15 @@ export function MarkdownView({ text, mode, runnerId, path, sessionId, root }: Md
       return fsFileUrl(runnerId, abs, sessionId);
     };
   }, [runnerId, path, sessionId, root]);
+  // links of the document open in the viewer too, relative ones from its folder; the session root only inside its cwd
+  const links = useMemo(() => fileLinkResolver({ runnerId, base: parentOf(path) ?? path, cwd: sessionId ? root : null, ...(sessionId ? { sessionId } : {}) }), [runnerId, path, sessionId, root]);
   if (mode === 's') return <TextView text={text} />;
   return (
     <div className="fx-md md-body" data-testid="md-view">
       <FileImageContext.Provider value={resolve}>
-        <Markdown text={text} />
+        <FileLinkContext.Provider value={links}>
+          <Markdown text={text} />
+        </FileLinkContext.Provider>
       </FileImageContext.Provider>
     </div>
   );
@@ -104,16 +112,72 @@ export function megabytes(n: number): string {
   return formatBytes(n).replace(/[.,]0 /, ' ');
 }
 
-export function TooLarge({ size, limit }: { size: number | null; limit: number }) {
-  const t = useT();
-  return <ViewerEmpty big={size ? t('files.viewer.tooLarge', { size: megabytes(size), limit: megabytes(limit) }) : t('files.viewer.tooLargeLimit', { limit: megabytes(limit) })} />;
+export interface DownloadTarget {
+  runnerId: string;
+  path: string;
+  sessionId?: string;
+  machineName: string;
+  /** The agent declared `fs.download`; otherwise the button is dimmed with «Обновите агента». */
+  supported: boolean;
 }
 
-/** The binary class: no download (read-only). */
-export function Unsupported({ name, size, mime }: { name: string; size: number; mime: string }) {
+interface DownloadButtonProps extends DownloadTarget {
+  className?: string;
+  /** Shows the word next to the icon. */
+  label?: boolean;
+  /** -1 in a tree row: the tree keeps one stop of Tab. */
+  tabIndex?: number;
+}
+
+/** «Скачать»: one request at a time; the check and the toast are in `downloadFile`. */
+export function DownloadButton({ runnerId, path, sessionId, machineName, supported, className = 'btn sm', label = true, tabIndex }: DownloadButtonProps) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const title = supported ? t('files.action.downloadNamed', { name: baseName(path) }) : t('files.action.downloadOutdated', { machine: machineName });
+  const onClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (busy) return;
+    setBusy(true);
+    try {
+      await downloadFile(runnerId, path, sessionId);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button
+      type="button"
+      className={className}
+      tabIndex={tabIndex}
+      title={title}
+      aria-label={title}
+      aria-disabled={!supported || busy || undefined}
+      disabled={!supported}
+      data-testid="file-download"
+      onClick={e => void onClick(e)}
+      onDoubleClick={e => e.stopPropagation()}
+    >
+      {ICON_DOWNLOAD}
+      {label ? ` ${t('files.action.download')}` : null}
+    </button>
+  );
+}
+
+export function TooLarge({ size, limit, download }: { size: number | null; limit: number; download: DownloadTarget }) {
   const t = useT();
   return (
-    <ViewerEmpty big={t('files.error.unsupported')}>
+    <ViewerEmpty
+      big={size ? t('files.viewer.tooLarge', { size: megabytes(size), limit: megabytes(limit) }) : t('files.viewer.tooLargeLimit', { limit: megabytes(limit) })}
+      action={<DownloadButton {...download} />}
+    />
+  );
+}
+
+/** The binary class: the size, the type and «Скачать»; the bytes reach the browser only after the click. */
+export function Unsupported({ name, size, mime, download }: { name: string; size: number; mime: string; download: DownloadTarget }) {
+  const t = useT();
+  return (
+    <ViewerEmpty big={t('files.error.unsupported')} action={<DownloadButton {...download} />}>
       {name} · {formatBytes(size)} · {mime}
     </ViewerEmpty>
   );

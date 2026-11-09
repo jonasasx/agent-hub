@@ -14,13 +14,17 @@ export interface OidcIdentity {
   subject: string | null;
   /** `name` (scope profile), null when not given. */
   name: string | null;
+  /** keycloak-auth D7: the raw ID token, the `id_token_hint` of the provider logout; absent in tests that build identities by hand. */
+  idToken?: string | null;
 }
 
 export interface OidcClient {
   /** Builds the provider authorization URL and the values to keep in the browser until the callback. */
-  start(opts: { redirectUri: string; prompt?: string }): Promise<{ url: string; checks: OidcChecks }>;
+  start(opts: { redirectUri: string; prompt?: string; idpHint?: string; uiLocales?: string }): Promise<{ url: string; checks: OidcChecks }>;
   /** Exchanges the code; throws on any state/nonce/PKCE/signature mismatch. */
   finish(currentUrl: URL, checks: OidcChecks): Promise<OidcIdentity>;
+  /** keycloak-auth D7: the RP-initiated logout URL; null when the provider has no `end_session_endpoint` or is unreachable. */
+  endSessionUrl(opts: { idToken: string | null; postLogoutRedirectUri: string }): Promise<string | null>;
 }
 
 export function createOidcClient(opts: { issuer: string; clientId: string; clientSecret: string }): OidcClient {
@@ -46,7 +50,7 @@ export function createOidcClient(opts: { issuer: string; clientId: string; clien
   }
 
   return {
-    async start({ redirectUri, prompt }) {
+    async start({ redirectUri, prompt, idpHint, uiLocales }) {
       const cfg = await config();
       const verifier = client.randomPKCECodeVerifier();
       const checks: OidcChecks = { state: client.randomState(), nonce: client.randomNonce(), verifier };
@@ -60,6 +64,9 @@ export function createOidcClient(opts: { issuer: string; clientId: string; clien
         nonce: checks.nonce,
       };
       if (prompt) params.prompt = prompt;
+      // keycloak-auth D5: Keycloak skips its own page and goes straight to this identity provider.
+      if (idpHint) params.kc_idp_hint = idpHint;
+      if (uiLocales) params.ui_locales = uiLocales;
       return { url: client.buildAuthorizationUrl(cfg, params).href, checks };
     },
 
@@ -77,7 +84,20 @@ export function createOidcClient(opts: { issuer: string; clientId: string; clien
       const ev = claims?.email_verified as unknown;
       const subject = typeof claims?.sub === 'string' && claims.sub ? claims.sub : null;
       const name = typeof claims?.name === 'string' && claims.name.trim() ? claims.name.trim().slice(0, 200) : null;
-      return { email, emailVerified: ev === true || ev === 'true', subject, name };
+      return { email, emailVerified: ev === true || ev === 'true', subject, name, idToken: tokens.id_token ?? null };
+    },
+
+    async endSessionUrl({ idToken, postLogoutRedirectUri }) {
+      let cfg: client.Configuration;
+      try {
+        cfg = await config();
+      } catch {
+        return null;
+      }
+      if (!cfg.serverMetadata().end_session_endpoint) return null;
+      const params: Record<string, string> = { post_logout_redirect_uri: postLogoutRedirectUri, client_id: opts.clientId };
+      if (idToken) params.id_token_hint = idToken;
+      return client.buildEndSessionUrl(cfg, params).href;
     },
   };
 }

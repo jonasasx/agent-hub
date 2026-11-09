@@ -1,7 +1,7 @@
 // The Codex provider against a fake app-server (change agent-providers, task 2.11): start, mirror, partial text,
 // result, permissions, questions, client tools, interrupt, stop, resume, fork, sign-in.
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -10,6 +10,7 @@ import { PEERS_SERVER_NAME } from '@agent-hub/shared';
 import { ProviderRouter } from '../router.js';
 import type { SessionProvider } from '../types.js';
 import { FakeAppServer } from './fakeServer.js';
+import { CodexHomes } from './homes.js';
 import { mirrorPath } from './mirror.js';
 import { CodexProvider, failureOf, policyOf } from './provider.js';
 
@@ -42,6 +43,9 @@ function setup(
     mcpDraft?: unknown;
     machineId?: () => string;
     configDir?: string;
+    online?: () => boolean;
+    homes?: unknown;
+    loginTtlMs?: number;
   } = {},
 ) {
   if (!changedClaudeConfigDir) {
@@ -61,6 +65,7 @@ function setup(
   const p = new CodexProvider({
     bin: { command: 'codex', args: [], version: '0.166.0' },
     send: (type, payload) => {
+      if (o.online && !o.online()) return false;
       sent.push({ type, payload: payload as Record<string, unknown> });
       return true;
     },
@@ -81,6 +86,8 @@ function setup(
     },
     serviceTransport: () => service.transport(),
     stopGraceMs: 200,
+    homes: o.homes as never,
+    loginTtlMs: o.loginTtlMs,
   });
   providers.push(p);
   const tick = () => new Promise(r => setTimeout(r, 30));
@@ -108,6 +115,9 @@ describe('policyOf (design D6)', () => {
     expect(policyOf('default', '/w')).toMatchObject({ approvalPolicy: 'untrusted', sandbox: 'workspace-write', sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/w'] } });
     expect(policyOf('acceptEdits', '/w')).toMatchObject({ approvalPolicy: 'on-request', sandbox: 'workspace-write' });
     expect(policyOf('plan', '/w')).toMatchObject({ approvalPolicy: 'on-request', sandbox: 'read-only' });
+    expect(policyOf('default', '/w', 'linux').sandboxPolicy).toMatchObject({ excludeTmpdirEnvVar: false, excludeSlashTmp: false });
+    expect(policyOf('default', '/w', 'win32').sandboxPolicy).toMatchObject({ excludeTmpdirEnvVar: true, excludeSlashTmp: true });
+    expect(policyOf('acceptEdits', '/w', 'win32').sandboxPolicy).toMatchObject({ excludeTmpdirEnvVar: true, excludeSlashTmp: true });
   });
   it('classifies failures', () => {
     expect(failureOf({ message: 'x', codexErrorInfo: 'unauthorized' })?.kind).toBe('auth_rejected');
@@ -472,6 +482,23 @@ describe('CodexProvider', () => {
     expect(server.calls('turn/start').at(-1)).toMatchObject({ model: 'gpt-other', approvalPolicy: 'on-request', sandboxPolicy: { type: 'readOnly' } });
   });
 
+  it('plan: the turn runs in the plan collaboration mode (the question tool), leaving plan sets default once', async () => {
+    const t = setup();
+    const { sessionId, server } = await started(t, 'default', 'x');
+    expect(server.calls('turn/start')[0]).not.toHaveProperty('collaborationMode');
+    server.notify('turn/completed', { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed', error: null, durationMs: 1 } });
+    await t.p.handle(cmd('session.set_mode', { sessionId, mode: 'plan' }));
+    await t.p.handle(cmd('session.send', { sessionId, text: 'план', promptUuid: randomUUID() }));
+    expect(server.calls('turn/start').at(-1)).toMatchObject({ collaborationMode: { mode: 'plan', settings: { reasoning_effort: null, developer_instructions: null } } });
+    server.notify('turn/completed', { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed', error: null, durationMs: 1 } });
+    await t.p.handle(cmd('session.send', { sessionId, text: 'ещё', promptUuid: randomUUID() }));
+    expect(server.calls('turn/start').at(-1)).not.toHaveProperty('collaborationMode');
+    server.notify('turn/completed', { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed', error: null, durationMs: 1 } });
+    await t.p.handle(cmd('session.set_mode', { sessionId, mode: 'acceptEdits' }));
+    await t.p.handle(cmd('session.send', { sessionId, text: 'делай', promptUuid: randomUUID() }));
+    expect(server.calls('turn/start').at(-1)).toMatchObject({ collaborationMode: { mode: 'default' } });
+  });
+
   it('stop: exited stopped; resume finds the thread in the mirror; no mirror — transcript_missing', async () => {
     const t = setup();
     const { sessionId, server } = await started(t);
@@ -515,6 +542,55 @@ describe('CodexProvider', () => {
     t.service.handlers['account/read'] = () => ({ account: null, requiresOpenaiAuth: true });
     await t.p.handle(cmd('provider.logout', { provider: 'codex' }));
     expect(t.p.status().login).toBe('missing');
+  });
+
+  it('R5: a sign-in result without a connection waits for the next welcome and is sent once', async () => {
+    let online = true;
+    const t = setup({ online: () => online });
+    await t.p.handle(cmd('provider.login.start', { provider: 'codex' }));
+    online = false;
+    t.service.notify('account/login/completed', { loginId: 'login-1', success: true, error: null });
+    await t.tick();
+    await t.tick();
+    expect(t.sent.filter(m => m.type === 'provider.login.done')).toEqual([]);
+    online = true;
+    t.p.onWelcome();
+    t.p.onWelcome();
+    expect(t.sent.filter(m => m.type === 'provider.login.done').map(m => m.payload)).toEqual([{ provider: 'codex', loginId: 'login-1', ok: true }]);
+  });
+
+  it('R6: a sign-in nobody finished expires: login.done ok:false, the temporary home removed', async () => {
+    const state = mkdtempSync(join(tmpdir(), 'ah-codex-state-'));
+    dirs.push(state);
+    const homes = new CodexHomes({ stateDir: state, baseHome: join(state, 'base') });
+    const t = setup({ homes, loginTtlMs: 60 });
+    await t.p.handle(cmd('provider.login.start', { provider: 'codex' }));
+    await t.p.handle(cmd('provider.login.start', { provider: 'codex', forSubscription: true }));
+    expect(readdirSync(join(state, 'codex-homes')).filter(n => n.startsWith('login-'))).toHaveLength(1);
+    const loginDone = () => t.sent.filter(m => m.type === 'provider.login.done').map(m => m.payload);
+    const until = Date.now() + 5000;
+    while (Date.now() < until && (loginDone().length < 2 || readdirSync(join(state, 'codex-homes')).some(n => n.startsWith('login-')))) {
+      await new Promise(r => setTimeout(r, 20));
+    }
+    const done = loginDone();
+    expect(done).toEqual([
+      { provider: 'codex', loginId: 'login-1', ok: false, error: 'sign-in expired' },
+      { provider: 'codex', loginId: 'login-1', ok: false, error: 'sign-in expired' },
+    ]);
+    expect(readdirSync(join(state, 'codex-homes')).filter(n => n.startsWith('login-'))).toEqual([]);
+  });
+
+  it('R3: provider.credentials.sync removes the homes the hub dropped', async () => {
+    const state = mkdtempSync(join(tmpdir(), 'ah-codex-state-'));
+    dirs.push(state);
+    const homes = new CodexHomes({ stateDir: state, baseHome: join(state, 'base') });
+    const keep = '11111111-1111-4111-8111-111111111111';
+    const gone = '22222222-2222-4222-8222-222222222222';
+    await homes.prepare(keep, '{"v":1}');
+    await homes.prepare(gone, '{"v":1}');
+    const t = setup({ homes });
+    expect(await t.p.handle(cmd('provider.credentials.sync', { provider: 'codex', keep: [keep] }))).toEqual({ removed: 1, deferred: 0 });
+    expect(readdirSync(join(state, 'codex-homes'))).toEqual([keep]);
   });
 
   it('a started session pushes its MCP status to the hub by itself', async () => {
@@ -576,5 +652,11 @@ describe('ProviderRouter (design D1)', () => {
   it('a provider the machine does not have: provider_unavailable', async () => {
     const r = new ProviderRouter(fake('claude').p);
     await expect(r.handle(cmd('session.start', { provider: 'codex' }))).rejects.toMatchObject({ code: 'provider_unavailable' });
+  });
+  it('R3: credentials.sync on a machine without Codex is a no-op', async () => {
+    const claude = fake('claude');
+    const r = new ProviderRouter(claude.p);
+    expect(await r.handle(cmd('provider.credentials.sync', { provider: 'codex', keep: [] }))).toEqual({ removed: 0, deferred: 0 });
+    expect(claude.got).toEqual([]);
   });
 });

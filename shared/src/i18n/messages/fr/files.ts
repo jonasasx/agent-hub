@@ -2,6 +2,10 @@ import type { Dict } from '../../index.js';
 
 export default {
   'files.action.copyPath': 'Copier le chemin',
+  'files.action.download': 'Télécharger',
+  'files.action.downloadFailed': 'Impossible de télécharger {name}',
+  'files.action.downloadNamed': 'Télécharger {name}',
+  'files.action.downloadOutdated': 'Mettez à jour l’agent sur {machine} pour télécharger des fichiers',
   'files.action.inTree': 'Dans l’arborescence',
   'files.action.mention': 'Vers le message',
   'files.action.mentionTitle': 'Insérer le chemin dans le champ de saisie de la session « {title} »',

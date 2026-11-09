@@ -15,7 +15,7 @@ const srv = (over: Json): Json => ({ status: 'connected', transport: 'http', sco
 
 const SERVERS: Json[] = [
   srv({ name: 'krisp', status: 'failed', target: 'https://mcp.krisp.ai/mcp', oauth: true, authError: true, error: 'HTTP 401: Unauthorized' }),
-  srv({ name: 'scanner-fleet', target: 'https://scanners.example.com/mcp', oauth: true, serverInfo: { name: 'scanner-fleet', version: '2.3.0' }, toolCount: 41 }),
+  srv({ name: 'fleet-ops', target: 'https://scanners.example.com/mcp', oauth: true, serverInfo: { name: 'fleet-ops', version: '2.3.0' }, toolCount: 41 }),
   srv({ name: 'notion', target: 'https://mcp.notion.com/mcp', oauth: true, serverInfo: { name: 'notion-mcp', version: '1.2.0' }, toolCount: 14 }),
   srv({ name: 'grafana', target: 'https://grafana.example.com/mcp', scope: 'project', serverInfo: { name: 'grafana-mcp', version: '0.9.1' }, toolCount: 22 }),
   srv({
@@ -84,32 +84,32 @@ export function mcpAuthSpecs(device: 'desktop' | 'phone') {
       await page.getByRole('button', { name: /^MCP/ }).first().click();
       const panel = page.getByRole('dialog', { name: 'MCP-серверы' });
       const row = (n: string) => panel.getByRole('listitem', { name: new RegExp(`^${n}: `) });
-      await expect(row('scanner-fleet')).toBeVisible();
-      expect(await buttons(row('scanner-fleet'))).toEqual(['Переподключить', 'Войти заново', 'Действия с scanner-fleet']);
+      await expect(row('fleet-ops')).toBeVisible();
+      expect(await buttons(row('fleet-ops'))).toEqual(['Переподключить', 'Войти заново', 'Действия с fleet-ops']);
       expect(await buttons(row('krisp'))).toEqual(['Войти', 'Действия с krisp']);
       expect(await buttons(row('grafana'))).toEqual(['Переподключить', 'Выключить']);
-      for (const n of ['scanner-fleet', 'notion', 'krisp', 'grafana']) await oneLine(row(n));
+      for (const n of ['fleet-ops', 'notion', 'krisp', 'grafana']) await oneLine(row(n));
       // L8: every button of the rows ≥ 40 px on the phone
       if (phone) for (const el of await panel.locator('.mcp-actions button').all()) if (await el.isVisible()) expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(40);
       await noHScroll(page);
       await shot(page, `auth-${device}-${theme}-1-panel`);
 
       // the «⋯» menu: «Выключить», «Выйти»
-      const more = row('scanner-fleet').getByRole('button', { name: 'Действия с scanner-fleet' });
+      const more = row('fleet-ops').getByRole('button', { name: 'Действия с fleet-ops' });
       await more.click();
-      const menu = row('scanner-fleet').getByRole('menu');
+      const menu = row('fleet-ops').getByRole('menu');
       expect(await menu.getByRole('menuitem').allTextContents()).toEqual(['Выключить', 'Выйти']);
       if (phone) for (const el of await menu.getByRole('menuitem').all()) expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(40);
       await noHScroll(page);
       await shot(page, `auth-${device}-${theme}-1b-menu`);
       // the confirmation of «Выйти»: Esc closes only it
       await menu.getByRole('menuitem', { name: 'Выйти' }).click();
-      const confirm = row('scanner-fleet').getByRole('alertdialog');
-      await expect(confirm).toContainText('Выйти из scanner-fleet на X1? Вход сбросится во всех сессиях X1 и в новых сессиях; токен будет отозван у провайдера.');
+      const confirm = row('fleet-ops').getByRole('alertdialog');
+      await expect(confirm).toContainText('Выйти из fleet-ops на X1? Вход сбросится во всех сессиях X1 и в новых сессиях; токен будет отозван у провайдера.');
       await expect(confirm.getByRole('button', { name: 'Выйти и отозвать токен' })).toHaveCSS('color', 'rgb(255, 255, 255)');
       await expect(confirm.getByRole('button', { name: 'Отмена' })).toBeFocused();
       if (phone) for (const el of await confirm.getByRole('button').all()) expect((await el.boundingBox())!.height).toBeGreaterThanOrEqual(40);
-      await row('scanner-fleet').scrollIntoViewIfNeeded();
+      await row('fleet-ops').scrollIntoViewIfNeeded();
       await noHScroll(page);
       await shot(page, `auth-${device}-${theme}-2-confirm`);
       await page.keyboard.press('Escape');
@@ -120,10 +120,10 @@ export function mcpAuthSpecs(device: 'desktop' | 'phone') {
       await more.click();
       await menu.getByRole('menuitem', { name: 'Выйти' }).click();
       await confirm.getByRole('button', { name: 'Выйти и отозвать токен' }).click();
-      await expect(row('scanner-fleet').getByText('Выход…')).toBeVisible();
+      await expect(row('fleet-ops').getByText('Выход…')).toBeVisible();
       await shot(page, `auth-${device}-${theme}-3-signing-out`);
-      await expect(panel.getByRole('listitem', { name: 'scanner-fleet: нужен вход' })).toBeVisible();
-      await expect(row('scanner-fleet').getByRole('button', { name: 'Войти' })).toBeVisible();
+      await expect(panel.getByRole('listitem', { name: 'fleet-ops: нужен вход' })).toBeVisible();
+      await expect(row('fleet-ops').getByRole('button', { name: 'Войти' })).toBeVisible();
       expect(mcp.requests.filter(r => r.path.endsWith('/mcp/logout'))).toHaveLength(1);
       await row('krisp').scrollIntoViewIfNeeded();
       await shot(page, `auth-${device}-${theme}-4-failed-401`);

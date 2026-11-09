@@ -14,18 +14,22 @@ export interface UsersTable {
   last_codex_subscription_id: ColumnType<string | null, string | null | undefined, string | null>;
   /** multi-user (023): `admin` only from OIDC_ALLOWED_EMAILS at start. */
   role: Generated<'admin' | 'user'>;
-  provider: Generated<'google' | 'keycloak'>;
+  /** keycloak-auth (047): `oidc` — the single provider of OIDC_ISSUER. */
+  provider: Generated<'google' | 'keycloak' | 'oidc'>;
   /** `sub` of the provider; null until the first login of a bootstrap administrator. */
   subject: string | null;
   name: string | null;
   status: Generated<'active' | 'disabled'>;
   last_login_at: Date | null;
+  /** keycloak-auth (047): how the user came; `legacy` — created before the change. */
+  source: Generated<'legacy' | 'invite' | 'signup'>;
 }
 
 export interface InvitesTable {
   id: Generated<string>;
   email: string;
-  provider: 'google' | 'keycloak';
+  /** keycloak-auth (047): null — an invite of the single provider, bound to the address only. */
+  provider: 'google' | 'keycloak' | null;
   code_hash: Buffer;
   created_by: string;
   created_at: Generated<Date>;
@@ -51,7 +55,7 @@ export interface EnrollCodesTable {
 export interface SecurityEventsTable {
   id: Generated<string>;
   user_id: string | null;
-  kind: 'login' | 'login_denied' | 'logout_all' | 'runner_connected' | 'runner_disconnected' | 'enroll_code_issued' | 'enroll_code_used';
+  kind: 'login' | 'login_denied' | 'logout_all' | 'runner_connected' | 'runner_disconnected' | 'enroll_code_issued' | 'enroll_code_used' | 'signup';
   ip: string | null;
   user_agent: string | null;
   provider: string | null;
@@ -79,6 +83,10 @@ export interface AuthSessionsTable {
   created_at: Generated<Date>;
   expires_at: Timestamp;
   user_agent: string | null;
+  /** keycloak-auth (047): the plaintext id_token of older sessions; re-encrypted and erased on start (048). */
+  id_token: ColumnType<string | null, string | null | undefined, string | null>;
+  /** idtoken-at-rest-denied-logout (048): the id_token encrypted with the hub's key, AAD — `id_hash`; `id_token` stays empty. */
+  id_token_enc: ColumnType<Buffer | null, Buffer | null | undefined, Buffer | null>;
 }
 
 export interface RunnersTable {
@@ -90,6 +98,8 @@ export interface RunnersTable {
   hostname: string | null;
   home_dir: string | null;
   vault_root: string | null;
+  /** session-folder D1: the absolute folder where sessions of the machine start; NULL until the first hello. */
+  default_dir: string | null;
   token_hash: Buffer | null;
   is_utility: Generated<boolean>;
   online: Generated<boolean>;
@@ -101,7 +111,10 @@ export interface RunnersTable {
   created_at: Generated<Date>;
   /** multi-user (023). */
   state: Generated<'pending' | 'active' | 'disabled'>;
-  mcp_registry_enabled: Generated<boolean>;
+  /** mcp-hub-only (050): `auto-pending` — connected before the switch, local MCP until the auto-import; `done` — on the registry. */
+  mcp_import_state: Generated<'auto-pending' | 'done'>;
+  mcp_imported_at: Date | null;
+  mcp_import_report: ColumnType<{ imported: string[]; skipped: string[] } | null, string | null | undefined, string | null>;
   claude_login: 'ok' | 'missing' | 'rejected' | null;
   protected_dirs_ok: boolean | null;
   arch: string | null;
@@ -328,6 +341,8 @@ export interface CatalogProjectsTable {
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
   last_event_at: Date | null;
+  /** session-folder D1: the project folder relative to the default folder of a machine, '/' separators; NULL — none. */
+  folder: string | null;
 }
 export interface ProjectBindingsTable {
   user_id: string;
@@ -398,6 +413,36 @@ export interface PendingAgentMetaTable {
   received_at: Generated<Date>;
 }
 
+/** Web Push subscriptions of the devices (migration 045, change `web-push-notifications`). */
+export interface PushSubscriptionsTable {
+  id: Generated<string>;
+  user_id: string;
+  endpoint: string;
+  endpoint_hash: string;
+  p256dh: string;
+  auth: string;
+  device_label: string;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+  last_success_at: Date | null;
+  last_failure_at: Date | null;
+  last_failure_status: number | null;
+  failure_count: Generated<number>;
+  /** The language of the UI of the device when it subscribed (migration 046); the profile language wins. */
+  locale: string | null;
+}
+
+/** 052 (provider-parity R5, R6): a Codex sign-in for a subscription in progress. */
+export interface CodexSubscriptionLoginsTable {
+  login_id: string;
+  user_id: string;
+  runner_id: string;
+  name: string | null;
+  subscription_id: string | null;
+  created_at: Generated<Date>;
+  expires_at: Date;
+}
+
 /** Messages between sessions (migration 030, change `session-peers`). */
 export interface PeerMessagesTable {
   id: string;
@@ -429,6 +474,10 @@ export interface BackgroundTasksTable {
   persistent: Generated<boolean>;
   last_event_at: Date | null;
   last_event: string | null;
+  // 044: an end read before the call or its result
+  early_end: 'completed' | 'failed' | 'stopped' | null;
+  // 051: the subagent whose transcript made the call; null — the main transcript
+  agent_id: string | null;
 }
 
 export interface SubagentRunsTable {
@@ -569,12 +618,23 @@ export interface McpRegistryOverridesTable {
   revision: ColumnType<string, number | undefined, number>;
 }
 
+export interface McpRegistryMachineOverridesTable {
+  user_id: string;
+  server_id: string;
+  runner_id: string;
+  enabled: Generated<boolean>;
+  config: ColumnType<Record<string, unknown> | null, string | null | undefined, string | null>;
+  updated_at: Generated<Date>;
+}
+
 export interface McpSecretsTable {
   id: Generated<string>;
   user_id: string;
   server_id: string | null;
   draft_id: string | null;
   import_id: string | null;
+  /** mcp-hub-only (050): set for a secret of a machine override — delivered to that machine only. */
+  machine_id: string | null;
   name: string;
   ciphertext: Buffer;
   created_at: Generated<Date>;
@@ -689,7 +749,9 @@ export interface Database {
   handoff_drafts: HandoffDraftsTable;
   subagent_runs: SubagentRunsTable;
   background_tasks: BackgroundTasksTable;
+  codex_subscription_logins: CodexSubscriptionLoginsTable;
   peer_messages: PeerMessagesTable;
+  push_subscriptions: PushSubscriptionsTable;
   pending_agent_meta: PendingAgentMetaTable;
   import_runs: ImportRunsTable;
   ui_layouts: UiLayoutsTable;
@@ -704,6 +766,7 @@ export interface Database {
   mcp_registry_servers: McpRegistryServersTable;
   mcp_registry_meta: McpRegistryMetaTable;
   mcp_registry_overrides: McpRegistryOverridesTable;
+  mcp_registry_machine_overrides: McpRegistryMachineOverridesTable;
   mcp_secrets: McpSecretsTable;
   mcp_registry_drafts: McpRegistryDraftsTable;
   mcp_registry_imports: McpRegistryImportsTable;
@@ -718,7 +781,7 @@ export type Db = Kysely<Database>;
 
 export function createPool(connectionString: string, onError: (err: Error) => void = () => undefined): pg.Pool {
   // 20: per-session queues, replication of three machines (hundreds of first uploads) and import:drive in parallel;
-  // Postgres allows 100 (prod 2026-10-26: 9 in use), the CLI and backups open their own few.
+  // Postgres allows 60 (deploy/compose.yml: hub 20, Keycloak 10, the CLI and backups open their own few; prod 2026-10-26: 9 in use).
   const pool = new pg.Pool({ connectionString, max: 20 });
   // An idle client losing its connection emits 'error' on the pool; without a listener the process crashes.
   pool.on('error', onError);

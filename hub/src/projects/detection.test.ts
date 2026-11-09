@@ -7,8 +7,8 @@ const env = {
   PUBLIC_URL: 'https://test.example',
   DATABASE_URL: 'postgres://localhost/test',
   COOKIE_SECRET: 'x'.repeat(40),
-  OIDC_CLIENT_ID: 'test',
-  OIDC_CLIENT_SECRET: 'test',
+  OIDC_GOOGLE_CLIENT_ID: 'test',
+  OIDC_GOOGLE_CLIENT_SECRET: 'test',
   OIDC_ALLOWED_EMAILS: 'admin@example.test',
 };
 

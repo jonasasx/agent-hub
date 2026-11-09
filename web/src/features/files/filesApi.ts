@@ -1,10 +1,10 @@
 /**
  * Client of the file routes of the hub (change tool-windows-file-explorer, design D3).
  * Requirements (file-explorer): Ленивое дерево; Просмотрщик; Машина не в сети и ошибки; Совместимость со старым агентом.
- * Routes: GET /api/runners/:runnerId/fs/list and GET /api/runners/:runnerId/fs/file. The browser never sends a root:
+ * Routes: GET /api/runners/:runnerId/fs/list, …/fs/file and …/fs/download (change file-download). The browser never sends a root:
  * the hub takes the cwd of `sessionId` or the home folder of the machine.
  */
-import { FS_ERROR_STATUS, FS_FILE_HEADERS, FS_MEDIA_MAX, FS_TEXT_MAX, type FsErrorCode, type FsFileKind, type FsListResponse, type MessageKey } from '@agent-hub/shared';
+import { FS_ERROR_STATUS, FS_FILE_HEADERS, FS_MEDIA_MAX, FS_TEXT_MAX, type FsDownloadProbe, type FsErrorCode, type FsFileKind, type FsListResponse, type MessageKey } from '@agent-hub/shared';
 import { t } from '../../i18n';
 
 /** A client-side failure that has no hub code: the network is down, the answer is not what the contract says. */
@@ -81,6 +81,14 @@ export function fsFileUrl(runnerId: string, path: string, sessionId?: string): s
   const params = new URLSearchParams({ path });
   if (sessionId) params.set('sessionId', sessionId);
   return `/api/runners/${enc(runnerId)}/fs/file?${params.toString()}`;
+}
+
+/** The URL of the download of a file: `Content-Disposition: attachment`, any class and size (change file-download, D4). */
+export function fsDownloadUrl(runnerId: string, path: string, sessionId?: string, probe = false): string {
+  const params = new URLSearchParams({ path });
+  if (sessionId) params.set('sessionId', sessionId);
+  if (probe) params.set('probe', '1');
+  return `/api/runners/${enc(runnerId)}/fs/download?${params.toString()}`;
 }
 
 async function failure(res: Response): Promise<FsError> {
@@ -190,4 +198,18 @@ export function limitFor(kind: FsFileKind): number | null {
   if (kind === 'text' || kind === 'markdown') return FS_TEXT_MAX;
   if (kind === 'image' || kind === 'pdf') return FS_MEDIA_MAX;
   return null;
+}
+
+/** The check before a download: the name and the size, or the error of the hub (secret, missing file, old agent). */
+export async function fsDownloadProbe(runnerId: string, path: string, sessionId?: string, signal?: AbortSignal): Promise<FsDownloadProbe> {
+  const res = await send(fsDownloadUrl(runnerId, path, sessionId, true), READ_TIMEOUT_MS, signal);
+  if (!res.ok) throw await failure(res);
+  let raw: Partial<FsDownloadProbe> | null;
+  try {
+    raw = (await res.json()) as Partial<FsDownloadProbe> | null;
+  } catch {
+    throw new FsError('bad_response');
+  }
+  if (!raw || typeof raw.name !== 'string' || typeof raw.size !== 'number' || typeof raw.mtimeMs !== 'number') throw new FsError('bad_response');
+  return { name: raw.name, size: raw.size, mtimeMs: raw.mtimeMs };
 }

@@ -38,7 +38,7 @@ describe('subscriptions per user (integration, multi-user 3.5)', () => {
     });
     autoReply(a, type => {
       if (type === 'fs.stat') return { exists: true, isDir: true };
-      if (type === 'session.start') return { models: [] };
+      if (type === 'session.start') return { models: runner === 'r-bobhp01' ? [{ value: 'bob-model', displayName: 'Bob model' }] : [] };
       return {};
     });
     agents.push(a);
@@ -97,6 +97,13 @@ describe('subscriptions per user (integration, multi-user 3.5)', () => {
     expect(own.statusCode, own.body).toBe(201);
     const ownStart = await waitFor(() => startCmd((own.json() as SessionView).id));
     expect(ownStart.subscription).toEqual({ id: ivanSub, token: IVAN_TOKEN });
+  });
+
+  it("provider-parity R8: the models reported by her machine are hers, not in Ivan's list", async () => {
+    const r = await api(bob, 'POST', '/api/sessions', { runnerId: 'r-bobhp01', cwd: '/home/ubuntu', model: 'haiku', prompt: `models ${randomUUID()}` });
+    expect(r.statusCode, r.body).toBe(201);
+    await waitFor(async () => (await api(bob, 'GET', '/api/models')).body.includes('bob-model'));
+    expect((await api(ivan, 'GET', '/api/models')).body).not.toContain('bob-model');
   });
 
   it("she cannot launch or switch under Ivan's subscription: 422 subscription_unavailable, nothing sent", async () => {

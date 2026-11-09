@@ -4,7 +4,8 @@
  * Requirement (file-explorer): Окно «Файлы» и источники — the «Сессия · <проект>» chip follows the active session and
  * its root is the `cwd`; a machine chip has the home folder (`homeDir`) as the root; «↑» lifts the session root one
  * level but never above the home folder, and is off at the home folder and in the machine mode.
- * Requirement: Совместимость со старым агентом — a machine without `fs.browse` is shown with «Обновите агента».
+ * Requirement: Совместимость со старым агентом — a machine without `fs.browse` is shown with «Обновите агента»; without
+ * `fs.download` (change file-download) the «Скачать» buttons are dimmed.
  */
 import type { RunnerView, SessionView } from '../../api/types';
 import { hubText } from '../../i18n';
@@ -29,6 +30,18 @@ export function runnerSupportsFiles(r: Pick<RunnerView, 'id' | 'protocolVersion'
   return major > 1 || (major === 1 && Number(m[2]) >= FILES_PROTOCOL_MINOR);
 }
 
+/** The first protocol version with the capability `fs.download` (shared DOWNLOAD_PROTOCOL, change file-download). */
+export const DOWNLOAD_PROTOCOL_MINOR = 16;
+
+/** A machine that can give a file for download; the same hint by version as `runnerSupportsFiles`. */
+export function runnerSupportsDownload(r: Pick<RunnerView, 'id' | 'protocolVersion'>, outdated: Record<string, boolean> = {}): boolean {
+  if (!runnerSupportsFiles(r, outdated)) return false;
+  const m = /^(\d+)\.(\d+)/.exec(r.protocolVersion ?? '');
+  if (!m) return true;
+  const major = Number(m[1]);
+  return major > 1 || (major === 1 && Number(m[2]) >= DOWNLOAD_PROTOCOL_MINOR);
+}
+
 export interface Source {
   /** Expanded folders, the selection and the lifted root are kept by this key. */
   key: string;
@@ -48,6 +61,8 @@ export interface Source {
   up: string | null;
   online: boolean;
   supported: boolean;
+  /** The agent can give files for download (`fs.download`). */
+  download: boolean;
 }
 
 export interface SourceInput {
@@ -87,6 +102,7 @@ function machineSource(r: RunnerView, outdated: Record<string, boolean>): Source
     up: null,
     online: r.online,
     supported: runnerSupportsFiles(r, outdated),
+    download: runnerSupportsDownload(r, outdated),
   };
 }
 
@@ -121,6 +137,7 @@ export function resolveSource(input: SourceInput): Source | null {
         up: upFrom(root, home),
         online: r.online,
         supported: runnerSupportsFiles(r, outdated),
+        download: runnerSupportsDownload(r, outdated),
       };
     }
   } else {

@@ -88,6 +88,10 @@
 .fx-tr.fx-note:hover { background: transparent; }
 .fx-tr.fx-err { color: var(--muted); }
 .fx-tr.flash { animation: fx-flash 1.4s ease-out; }
+/* «Скачать» of a file row: on hover, on the selected row and on the phone (change file-download) */
+.fx-tr .btn.sm.icon.fx-dl { flex: none; width: 22px; height: 22px; min-height: 0; padding: 0; visibility: hidden; color: var(--muted); }
+.fx-tr:hover .btn.sm.icon.fx-dl, .fx-tr.sel .btn.sm.icon.fx-dl, .fx-tr .btn.sm.icon.fx-dl:focus-visible { visibility: visible; }
+.fx-tr .fx-dl:hover { color: var(--accent); }
 @keyframes fx-flash { 0%, 40% { background: color-mix(in srgb, var(--accent) 30%, transparent); } 100% { background: transparent; } }
 .fx-ic { display: inline-flex; flex: none; }
 .fx-ic svg { width: 16px; height: 16px; }
@@ -166,6 +170,7 @@
 .fx-md pre code { background: transparent; padding: 0; }
 .fx-md blockquote { margin: 0 0 10px; padding: 4px 12px; border-left: 3px solid var(--accent); color: var(--muted); }
 .fx-md table { border-collapse: collapse; margin: 0 0 12px; font-size: 13px; display: block; overflow-x: auto; max-width: 100%; }
+.fx-md th, .fx-md td { min-width: 8ch; overflow-wrap: break-word; }
 .fx-md th, .fx-md td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; }
 .fx-md th { background: var(--raised); }
 .fx-md a { color: var(--info); }
@@ -194,6 +199,7 @@
   .fx-panel .btn.sm.icon, .fx-viewer .btn.sm.icon { width: 40px; }
   .fx-crumbs button { min-height: 40px; min-width: 40px; display: inline-flex; align-items: center; justify-content: center; padding: 0 8px; }
   .fx-tr .chev { width: 18px; }
+  .fx-tr .btn.sm.icon.fx-dl { visibility: visible; width: 40px; height: 40px; min-height: 40px; }
   .fx-vhead { padding: 6px 8px; }
   .fx-vhead .btn, .fx-vhead .fx-mini-seg button { min-height: 40px; min-width: 40px; }
   .fx-vhead .btn.sm { height: 40px; padding: 0 10px; }

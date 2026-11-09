@@ -185,6 +185,8 @@ export interface MockHubOptions {
   limits?: boolean;
   /** Change voice-input: `/api/me.voiceInput` (the hub has an ElevenLabs key). Off by default. */
   voiceInput?: boolean;
+  /** Change web-push-notifications: `/api/me.vapidPublicKey` and the devices of `GET /api/push/subscriptions`. Push is not configured by default. */
+  push?: { vapidPublicKey: string; devices: unknown[] };
 }
 
 /** One answer of the mock `POST /api/voice/transcribe` (change voice-input, design D2). */
@@ -202,9 +204,9 @@ export interface VoiceAnswer {
  * project; by area (area, systems, projects, clones), then «Vault», «Знания», «Без проекта» last.
  */
 export const PROJECT_DIR = [
-  { id: 'a-scanner', kind: 'area', title: 'Сканер', path: '10-work/01-scanner', areaPath: '10-work/01-scanner', colorKey: 'scanner', archived: false },
-  { id: 'p-rkd', kind: 'system', title: '03-scanner-rkd', path: '10-work/01-scanner/systems/03-scanner-rkd', areaPath: '10-work/01-scanner', colorKey: 'scanner', archived: false },
-  { id: 'p-site-c', kind: 'project', title: '04-site-c', path: '10-work/01-scanner/projects/04-site-c', areaPath: '10-work/01-scanner', colorKey: 'scanner', archived: false },
+  { id: 'a-scanner', kind: 'area', title: 'Сканер', path: '10-work/01-devices', areaPath: '10-work/01-devices', colorKey: 'scanner', archived: false },
+  { id: 'p-rkd', kind: 'system', title: '03-device-docs', path: '10-work/01-devices/systems/03-device-docs', areaPath: '10-work/01-devices', colorKey: 'scanner', archived: false },
+  { id: 'p-site-c', kind: 'project', title: '04-site-c', path: '10-work/01-devices/projects/04-site-c', areaPath: '10-work/01-devices', colorKey: 'scanner', archived: false },
   { id: 'p-demo', kind: 'project', title: '06-outage-review', path: '10-work/02-platform/projects/06-outage-review', areaPath: '10-work/02-platform', colorKey: 'platform', archived: false },
   {
     id: 'p-client-b',
@@ -216,7 +218,7 @@ export const PROJECT_DIR = [
     archived: false,
   },
   { id: 'a-support', kind: 'area', title: 'Поддержка', path: '10-work/04-support', areaPath: '10-work/04-support', colorKey: 'support', archived: false },
-  { id: 'p-sms', kind: 'system', title: '03-mm-sms-bridge', path: '10-work/04-support/systems/03-mm-sms-bridge', areaPath: '10-work/04-support', colorKey: 'support', archived: false },
+  { id: 'p-sms', kind: 'system', title: '03-sms-bridge', path: '10-work/04-support/systems/03-sms-bridge', areaPath: '10-work/04-support', colorKey: 'support', archived: false },
   { id: 'p-crm', kind: 'project', title: '04-twenty-crm', path: '10-work/05-infra/projects/99-archive/04-twenty-crm', areaPath: '10-work/05-infra', colorKey: 'infra', archived: true },
   { id: 'p-copilot', kind: 'system', title: '04-copilot', path: '10-work/06-tools/systems/04-copilot', areaPath: '10-work/06-tools', colorKey: 'tools', archived: false },
   { id: 'p-budget', kind: 'system', title: '01-budget', path: '10-work/07-org/systems/01-budget', areaPath: '10-work/07-org', colorKey: 'org', archived: false },
@@ -238,10 +240,10 @@ const CLASSIFIED: Record<number, [string, string]> = {
   1: ['p-hub', '3 правки в 05-agent-hub'],
   2: ['p-site-c', 'каталог запуска в 04-site-c'],
   3: ['p-copilot', '2 правки и 5 чтений в 04-copilot'],
-  4: ['p-sms', '1 правка в 03-mm-sms-bridge'],
+  4: ['p-sms', '1 правка в 03-sms-bridge'],
   5: ['p-client-b', '4 правки в 10-client-b-incident'],
   6: ['p-ledger', '6 правок в 01-ledger'],
-  7: ['p-rkd', '1 чтение в 03-scanner-rkd'],
+  7: ['p-rkd', '1 чтение в 03-device-docs'],
   8: ['b-vault', '2 правки в Vault'],
   20: ['p-budget', '1 правка в 01-budget'],
   21: ['p-pesh', 'каталог запуска в 01-infra-access'],
@@ -284,6 +286,8 @@ export class MockHub {
   decisions: Json[] = [];
   /** Change voice-input: the flag of /api/me, the queue of transcribe answers (then `voiceDefault`), what was sent. */
   voiceInput = false;
+  /** Change web-push-notifications: null — push is not configured on the mock hub. */
+  pushConfig: { vapidPublicKey: string; devices: unknown[] } | null = null;
   voiceAnswers: VoiceAnswer[] = [];
   voiceDefault: VoiceAnswer = { status: 200, body: { text: 'Привет из диктовки' } };
   voiceRequests: { size: number; contentType: string }[] = [];
@@ -519,6 +523,7 @@ export class MockHub {
     this.eventsDelayMs = opts.eventsDelayMs ?? 0;
     this.blobDelayMs = opts.blobDelayMs ?? 0;
     this.voiceInput = opts.voiceInput ?? false;
+    this.pushConfig = opts.push ?? null;
     if (opts.projects) {
       for (const [n, [pid, evidence]] of Object.entries(CLASSIFIED)) {
         const s = this.sessions.get(uuid(Number(n)));
@@ -526,7 +531,7 @@ export class MockHub {
         this.auto.set(s.id, [pid, evidence]);
         this.sessions.set(s.id, { ...s, project: refOf(pid), projectSource: 'auto', projectEvidence: evidence });
       }
-      // session 6 was moved by hand earlier; session 1 also touched 03-mm-sms-bridge (the second project)
+      // session 6 was moved by hand earlier; session 1 also touched 03-sms-bridge (the second project)
       const s6 = this.session(6);
       this.sessions.set(s6.id, { ...s6, projectSource: 'manual', projectEvidence: null });
       const s1 = this.session(1);
@@ -864,7 +869,15 @@ export class MockHub {
     const err = (status: number, error: string, message?: string) => ok({ error, message }, status);
     let m: RegExpExecArray | null;
 
-    if (path === '/api/me') return ok({ user: { id: 'u1', email: 'jonasasx@gmail.com', role: 'admin', name: null, provider: 'google' }, vapidPublicKey: null, voiceInput: this.voiceInput });
+    if (path === '/api/me')
+      return ok({
+        user: { id: 'u1', email: 'alice@example.com', role: 'admin', name: null, provider: 'google' },
+        vapidPublicKey: this.pushConfig?.vapidPublicKey ?? null,
+        voiceInput: this.voiceInput,
+      });
+    // change web-push-notifications: push is not configured in the mock, the devices list is empty, unsubscribing is idempotent
+    if (path === '/api/push/subscriptions' && method === 'GET') return ok({ configured: this.pushConfig !== null, devices: this.pushConfig?.devices ?? [] });
+    if (path.startsWith('/api/push/subscriptions') && method === 'DELETE') return route.fulfill({ status: 204 });
     if (path === '/api/sidebar') return ok(this.sidebar(url.searchParams.get('cron') === '1'));
     if (path === '/api/search') {
       const limit = Number(url.searchParams.get('limit') ?? 12);

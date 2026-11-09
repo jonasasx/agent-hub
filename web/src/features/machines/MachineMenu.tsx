@@ -14,6 +14,7 @@ import { openToolWindow } from '../toolwindows/open';
 import { openFilesForMachine } from '../files/open';
 import { openMachineSettings } from './actions';
 import { useMachineFilter } from './machineFilter';
+import { DefaultDirPicker } from './DefaultDir';
 import { agentMark, markText, runnerStatusText, runnerTooltip } from './runnerInfo';
 
 export const dotOf = (r: RunnerView): 'ok' | 'warn' | 'bad' => (r.online ? 'ok' : r.incompatible ? 'warn' : 'bad');
@@ -56,6 +57,7 @@ const ITEMS: Item[] = [
 export function MachineChip({ r }: { r: RunnerView }) {
   const t = useT();
   const [open, setOpen] = useState(false);
+  const [picking, setPicking] = useState(false);
   const { box, trigger, menu } = usePopupMenu(open, () => setOpen(false));
   const note = chipNote(r);
   const dot = dotOf(r);
@@ -96,6 +98,10 @@ export function MachineChip({ r }: { r: RunnerView }) {
             {info(r)}
           </div>
           {ITEMS.map(entry)}
+          <button type="button" role="menuitem" className={r.online ? undefined : 'dis'} aria-disabled={!r.online || undefined} onClick={() => act({ needsOnline: true, run: () => setPicking(true) })}>
+            <span className="tw-mi">{menuIcon('files')}</span>
+            {t('machines.menu.defaultDir')}
+          </button>
           <hr />
           <button
             type="button"
@@ -112,6 +118,7 @@ export function MachineChip({ r }: { r: RunnerView }) {
           </button>
         </div>
       )}
+      {picking && <DefaultDirPicker runner={r} onClose={() => setPicking(false)} />}
     </span>
   );
 }

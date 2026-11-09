@@ -1,11 +1,8 @@
 /**
  * «Ждёт меня» rule of the tray counter (design D5). Requirement: Счётчик ждущих сессий в трее.
- *
- * Copy of `displayStatus`/`needsMe` and the cron filter of `nowList` from `web/src/features/sessions/status.ts`
- * (desktop cannot import from web, and web is not changed by this change). Keep in sync; follow-up after the merge —
- * move them to `shared/` and import in both places.
+ * The rule itself is `waitsForUser` of `@agent-hub/shared` (change `shared-attention-rule`), the same as web «Сейчас».
  */
-import type { RunnerView, SessionView } from '@agent-hub/shared';
+import { waitsForUser, type RunnerView, type SessionView } from '@agent-hub/shared';
 
 export type RunnerLookup = ReadonlyMap<string, RunnerView>;
 
@@ -17,8 +14,7 @@ export function displayStatus(s: SessionView, runners: RunnerLookup): SessionVie
 
 /** Waits for the user: permission or an unread answer, machine online. */
 export function needsMe(s: SessionView, runners: RunnerLookup): boolean {
-  const st = displayStatus(s, runners);
-  return st === 'permission' || (st === 'waiting' && s.unread);
+  return waitsForUser(s, runners.get(s.runnerId)?.online === true);
 }
 
 /** Number of non-cron sessions that wait for the user (the «Сейчас» rule with `showCron = false`). */

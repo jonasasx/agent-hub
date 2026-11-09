@@ -93,10 +93,45 @@ describe('background commands', () => {
       obj: { type: 'user', timestamp: '2026-10-26T10:35:50.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', is_error: isError, content }] } },
     });
     expect(scanLines({ kind: 'main', agentIdOfFile: null }, [line('Command running in background with ID: biuxx3odl. Output is being written to: x')])).toEqual([
-      { t: 'bgstart', toolUseId: 'toolu_1', taskId: 'biuxx3odl', kind: 'bash', timeoutMs: null, persistent: false, ts: new Date('2026-10-26T10:35:50.000Z') },
+      { t: 'bgstart', toolUseId: 'toolu_1', taskId: 'biuxx3odl', kind: 'bash', timeoutMs: null, persistent: false, ownerAgentId: null, ts: new Date('2026-10-26T10:35:50.000Z') },
     ]);
     expect(scanLines({ kind: 'main', agentIdOfFile: null }, [line('Command running in background with ID: x', true)]).filter(f => f.t === 'bgstart')).toEqual([]);
     expect(scanLines({ kind: 'main', agentIdOfFile: null }, [line('total 0')])).toEqual([]);
+  });
+
+  it('a foreground command moved to the background over its timeout starts a task with the metadata of its call', () => {
+    const main = { kind: 'main' as const, agentIdOfFile: null };
+    const call = {
+      lineNo: 1,
+      obj: {
+        type: 'assistant',
+        timestamp: '2026-11-07T05:49:00.000Z',
+        message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_2', name: 'Bash', input: { command: 'npm test', description: 'Run tests', timeout: 600000 } }] },
+      },
+    };
+    const result = (content: string, toolUseResult?: Record<string, unknown>) => ({
+      lineNo: 2,
+      obj: { type: 'user', timestamp: '2026-11-07T05:59:00.000Z', toolUseResult, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_2', is_error: false, content }] } },
+    });
+    const moved = 'Command did not complete within its 600s timeout and was moved to the background (ID: beqf5k97b). Output is being written to: x';
+    const start = { t: 'bgstart', toolUseId: 'toolu_2', taskId: 'beqf5k97b', kind: 'bash', timeoutMs: null, persistent: false, ownerAgentId: null, ts: new Date('2026-11-07T05:59:00.000Z') };
+    expect(scanLines(main, [call, result(moved)])).toEqual([
+      {
+        t: 'bgcall',
+        toolUseId: 'toolu_2',
+        kind: 'bash',
+        description: 'Run tests',
+        command: 'npm test',
+        timeoutMs: null,
+        persistent: false,
+        ownerAgentId: null,
+        ts: new Date('2026-11-07T05:49:00.000Z'),
+      },
+      start,
+    ]);
+    // the call in an earlier chunk; the text changed but toolUseResult names the task
+    expect(scanLines(main, [result('moved', { backgroundTaskId: 'beqf5k97b', timedOutAfterMs: 600000 })])).toEqual([start]);
+    expect(scanLines(main, [call, result('total 0')])).toEqual([]);
   });
 });
 
@@ -127,12 +162,31 @@ If this event…
       }),
     ]);
     expect(facts).toEqual([
-      { t: 'bgcall', toolUseId: 'tm', kind: 'monitor', description: 'CI #1', command: 'x'.repeat(2000), ts: new Date(at) },
-      { t: 'bgcall', toolUseId: 'tb', kind: 'bash', description: 'tests', command: 'npm test', ts: new Date(at) },
+      { t: 'bgcall', toolUseId: 'tm', kind: 'monitor', description: 'CI #1', command: 'x'.repeat(2000), timeoutMs: 600000, persistent: false, ownerAgentId: null, ts: new Date(at) },
+      { t: 'bgcall', toolUseId: 'tb', kind: 'bash', description: 'tests', command: 'npm test', timeoutMs: null, persistent: false, ownerAgentId: null, ts: new Date(at) },
     ]);
   });
 
-  it('the result of Monitor starts it by toolUseResult, or by the text when the result was not kept; an error does not', () => {
+  it('a background Bash keeps its own timeout in the call; an error result gives bgfail; the copy of a notification in queued_command gives notify', () => {
+    const call = L({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tb', name: 'Bash', input: { command: 'sleep 9', timeout: 600000, run_in_background: true } }] } });
+    expect(only(scanLines(main, [call]), 'bgcall')[0]).toMatchObject({ toolUseId: 'tb', kind: 'bash', timeoutMs: 600000 });
+    const err = L({
+      type: 'user',
+      toolUseResult: 'InputValidationError: …',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'tm', is_error: true, content: '<tool_use_error>InputValidationError: Monitor failed</tool_use_error>' }] },
+    });
+    expect(only(scanLines(main, [err]), 'bgfail')).toEqual([{ t: 'bgfail', toolUseId: 'tm', ts: new Date(at) }]);
+    const done = `<task-notification>
+<task-id>bkl112941</task-id>
+<tool-use-id>tb</tool-use-id>
+<status>completed</status>
+<summary>Background command "x" completed (exit code 0)</summary>
+</task-notification>`;
+    const q = L({ type: 'attachment', attachment: { type: 'queued_command', prompt: done, origin: { kind: 'task-notification' } } });
+    expect(only(scanLines({ kind: 'subagent', agentIdOfFile: 'a3d' }, [q]), 'notify')).toEqual([{ t: 'notify', agentId: 'bkl112941', toolUseId: 'tb', state: 'completed', ts: new Date(at) }]);
+  });
+
+  it('the result of Monitor starts it by toolUseResult, or by the text when the result was not kept (the timeout from «expires in …»); an error does not', () => {
     const res = (tur: unknown, isError = false) =>
       L({
         type: 'user',
@@ -140,9 +194,11 @@ If this event…
         message: { content: [{ type: 'tool_result', tool_use_id: 'tm', is_error: isError, content: 'Monitor started (task b19s2119t, expires in 30m unless the source ends first).' }] },
       });
     expect(scanLines(main, [res({ taskId: 'b19s2119t', timeoutMs: 1800000, persistent: false })])).toEqual([
-      { t: 'bgstart', toolUseId: 'tm', taskId: 'b19s2119t', kind: 'monitor', timeoutMs: 1800000, persistent: false, ts: new Date(at) },
+      { t: 'bgstart', toolUseId: 'tm', taskId: 'b19s2119t', kind: 'monitor', timeoutMs: 1800000, persistent: false, ownerAgentId: null, ts: new Date(at) },
     ]);
-    expect(scanLines(main, [res(undefined)])).toEqual([{ t: 'bgstart', toolUseId: 'tm', taskId: 'b19s2119t', kind: 'monitor', timeoutMs: null, persistent: false, ts: new Date(at) }]);
+    expect(scanLines(main, [res(undefined)])).toEqual([
+      { t: 'bgstart', toolUseId: 'tm', taskId: 'b19s2119t', kind: 'monitor', timeoutMs: 1800000, persistent: false, ownerAgentId: null, ts: new Date(at) },
+    ]);
     expect(scanLines(main, [res(undefined, true)]).filter(f => f.t === 'bgstart')).toEqual([]);
   });
 

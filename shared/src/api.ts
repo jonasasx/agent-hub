@@ -4,6 +4,7 @@ import type { SubagentStatus } from './subagents.js';
 import type { FsAgentErrorCode, FsEntry } from './files.js';
 import type { I18nText, Locale } from './i18n/index.js';
 import { LOCAL_PATH_MESSAGE, isAbsoluteLocalPath } from './paths.js';
+import { normalizeProjectFolder } from './folders.js';
 import { mcpActionSchema, providerSchema, subscriptionTokenSchema, type ClaudeLogin, type McpServerSnapshot, type Provider, type ProviderLoginStart, type ProviderStatus } from './protocol.js';
 
 export type RunnerKind = 'machine' | 'k8s';
@@ -23,10 +24,10 @@ export interface RunnerView {
   /** The last agent that tried to connect spoke an incompatible major protocol version. */
   incompatible: boolean;
   /**
-   * Vault root on this machine (from hello): default directory of the new-session form. The hub always
-   * sends both fields (null when unknown); they are optional only so M1 web fixtures keep compiling.
+   * session-folder D4: the default folder of the machine — sessions start there, project folders are relative to it.
+   * The hub always sends both fields (null when unknown); they are optional only so M1 web fixtures keep compiling.
    */
-  vaultRoot?: string | null;
+  defaultDir?: string | null;
   homeDir?: string | null;
   /**
    * Change `multi-user` (the hub always sends the fields below; optional only for older fixtures).
@@ -78,7 +79,10 @@ export interface RunnerUpdateView {
 }
 
 export type UserRole = 'admin' | 'user';
-export type LoginProvider = 'google' | 'keycloak';
+/** keycloak-auth: `oidc` — the single provider of OIDC_ISSUER. */
+export type LoginProvider = 'google' | 'keycloak' | 'oidc';
+/** keycloak-auth: how the user came in; `legacy` — created before the single provider. */
+export type UserSource = 'legacy' | 'invite' | 'signup';
 
 export interface MeResponse {
   /** Change `multi-user`: `role` — «Пользователи» only for `admin`. */
@@ -86,8 +90,14 @@ export interface MeResponse {
   vapidPublicKey: string | null;
   /** Dictation is available: the hub has ELEVENLABS_API_KEY (change voice-input, D5). */
   voiceInput: boolean;
+  /** Voice conversation is available: ELEVENLABS_API_KEY, VOICE_AGENT_ID and VOICE_LLM_KEY are set (change voice-conversation, D10). */
+  voiceTalk: boolean;
   /** Change i18n D4: the interface language chosen in the profile; `null` — the browser language. */
   locale: Locale | null;
+  /** keycloak-auth D5: the account page of the provider («Управление входом»); null — the provider has none. */
+  accountUrl: string | null;
+  /** keycloak-auth D5: the name of the single provider (OIDC_PROVIDER_LABEL, else «OIDC»); null — two-provider mode. */
+  singleProvider: string | null;
 }
 
 export const PROJECT_COLORS = ['scanner', 'platform', 'customers', 'support', 'infra', 'tools', 'org', 'ext', 'personal', 'rose', 'lime', 'slate'] as const;
@@ -105,7 +115,7 @@ export function allocateProjectColor(used: readonly string[], identity = ''): Pr
   return [...PROJECT_COLORS].sort((a, b) => count(a) - count(b) || (identity ? hash(a) - hash(b) : PROJECT_COLORS.indexOf(a) - PROJECT_COLORS.indexOf(b)))[0]!;
 }
 
-/** Manually curated project catalog (projects-catalog 1.12). Paths are returned only in runner-specific binding data. */
+/** Manually curated project catalog (projects-catalog 1.12). */
 export interface UserProjectView {
   id: string;
   name: string;
@@ -115,8 +125,22 @@ export interface UserProjectView {
   remote: string | null;
   archived: boolean;
   lastEventAt: string | null;
-  bindings: Array<{ runnerId: string; path: string }>;
+  /** session-folder D6: the folder relative to the default folder of a machine ('/' separators); null — none. */
+  folder: string | null;
 }
+/** session-folder D2: a project folder in the API — normalized; '' or null — no folder; invalid — 400 invalid_request. */
+const projectFolderField = z
+  .string()
+  .max(4096)
+  .nullable()
+  .transform((v, ctx) => {
+    try {
+      return normalizeProjectFolder(v);
+    } catch (err) {
+      ctx.addIssue({ code: 'custom', message: (err as Error).message });
+      return z.NEVER;
+    }
+  });
 export const createUserProjectSchema = z.object({
   name: z
     .string()
@@ -127,16 +151,12 @@ export const createUserProjectSchema = z.object({
   colorKey: projectColorSchema.optional(),
   description: z.string().max(2000).optional(),
   remote: z.string().max(2000).nullable().optional(),
-  path: z.string().min(1).max(4096).refine(isAbsoluteLocalPath, LOCAL_PATH_MESSAGE).optional(),
-  runnerId: z.string().min(1).optional(),
+  folder: projectFolderField.optional(),
 });
 export type CreateUserProject = z.infer<typeof createUserProjectSchema>;
 export const patchUserProjectSchema = z
   .object({
-    bindings: z
-      .array(z.object({ runnerId: z.string().min(1).max(200), path: z.string().min(1).max(4096).refine(isAbsoluteLocalPath, LOCAL_PATH_MESSAGE).nullable() }))
-      .max(100)
-      .optional(),
+    folder: projectFolderField.optional(),
     colorKey: projectColorSchema.optional(),
     name: z
       .string()
@@ -150,11 +170,8 @@ export const patchUserProjectSchema = z
     archived: z.boolean().optional(),
   })
   .refine(v => Object.keys(v).length > 0);
-export const bindUserProjectSchema = z.object({ path: z.string().min(1).max(4096).refine(isAbsoluteLocalPath, LOCAL_PATH_MESSAGE) });
 export const userProjectListQuerySchema = z.object({ sort: z.enum(['recent', 'name']).default('recent'), includeArchived: z.enum(['0', '1']).default('0') });
 export const userProjectParamsSchema = z.object({ id: z.guid() });
-export const userProjectBindingParamsSchema = z.object({ id: z.guid(), runnerId: z.string().trim().min(1).max(200) });
-export const userProjectResolveQuerySchema = z.object({ runnerId: z.string().trim().min(1).max(200).optional() });
 
 export interface ApiError {
   error: string;
@@ -445,8 +462,8 @@ export interface EventsPage {
 
 // ---------- window workspace (M2.1, D10/D11) ----------
 
-/** Tabs per window (the limit is enforced by the window, D11). */
-export const MAX_TABS = 8;
+/** Tabs per window: the strip scrolls and evicts nothing (tab-strip-scroll), this only guards the hub against junk bodies. */
+export const MAX_TABS = 200;
 /** Panes per window. */
 export const MAX_PANES = 4;
 /** PUT /api/layout body limit. */
@@ -582,7 +599,6 @@ const subscriptionIdField = z.guid().nullable().optional();
 export const createSessionRequestSchema = z
   .object({
     runnerId: z.string().min(1),
-    cwd: pathField,
     permissionMode: uiMode.default('bypassPermissions'),
     model: z.string().min(1).max(200),
     prompt: z.string().max(200_000),
@@ -591,7 +607,7 @@ export const createSessionRequestSchema = z
     subscriptionId: subscriptionIdField,
     /** agent-providers: absent — claude. provider-parity: subscriptionId is a subscription of this provider. */
     provider: providerSchema.optional(),
-    /** projects-catalog 1.12: explicit user-owned catalog project, resolved via runner binding. */
+    /** projects-catalog 1.12: explicit user-owned catalog project; session-folder D3 — the hub starts the session in its folder. */
     projectId: z.guid().optional(),
   })
   .refine(b => textOrImages(b, b.prompt), { message: 'prompt or attachments required', path: ['prompt'] });
@@ -602,8 +618,9 @@ export type CreateSessionRequest = z.input<typeof createSessionRequestSchema>;
 /**
  * POST /api/sessions/:id/fork. `copy` — a full copy on the same machine (201 SessionView; 409 runner_offline |
  * agent_outdated | copy_unavailable with `reason`). `handoff` — a new session on the chosen runner with the (edited)
- * handoff prompt as its first message (201 SessionView; 422 bad_path | cwd_not_found; 409 runner_offline |
- * agent_outdated); permission mode and model default to the source's.
+ * handoff prompt as its first message, in the folder of the source's project on that runner or its default folder
+ * (session-folder D3; 201 SessionView; 422 cwd_not_found; 409 runner_offline | agent_outdated); permission mode and
+ * model default to the source's.
  */
 export const forkRequestSchema = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('copy') }),
@@ -611,7 +628,6 @@ export const forkRequestSchema = z.discriminatedUnion('mode', [
     mode: z.literal('handoff'),
     prompt: z.string().min(1).max(200_000),
     runnerId: z.string().min(1),
-    cwd: pathField,
     draftId: z.guid().optional(),
     permissionMode: uiMode.optional(),
     model: z.string().min(1).max(200).optional(),
@@ -702,6 +718,18 @@ export const VOICE_COUNTDOWN_MS = 30_000;
 export const VOICE_AUDIO_TYPES = ['audio/webm', 'audio/mp4', 'audio/ogg'] as const;
 export type VoiceAudioType = (typeof VOICE_AUDIO_TYPES)[number];
 
+/** GET /api/voice/talk?session=<id> (change voice-conversation, D1): the ElevenLabs conversation link and the hub's token. */
+export interface VoiceTalkResponse {
+  /** `wss://…` of the ElevenLabs agent, valid 15 minutes. */
+  signedUrl: string;
+  /** Conversation token: the page passes it in `custom_llm_extra_body.hub_token`. */
+  token: string;
+}
+export const voiceTalkQuerySchema = z.object({ session: z.uuid() });
+/** Error codes of the conversation routes; ElevenLabs failures reuse `voice_upstream_error`. */
+export const VOICE_TALK_ERROR_CODES = ['voice_talk_disabled', 'voice_talk_token'] as const;
+export type VoiceTalkErrorCode = (typeof VOICE_TALK_ERROR_CODES)[number];
+
 /** POST /api/sessions/:id/images — «Показать изображение» for a local path in an answer (D19). */
 export const showImageRequestSchema = z.object({ path: pathField });
 export type SendMessageRequest = z.infer<typeof sendMessageRequestSchema>;
@@ -763,7 +791,7 @@ const snapshotFields = {
 };
 
 /**
- * Limits and consistency of a snapshot: ≤4 panes, ≤8 distinct tabs; the leaves of the tree are exactly the keys of
+ * Limits and consistency of a snapshot: ≤4 panes, ≤`MAX_TABS` distinct tabs; the leaves of the tree are exactly the keys of
  * `panes` (no duplicates), `focus` is one of the panes, each pane's `id` is its key and its `active` tab is one of its
  * tabs (or null). A window never builds anything else, so a broken body is refused instead of stored as a template.
  */
@@ -879,7 +907,8 @@ export type UiServerMessage =
 export const uiClientMessageSchema = z.discriminatedUnion('type', [
   // subagentIds (change `subagents`): chats of subagents open in this window; the hub checks the owner
   z.object({ type: z.literal('subscribe'), sessionIds: z.array(z.string()).max(64), subagentIds: z.array(z.string()).max(64).optional() }),
-  z.object({ type: z.literal('presence'), visible: z.boolean(), activeSessionIds: z.array(z.string()).max(64) }),
+  // hiddenForMs (change push-voice-fixes): how long the tab is already hidden when the hidden presence goes out (a late visibilitychange)
+  z.object({ type: z.literal('presence'), visible: z.boolean(), activeSessionIds: z.array(z.string()).max(64), hiddenForMs: z.number().int().min(0).max(600_000).optional() }),
   z.object({ type: z.literal('ping') }),
 ]);
 export type UiClientMessage = z.infer<typeof uiClientMessageSchema>;
@@ -954,7 +983,8 @@ export type InviteStatus = 'active' | 'used' | 'expired' | 'revoked';
 export interface InviteView {
   id: string;
   email: string;
-  provider: LoginProvider;
+  /** keycloak-auth D6: null — an invite of the single provider, bound to the address only. */
+  provider: LoginProvider | null;
   status: InviteStatus;
   createdAt: string;
   expiresAt: string;
@@ -965,7 +995,8 @@ export interface InviteView {
 /** POST /api/admin/invites → 201 CreateInviteResponse; 409 user_exists. An earlier active invite of the address is revoked. */
 export const createInviteRequestSchema = z.object({
   email: z.string().trim().toLowerCase().pipe(z.email().max(320)),
-  provider: z.enum(['google', 'keycloak']),
+  /** Two-provider mode: required; single-provider mode: ignored. */
+  provider: z.enum(['google', 'keycloak']).optional(),
 });
 export type CreateInviteRequest = z.input<typeof createInviteRequestSchema>;
 
@@ -988,6 +1019,8 @@ export interface AdminUserView {
   email: string;
   name: string | null;
   provider: LoginProvider;
+  /** keycloak-auth: «Регистрация», «Приглашение» or «До перехода». */
+  source: UserSource;
   role: UserRole;
   status: 'active' | 'disabled';
   /** When the invite that created the user was issued; null — bootstrap administrator. */
@@ -1012,9 +1045,17 @@ export const createRunnerRequestSchema = z.object({
 });
 export type CreateRunnerRequest = z.input<typeof createRunnerRequestSchema>;
 
-/** PATCH /api/runners/:id → 200 RunnerView (409 name_taken, 404). */
-export const renameRunnerRequestSchema = z.object({ name: z.string().trim().min(1).max(64) });
-export type RenameRunnerRequest = z.input<typeof renameRunnerRequestSchema>;
+/**
+ * PATCH /api/runners/:id → 200 RunnerDetail (409 name_taken, 404). `defaultDir` — the machine's default folder (session-folder):
+ * the machine must be online (409 runner_offline), the path of its OS (400 invalid_path) and an existing folder (422 cwd_not_found).
+ */
+export const patchRunnerRequestSchema = z
+  .object({
+    name: z.string().trim().min(1).max(64).optional(),
+    defaultDir: localPathSchema.optional(),
+  })
+  .refine(b => b.name !== undefined || b.defaultDir !== undefined, 'name or defaultDir is required');
+export type PatchRunnerRequest = z.input<typeof patchRunnerRequestSchema>;
 
 /**
  * POST /api/runners/:id/enroll-code (body `{}`) → 200 EnrollCodeResponse: «Новый код» and «Переподключить». The previous
@@ -1084,7 +1125,7 @@ export interface AgentLatest {
 
 // --- security log (public-access) ---
 
-export type SecurityEventKind = 'login' | 'login_denied' | 'logout_all' | 'runner_connected' | 'runner_disconnected' | 'enroll_code_issued' | 'enroll_code_used';
+export type SecurityEventKind = 'login' | 'login_denied' | 'signup' | 'logout_all' | 'runner_connected' | 'runner_disconnected' | 'enroll_code_issued' | 'enroll_code_used';
 
 export interface SecurityEventView {
   id: string;
@@ -1115,6 +1156,11 @@ export interface SecurityResponse {
 }
 
 /** POST /api/auth/logout-all → 200: every other browser session of the user is deleted, its sockets closed with 4401. */
+/** POST /auth/logout → 200 (keycloak-auth D7): where the browser goes next — the provider logout or `/`. */
+export interface LogoutResponse {
+  redirect: string;
+}
+
 export interface LogoutAllResponse {
   ended: number;
 }
@@ -1608,3 +1654,13 @@ export interface FsUnsupportedResponse {
 }
 /** Headers of 200 of fs/file besides Content-Type: X-File-Kind is an FsFileKind, X-File-Size the size in bytes. */
 export const FS_FILE_HEADERS = { kind: 'x-file-kind', size: 'x-file-size' } as const;
+
+/** Query of fs/download (file-download D4): `probe=1` answers FsDownloadProbe instead of the file. */
+export const fsDownloadQuerySchema = fsFileQuerySchema.extend({ probe: z.enum(['1']).optional() });
+export type FsDownloadQuery = z.infer<typeof fsDownloadQuerySchema>;
+/** 200 of fs/download?probe=1: the file can be downloaded; `name` is the base name of its realpath. */
+export interface FsDownloadProbe {
+  name: string;
+  size: number;
+  mtimeMs: number;
+}

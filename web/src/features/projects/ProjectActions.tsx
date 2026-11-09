@@ -4,15 +4,14 @@ import { PROJECT_COLORS } from '@agent-hub/shared';
 import type { ProjectRef, UserProjectView } from '../../api/types';
 import { api, ApiError } from '../../api/client';
 import { t, useT } from '../../i18n';
-import { useStore } from '../../store';
+import { usableRunner, useStore } from '../../store';
 import { useDialog, useMenu, useMenuPlacement } from '../ui/a11y';
 import { loadSidebar } from '../workspace/actions';
-import { FolderPicker } from '../newSession/FolderPicker';
 import { ProjectPalette } from './ProjectPalette';
+import { ProjectFolderField, folderInvalid } from './ProjectFolderField';
 
 export function projectError(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.code === 'binding_conflict') return t('projects.err.bindingConflict');
     if (error.status === 409) return t('projects.err.nameUsed');
     if (error.status === 404) return t('projects.err.notFound');
     if (error.status === 400) return t('projects.err.badRequest');
@@ -155,17 +154,17 @@ function LoadingProject({ onClose }: { onClose: () => void }) {
 }
 function ProjectDialog({ project, item, mode, total, onClose }: { project: ProjectRef; item: UserProjectView; mode: 'edit' | 'delete'; total: number; onClose: () => void }) {
   const tr = useT();
-  const runners = useStore(s => s.runners);
+  // session-folder D7: the picker and the hint use the first online machine
+  const runner = useStore(s => s.runners.filter(usableRunner).find(r => r.online));
   const [name, setName] = useState(item.name);
   const [description, setDescription] = useState(item.description);
   const [remote, setRemote] = useState(item.remote ?? '');
   const [color, setColor] = useState(item.colorKey);
-  const [paths, setPaths] = useState<Record<string, string>>(Object.fromEntries(item.bindings.map(b => [b.runnerId, b.path])));
-  const [picker, setPicker] = useState<string | null>(null);
+  const [folder, setFolder] = useState(item.folder ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [nameInvalid, setNameInvalid] = useState(false);
-  const [bindingInvalid, setBindingInvalid] = useState(false);
+  const [folderError, setFolderError] = useState<string | undefined>(undefined);
   const ref = useRef<HTMLElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -183,10 +182,11 @@ function ProjectDialog({ project, item, mode, total, onClose }: { project: Proje
       nameRef.current?.focus();
       return;
     }
+    if (mode === 'edit' && folderInvalid(folder)) return;
     setBusy(true);
     setError('');
     setNameInvalid(false);
-    setBindingInvalid(false);
+    setFolderError(undefined);
     try {
       if (mode === 'delete') await api.deleteCatalogProject(item.id);
       else
@@ -195,16 +195,14 @@ function ProjectDialog({ project, item, mode, total, onClose }: { project: Proje
           colorKey: color,
           description,
           remote: remote.trim() || null,
-          bindings: Object.entries(paths)
-            .filter(([id, path]) => path.trim() !== (item.bindings.find(b => b.runnerId === id)?.path ?? ''))
-            .map(([runnerId, path]) => ({ runnerId, path: path.trim() || null })),
+          folder: folder.trim() || null,
         });
     } catch (failure) {
       setError(projectError(failure));
-      const invalidName = failure instanceof ApiError && failure.status === 409 && failure.code !== 'binding_conflict';
+      const invalidName = failure instanceof ApiError && failure.status === 409;
       setNameInvalid(invalidName);
       if (invalidName) setTimeout(() => nameRef.current?.focus(), 0);
-      setBindingInvalid(failure instanceof ApiError && (failure.code === 'binding_conflict' || failure.status === 400));
+      if (failure instanceof ApiError && failure.status === 400) setFolderError(projectError(failure));
       setBusy(false);
       return;
     }
@@ -214,15 +212,7 @@ function ProjectDialog({ project, item, mode, total, onClose }: { project: Proje
   }
   return createPortal(
     <div className="scrim" role="presentation">
-      <section
-        className="modal project-editor"
-        role="dialog"
-        aria-modal="true"
-        aria-hidden={picker !== null}
-        aria-busy={busy}
-        aria-label={mode === 'edit' ? tr('projects.actions.edit') : tr('projects.actions.delete')}
-        ref={ref}
-      >
+      <section className="modal project-editor" role="dialog" aria-modal="true" aria-busy={busy} aria-label={mode === 'edit' ? tr('projects.actions.edit') : tr('projects.actions.delete')} ref={ref}>
         <header className="modal-head">
           <h2>{mode === 'edit' ? tr('projects.actions.edit') : tr('projects.actions.delete')}</h2>
           <button type="button" className="icon-btn" aria-label={tr('projects.dialog.close')} disabled={busy} onClick={onClose}>
@@ -284,32 +274,7 @@ function ProjectDialog({ project, item, mode, total, onClose }: { project: Proje
                   {tr('projects.dialog.remote')}
                   <input className="input" maxLength={2000} value={remote} onChange={event => setRemote(event.target.value)} />
                 </label>
-                <fieldset>
-                  <legend>{tr('projects.dialog.folders')}</legend>
-                  {Array.from(new Set([...runners.map(r => r.id), ...Object.keys(paths)])).map(id => (
-                    <div className="project-binding" key={id}>
-                      <label htmlFor={`binding-${id}`}>{runners.find(r => r.id === id)?.name ?? id}</label>
-                      <div className="folder-path-row">
-                        <input
-                          id={`binding-${id}`}
-                          className="input mono"
-                          aria-invalid={bindingInvalid}
-                          aria-describedby={bindingInvalid ? 'project-edit-error' : undefined}
-                          value={paths[id] ?? ''}
-                          onChange={event => setPaths({ ...paths, [id]: event.target.value })}
-                        />
-                        <button type="button" className="btn" disabled={!runners.find(r => r.id === id)?.online} onClick={() => setPicker(id)}>
-                          {tr('projects.dialog.choose')}
-                        </button>
-                        {paths[id] && (
-                          <button type="button" className="btn" aria-label={tr('projects.dialog.unbindLabel', { id })} onClick={() => setPaths({ ...paths, [id]: '' })}>
-                            {tr('projects.dialog.unbind')}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </fieldset>
+                <ProjectFolderField id="project-folder" value={folder} runner={runner} error={folderError} onChange={setFolder} />
               </>
             )}
           </div>
@@ -328,7 +293,6 @@ function ProjectDialog({ project, item, mode, total, onClose }: { project: Proje
           </footer>
         </form>
       </section>
-      {picker && <FolderPicker runnerId={picker} initialPath={paths[picker] ?? ''} onChoose={path => setPaths({ ...paths, [picker]: path })} onClose={() => setPicker(null)} />}
     </div>,
     document.body,
   );

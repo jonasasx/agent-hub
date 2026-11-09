@@ -252,7 +252,7 @@ export const PEERS_SYSTEM_PROMPT_APPEND =
 
 /** hub-subagents D1: when a task goes to a new hub session and how its result comes back. */
 export const SPAWN_SYSTEM_PROMPT_APPEND =
-  'The session_spawn tool starts a new hub session with a task: another vendor (provider: claude or codex), another machine (machine, and then cwd too), long independent work in its own window, or when the user asks for it. ' +
+  'The session_spawn tool starts a new hub session with a task: another vendor (provider: claude or codex), another machine (machine; the session starts in the project folder on that machine), long independent work in its own window, or when the user asks for it. ' +
   'Give a short subtask on the same machine to the built-in Agent. The call returns immediately; the hub itself sends the result of every turn of the child session as a <peer-message kind="report"> message, so there is no need to wait or poll. Read the text of the result: the subagent may have refused or asked a question, in which case answer it; do not tell the user that the work is in progress unless the result confirms it. To continue the task, use session_send with its sessionId.';
 
 function ruleKey(toolName: string, ruleContent?: string): string {

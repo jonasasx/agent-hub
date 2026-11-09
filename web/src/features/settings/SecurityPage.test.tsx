@@ -62,6 +62,30 @@ describe('SecurityPage', () => {
     expect(screen.getByRole('button', { name: 'Выйти на всех устройствах' })).toBeDisabled();
   });
 
+  it('keycloak-auth D5: «Управление входом» opens the provider account page; a single-provider login is named by the hub', async () => {
+    const me = { user: { id: 'u1', email: 'a@b.c', role: 'user' as const, name: null, provider: 'oidc' as const }, vapidPublicKey: null, voiceInput: false, voiceTalk: false, locale: null };
+    useStore.setState({ auth: { kind: 'signed_in', me: { ...me, accountUrl: 'https://id.example/realms/agent-hub/account', singleProvider: 'Agent Hub ID' } } });
+    const body = data(1);
+    body.events = [
+      { id: 'e5', kind: 'login', at: '2026-10-27T06:15:00Z', ip: null, userAgent: null, provider: 'oidc', runner: null },
+      { ...body.events[0]!, id: 'e6', kind: 'signup', runner: null },
+    ];
+    mockFetch({ 'GET /api/security': () => ({ status: 200, body }) });
+    render(<SecurityPage />);
+    const link = screen.getByRole('link', { name: 'Управление входом' });
+    expect(link).toHaveAttribute('href', 'https://id.example/realms/agent-hub/account');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(await screen.findByText('Вход через Agent Hub ID')).toBeInTheDocument();
+    expect(screen.getByText('Регистрация')).toBeInTheDocument();
+  });
+
+  it('no «Управление входом» without an account page', async () => {
+    mockFetch({ 'GET /api/security': () => ({ status: 200, body: data(1) }) });
+    render(<SecurityPage />);
+    await screen.findByText('Журнал за 90 дней');
+    expect(screen.queryByRole('link', { name: 'Управление входом' })).not.toBeInTheDocument();
+  });
+
   it('a load error offers «Повторить»', async () => {
     mockFetch({ 'GET /api/security': () => ({ status: 500, body: {} }) });
     render(<SecurityPage />);

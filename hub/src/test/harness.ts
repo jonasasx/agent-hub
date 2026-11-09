@@ -13,7 +13,14 @@ import { addRunner, issueRunnerToken } from '../runners/repo.js';
 import { MemoryStore, type ObjectStore } from '../storage/objectStore.js';
 
 export const PUBLIC_URL = 'https://agents.test.example';
-export const ALLOWED_EMAIL = 'jonasasx@gmail.com';
+export const ALLOWED_EMAIL = 'alice@example.com';
+
+/** `hint` — single-provider mode only: the login button `?hint=<id>` (keycloak-auth D5). */
+export interface LoginOpts {
+  provider?: 'google' | 'keycloak';
+  invite?: string;
+  hint?: string;
+}
 
 export interface TestHub {
   hub: Hub;
@@ -28,12 +35,9 @@ export interface TestHub {
   /** ws://127.0.0.1:<port> */
   wsBase: string;
   /** Runs the full OIDC login and returns the session cookie value. */
-  login(identity?: Partial<FakeIdentity>, opts?: { provider?: 'google' | 'keycloak'; invite?: string }): Promise<string>;
+  login(identity?: Partial<FakeIdentity>, opts?: LoginOpts): Promise<string>;
   /** The same login, returning the callback response (denied logins). */
-  loginResponse(
-    identity?: Partial<FakeIdentity>,
-    opts?: { provider?: 'google' | 'keycloak'; invite?: string },
-  ): Promise<{ statusCode: number; body: string; headers: Record<string, unknown>; session: string | undefined }>;
+  loginResponse(identity?: Partial<FakeIdentity>, opts?: LoginOpts): Promise<{ statusCode: number; body: string; headers: Record<string, unknown>; session: string | undefined }>;
   /** Creates a runner owned by the allowed user and returns its token. */
   addRunner(id: string, name?: string): Promise<string>;
   close(): Promise<void>;
@@ -58,25 +62,32 @@ export async function startTestHub(
     store?: ObjectStore;
     /** Change multi-user: a second fake provider as Keycloak. */
     keycloak?: boolean;
+    /** Change keycloak-auth: one provider (OIDC_ISSUER) instead of Google; users get `provider='oidc'`. */
+    single?: boolean;
     /** Rate limits of the spec (default: raised — many logins from 127.0.0.1 in one test file). */
     limits?: Partial<Record<keyof typeof LIMITS, number>> | 'spec';
-  } & Pick<HubDeps, 'listenClientFactory' | 'listenRetryBaseMs' | 'uiPingIntervalMs' | 'sessions' | 'ops' | 'projects' | 'voice' | 'limitsProbe' | 'mcp' | 'mcpRegistry' | 'peers' | 'files'> = {},
+  } & Pick<
+    HubDeps,
+    'listenClientFactory' | 'listenRetryBaseMs' | 'uiPingIntervalMs' | 'sessions' | 'ops' | 'projects' | 'voice' | 'limitsProbe' | 'mcp' | 'mcpRegistry' | 'peers' | 'files' | 'push'
+  > = {},
 ): Promise<TestHub> {
   const tdb = await createTestDb();
   const store = opts.store ?? new MemoryStore();
-  const oidc = await startFakeOidc();
+  const oidc = await startFakeOidc({ endSession: opts.single === true });
   const keycloak = opts.keycloak ? await startFakeOidc() : null;
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_URL,
     DATABASE_URL: tdb.url,
     COOKIE_SECRET: 'test-cookie-secret-0123456789abcdef0123',
-    OIDC_ISSUER: oidc.issuer,
-    OIDC_CLIENT_ID: oidc.clientId,
-    OIDC_CLIENT_SECRET: oidc.clientSecret,
+    ...(opts.single
+      ? { OIDC_ISSUER: oidc.issuer, OIDC_CLIENT_ID: oidc.clientId, OIDC_CLIENT_SECRET: oidc.clientSecret }
+      : { OIDC_GOOGLE_ISSUER: oidc.issuer, OIDC_GOOGLE_CLIENT_ID: oidc.clientId, OIDC_GOOGLE_CLIENT_SECRET: oidc.clientSecret }),
     OIDC_ALLOWED_EMAILS: ALLOWED_EMAIL,
     WEB_DIST_DIR: '/nonexistent-web-dist',
     LOG_LEVEL: 'silent',
+    // the model classifier waits for a real agent; tests that need it turn it on
+    PROJECT_CLASSIFIER_ENABLED: 'false',
     AGENT_DIST_DIR: '/nonexistent-agent-release',
     INSTALLERS_DIR: '/nonexistent-installers',
     ...(keycloak ? { OIDC_KEYCLOAK_ISSUER: keycloak.issuer, OIDC_KEYCLOAK_LABEL: 'Acme', OIDC_KEYCLOAK_CLIENT_ID: keycloak.clientId, OIDC_KEYCLOAK_CLIENT_SECRET: keycloak.clientSecret } : {}),
@@ -91,7 +102,7 @@ export async function startTestHub(
     db: tdb.db,
     // change i18n D10: the existing tests check Russian texts
     defaultLocale: 'ru',
-    oidc: createOidcClient({ issuer: config.OIDC_GOOGLE_ISSUER, clientId: config.OIDC_GOOGLE_CLIENT_ID, clientSecret: config.OIDC_GOOGLE_CLIENT_SECRET }),
+    oidc: createOidcClient({ issuer: oidc.issuer, clientId: oidc.clientId, clientSecret: oidc.clientSecret }),
     ...(keycloak ? { oidcKeycloak: createOidcClient({ issuer: keycloak.issuer, clientId: keycloak.clientId, clientSecret: keycloak.clientSecret }) } : {}),
     limits,
     ...(opts.agentGateway ? { agentGateway: opts.agentGateway } : {}),
@@ -105,6 +116,7 @@ export async function startTestHub(
     ...(opts.mcpRegistry ? { mcpRegistry: opts.mcpRegistry } : {}),
     ...(opts.peers ? { peers: opts.peers } : {}),
     ...(opts.files ? { files: opts.files } : {}),
+    ...(opts.push ? { push: opts.push } : {}),
     // subscription-limits: no scheduler timer (and no probes on hello) unless a test asks; tests call limits.tick()
     limitsProbe: { tickMs: 0, jitterMs: 0, ...opts.limitsProbe },
     store,
@@ -118,9 +130,15 @@ export async function startTestHub(
   const port = (hub.app.server.address() as AddressInfo).port;
   const loginResponse: TestHub['loginResponse'] = async (identity = {}, o = {}) => {
     const q = new URLSearchParams({ return: '/s/abc' });
-    // /auth/login without a provider is the choice page: Google unless an invite decides
-    const asked = o.provider ?? (!o.invite ? 'google' : undefined);
-    if (asked) q.set('provider', asked);
+    if (config.singleProvider) {
+      // keycloak-auth D5: the main button of the login page, or a hint button
+      if (o.hint) q.set('hint', o.hint);
+      else q.set('provider', 'oidc');
+    } else {
+      // /auth/login without a provider is the choice page: Google unless an invite decides
+      const asked = o.provider ?? (!o.invite ? 'google' : undefined);
+      if (asked) q.set('provider', asked);
+    }
     if (o.invite) q.set('invite', o.invite);
     const start = await hub.app.inject({ method: 'GET', url: `/auth/login?${q.toString()}` });
     const oidcCookie = cookieValue(start.headers['set-cookie'], 'ah_oidc');

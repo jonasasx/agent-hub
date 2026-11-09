@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { EventsPage, SessionView, SidebarResponse } from '@agent-hub/shared';
+import { MAX_TABS } from '@agent-hub/shared';
 import { PUBLIC_URL, agentSend, autoReply, connectFakeAgent, connectUi, startTestHub, waitFor, type FakeAgent, type TestHub } from '../test/harness.js';
 
 const VAULT = 'C:\\Users\\alice\\vault';
@@ -58,7 +59,7 @@ describe('sessions API (integration)', () => {
   const tokenFor = async (id: string) => tokens.get(id)!;
 
   async function newSession(prompt = 'Скажи, на какой машине ты работаешь: выполни hostname', extra: Record<string, unknown> = {}): Promise<SessionView> {
-    const r = await api('POST', '/api/sessions', { runnerId: 'hp', cwd: VAULT, model: 'haiku', prompt, ...extra });
+    const r = await api('POST', '/api/sessions', { runnerId: 'hp', model: 'haiku', prompt, ...extra });
     expect(r.statusCode).toBe(201);
     return r.json() as SessionView;
   }
@@ -71,6 +72,8 @@ describe('sessions API (integration)', () => {
     cookie = await t.login();
     cookieUser = ((await api('GET', '/api/me')).json() as { user: { id: string } }).user.id;
     agent = await startAgent();
+    // session-folder: a session without a project starts in the machine's default folder
+    await t.tdb.pool.query(`UPDATE runners SET default_dir = $1 WHERE id = 'hp'`, [VAULT]);
     ui = connectUi(t.wsBase, cookie);
     await ui.open;
   });
@@ -89,7 +92,10 @@ describe('sessions API (integration)', () => {
     });
 
     it('Несуществующий каталог: 422 cwd_not_found with the machine name, no session', async () => {
-      const r = await api('POST', '/api/sessions', { runnerId: 'hp', cwd: 'C:\\nope', model: 'haiku', prompt: 'x' });
+      await t.tdb.pool.query(`UPDATE runners SET default_dir = 'C:\\nope' WHERE id = 'hp'`);
+      // a client cwd is ignored: the folder is the hub's
+      const r = await api('POST', '/api/sessions', { runnerId: 'hp', cwd: VAULT, model: 'haiku', prompt: 'x' });
+      await t.tdb.pool.query(`UPDATE runners SET default_dir = $1 WHERE id = 'hp'`, [VAULT]);
       expect(r.statusCode).toBe(422);
       expect(r.json()).toEqual({ error: 'cwd_not_found', message: 'Каталог не найден на HP' });
       const n = await t.tdb.pool.query(`SELECT count(*)::int AS n FROM sessions`);
@@ -97,7 +103,7 @@ describe('sessions API (integration)', () => {
     });
 
     it('offline runner → 409 runner_offline', async () => {
-      const r = await api('POST', '/api/sessions', { runnerId: 'vm', cwd: '/home/ubuntu', model: 'haiku', prompt: 'x' });
+      const r = await api('POST', '/api/sessions', { runnerId: 'vm', model: 'haiku', prompt: 'x' });
       expect(r.statusCode).toBe(409);
       expect(r.json()).toMatchObject({ error: 'runner_offline', message: 'ВМ .3 не в сети' });
     });
@@ -494,7 +500,7 @@ describe('sessions API (integration)', () => {
       const total = sb.projects[0]!.total;
       const withCron = (await api('GET', '/api/sidebar?cron=1')).json() as SidebarResponse;
       expect(withCron.projects[0]!.total).toBe(total + 1); // the cron session of the read-only test
-      expect(sb.runners.find(r => r.id === 'hp')).toMatchObject({ online: true, vaultRoot: VAULT, homeDir: 'C:\\Users\\alice' });
+      expect(sb.runners.find(r => r.id === 'hp')).toMatchObject({ online: true, defaultDir: VAULT, homeDir: 'C:\\Users\\alice' });
       const more = (await api('GET', '/api/projects/none/sessions?offset=5&limit=100')).json() as { sessions: SessionView[]; total: number };
       expect(more.total).toBe(total);
       expect(more.sessions).toHaveLength(total - 5);
@@ -566,8 +572,8 @@ describe('sessions API (integration)', () => {
       expect((await api('PUT', '/api/layout', { device: 'phone', layout: null, savedLayout: null })).statusCode).toBe(200);
     });
 
-    it('PUT checks the shape (≤4 panes, ≤8 tabs, UUID ids, consistent panes) → 400; a body above 64 KB → 413', async () => {
-      const ids = Array.from({ length: 9 }, () => randomUUID());
+    it('PUT checks the shape (≤4 panes, ≤MAX_TABS tabs, UUID ids, consistent panes) → 400; a body above 64 KB → 413', async () => {
+      const ids = Array.from({ length: MAX_TABS + 1 }, () => randomUUID());
       const bad = [
         { device: 'desktop', layout: ws(ids), savedLayout: null },
         { device: 'desktop', layout: { ...ws([]), panes: { p1: { id: 'p1', tabs: ['not-a-uuid'], active: null } } }, savedLayout: null },
@@ -616,6 +622,15 @@ describe('sessions API (integration)', () => {
       expect((await api('PUT', '/api/layout', { device: 'phone', layout: null, savedLayout: null })).statusCode).toBe(200);
     });
 
+    it('PUT accepts a pane with more than 8 tabs: the strip scrolls instead of evicting (tab-strip-scroll)', async () => {
+      const many = Array.from({ length: 20 }, () => randomUUID());
+      const r = await api('PUT', '/api/layout', { device: 'desktop', layout: ws(many), savedLayout: ws(many) });
+      expect(r.statusCode).toBe(200);
+      expect(r.json()).toMatchObject({ applied: true });
+      expect(((await api('GET', '/api/layout?device=desktop')).json() as { layout: unknown }).layout).toEqual(ws(many));
+      expect((await api('PUT', '/api/layout', { device: 'desktop', layout: null, savedLayout: null })).statusCode).toBe(200);
+    });
+
     it('/api/tabs is gone', async () => {
       expect((await api('GET', '/api/tabs')).statusCode).toBe(404);
       expect((await api('POST', '/api/tabs', { sessionId: randomUUID(), device: 'desktop' })).statusCode).toBe(404);
@@ -624,10 +639,10 @@ describe('sessions API (integration)', () => {
     it('Windows path for the Linux runner and Linux path for the Windows runner → 422 bad_path, no fs.stat', async () => {
       await t.tdb.pool.query(`UPDATE runners SET home_dir = '/home/ubuntu' WHERE id = 'vm'`);
       const stats = got.filter(m => m.type === 'fs.stat').length;
-      const vm = await api('POST', '/api/sessions', { runnerId: 'vm', cwd: 'C:\\Users\\alice\\vault', model: 'haiku', prompt: 'x' });
-      expect(vm.statusCode).toBe(422);
-      expect(vm.json()).toEqual({ error: 'bad_path', message: 'Путь не подходит для Linux: нужен вид /…' });
-      const hp = await api('POST', '/api/sessions', { runnerId: 'hp', cwd: '/home/ubuntu', model: 'haiku', prompt: 'x' });
+      // a default folder of the other OS (a stale value) is refused before the agent is asked
+      await t.tdb.pool.query(`UPDATE runners SET default_dir = '/home/ubuntu' WHERE id = 'hp'`);
+      const hp = await api('POST', '/api/sessions', { runnerId: 'hp', model: 'haiku', prompt: 'x' });
+      await t.tdb.pool.query(`UPDATE runners SET default_dir = $1 WHERE id = 'hp'`, [VAULT]);
       expect(hp.statusCode).toBe(422);
       expect(hp.json()).toEqual({ error: 'bad_path', message: 'Путь не подходит для Windows: нужен вид C:\\…' });
       for (const p of ['\\\\evil\\share', '//evil/share', 'vault']) {
@@ -638,13 +653,13 @@ describe('sessions API (integration)', () => {
       expect((await api('GET', '/api/runners/vm/stat?path=C%3A%5Cw')).json()).toMatchObject({ error: 'bad_path', message: 'Путь не подходит для Linux: нужен вид /…' });
       expect(got.filter(m => m.type === 'fs.stat').length).toBe(stats);
       // Form errors stay 400.
-      expect((await api('POST', '/api/sessions', { runnerId: 'hp', model: 'haiku', prompt: 'x' })).statusCode).toBe(400);
+      expect((await api('POST', '/api/sessions', { model: 'haiku', prompt: 'x' })).statusCode).toBe(400);
     });
 
     it('the agent refusing a path (cmd.error bad_path) → 422 bad_path with the Russian text, not 502', async () => {
       failing.set('fs.stat', 'bad_path');
       try {
-        const r = await api('POST', '/api/sessions', { runnerId: 'hp', cwd: 'C:\\Users\\alice\\vault', model: 'haiku', prompt: 'x' });
+        const r = await api('POST', '/api/sessions', { runnerId: 'hp', model: 'haiku', prompt: 'x' });
         expect(r.statusCode).toBe(422);
         expect(r.json()).toEqual({ error: 'bad_path', message: 'Путь не подходит для Windows: нужен вид C:\\…' });
         const st = await api('GET', `/api/runners/hp/stat?path=${encodeURIComponent('C:\\w')}`);

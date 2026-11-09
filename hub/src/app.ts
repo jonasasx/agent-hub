@@ -13,6 +13,7 @@ import type { Config } from './config.js';
 import type { Db } from './db/db.js';
 import type { OidcClient } from './auth/oidc.js';
 import { registerAuth } from './http/auth.js';
+import { idTokenKey, sealLegacyIdTokens } from './auth/idToken.js';
 import { registerDesktopAuth } from './http/desktopAuth.js';
 import { registerDesktopUpdates } from './http/desktopUpdates.js';
 import { HubBus } from './bus.js';
@@ -24,16 +25,16 @@ import { registerApi } from './http/api.js';
 import { HandoffService } from './sessions/handoff.js';
 import { deleteExpiredSessions } from './auth/sessions.js';
 import { expireHeldMeta } from './subagents/repo.js';
-import { S3Store, type ObjectStore } from './storage/objectStore.js';
+import { createS3Client, S3Store, type ObjectStore } from './storage/objectStore.js';
 import { deleteStalePendingRunners, findRunnerByToken } from './runners/repo.js';
 import { cleanupUploads, registerBlobs } from './http/blobs.js';
 import { registerVoice } from './http/voice.js';
-import { cspProvider } from './http/csp.js';
+import { cspProvider, voiceConnectSources } from './http/csp.js';
+import { registerVoiceTalk } from './http/voiceTalk.js';
 import { ProjectCatalog } from './projects/catalogService.js';
 import { ProjectService, PROJECTS_CHANNEL } from './projects/service.js';
-import { getSession } from './sessions/repo.js';
 import { hashSecret, safeEqual } from './auth/secrets.js';
-import { DiskWatch, renderMetrics, telegramSender, type SendTelegram, type StatFn } from './ops/metrics.js';
+import { diskCheckPeriodMs, DiskWatch, renderMetrics, telegramSender, type SendTelegram, type StatFn } from './ops/metrics.js';
 import { createLimits, trustFn, type HubLimits } from './http/limits.js';
 import { bootstrapAdmins, expireSecurityEvents } from './users/repo.js';
 import { AgentBuild, registerAgentDist } from './runners/agentBuild.js';
@@ -41,13 +42,16 @@ import { registerMultiUser } from './http/multiUser.js';
 import { SubscriptionService } from './subscriptions/service.js';
 import { registerSubscriptionsApi } from './http/subscriptions.js';
 import { LimitsService } from './subscriptions/limits.js';
+import { CodexHomesSync } from './subscriptions/codexHomes.js';
 import { McpService } from './mcp/service.js';
 import { registerMcpApi } from './http/mcp.js';
 import { McpRegistryService, registerMcpRegistryApi } from './mcp/registry.js';
 import { PeersService, type PeersServiceOptions } from './peers/service.js';
 import { registerPeersApi } from './http/peers.js';
+import { registerPushRoutes } from './http/push.js';
+import { PushService } from './push/service.js';
+import { createWebPushSender, isValidVapid, type PushSender } from './push/sender.js';
 import { setKeycloakLabel } from './http/pages.js';
-import { tx } from './texts.js';
 
 export interface HubDeps {
   config: Config;
@@ -85,9 +89,11 @@ export interface HubDeps {
   /** Tests: session peers (session-peers): limits, window, clock. */
   peers?: Partial<Pick<PeersServiceOptions, 'pairLimit' | 'senderLimit' | 'windowMs' | 'now'>>;
   /** Tests: the fetch of the ElevenLabs client (dictation, change voice-input). */
-  voice?: { fetch?: typeof fetch };
+  voice?: { fetch?: typeof fetch; heartbeatMs?: number };
   /** Tests: the language of a request without a header, a profile language or Accept-Language (default en, change i18n D10). */
   defaultLocale?: import('@agent-hub/shared').Locale;
+  /** Tests: the sender of Web Push (a fake instead of web-push) and the clock of the throttle. */
+  push?: { sender?: PushSender; now?: () => number };
   /** Defaults to a pino logger at config.LOG_LEVEL. */
   logger?: boolean | object;
 }
@@ -118,7 +124,7 @@ export interface Hub {
  * the client (index.html points to the new bundles, sw.js carries the new precache, version.json is polled), so they
  * are revalidated on every request. Hashed bundles keep the default header.
  */
-const NO_CACHE_FILES = new Set(['index.html', 'version.json', 'sw.js']);
+const NO_CACHE_FILES = new Set(['index.html', 'version.json', 'sw.js', 'push-sw.js']);
 
 /** Paths the SPA must never answer with index.html. */
 const NON_SPA = /^\/(api|auth|ws|agent-api|agent|enroll|healthz|metrics|mcp)(\/|$)/;
@@ -136,6 +142,9 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
       'subscription.token',
       '*.subscription.token',
       'payload.subscription.token',
+      'req.body.endpoint',
+      'req.body.keys',
+      '*.keys',
       'req.body.callbackUrl',
       'body.callbackUrl',
       'payload.callbackUrl',
@@ -186,6 +195,9 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
   });
   // Requirement: Роли и первичный администратор — before anything reads roles (the vault catalogue is the admins' only).
   await bootstrapAdmins(db, config.OIDC_ALLOWED_EMAILS);
+  // idtoken-at-rest-denied-logout D2: the plaintext id tokens of sessions created before 048 are encrypted (or erased).
+  const sealed = await sealLegacyIdTokens(db, idTokenKey(config.SUBSCRIPTION_TOKEN_KEY));
+  if (sealed > 0) app.log.info({ sealed, encrypted: config.SUBSCRIPTION_TOKEN_KEY !== undefined }, 'legacy id tokens sealed');
   const limits = deps.limits ?? createLimits();
   const trust = trustFn(config.TRUSTED_PROXIES);
   const agentBuild = new AgentBuild(config.AGENT_DIST_DIR || null);
@@ -209,23 +221,24 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
     parseCookie: h => app.parseCookie(h),
     ...(deps.uiPingIntervalMs ? { pingIntervalMs: deps.uiPingIntervalMs } : {}),
     onPresence: (userId, ids) => void sessions.markRead(userId, ids).catch((err: unknown) => app.log.warn({ err }, 'mark read failed')),
+    onHidden: (userId, ids, lateMs) => void sessions.onHidden(userId, ids, lateMs).catch((err: unknown) => app.log.warn({ err }, 'late hide failed')),
   });
-  const store = deps.store ?? (config.S3_BUCKET_DATA ? new S3Store(config.S3_BUCKET_DATA, config.AWS_REGION, config.S3_PREFIX) : undefined);
+  const s3Location = {
+    region: config.AWS_REGION,
+    endpoint: config.S3_ENDPOINT,
+    forcePathStyle: config.S3_FORCE_PATH_STYLE,
+    accessKeyId: config.S3_ACCESS_KEY_ID,
+    secretAccessKey: config.S3_SECRET_ACCESS_KEY,
+  };
+  const store = deps.store ?? (config.S3_BUCKET_DATA ? new S3Store(config.S3_BUCKET_DATA, config.AWS_REGION, config.S3_PREFIX, createS3Client(s3Location)) : undefined);
   if (!store) app.log.warn('S3_BUCKET_DATA is not set: transcripts of other sessions are not replicated');
-  // Legacy project groups and classification (D9, M4): `projects` rows from the database only (catalog-db-session-context).
+  // Legacy `projects` rows (path signals only, single-project-classifier): from the database only (catalog-db-session-context).
   const catalog = new ProjectCatalog({ db, log: app.log.child({ part: 'projects' }) });
   const projects: ProjectService = new ProjectService({
     db,
     catalog,
     log: app.log.child({ part: 'projects' }),
     ...(deps.projects?.debounceMs !== undefined ? { debounceMs: deps.projects.debounceMs } : {}),
-    onDecided: async (sessionId, projectId) => {
-      const row = await getSession(db, sessionId);
-      if (!row) return;
-      const v = await sessions.upsert(sessionId);
-      if (projectId)
-        ui.broadcast(row.user_id, { type: 'toast', kind: 'project_auto', sessionId, title: v.title, ...tx('hub.app.toastProjectAuto', { title: v.title || 'session', project: v.project.title }) });
-    },
     onChanged: async sessionId => {
       await sessions.upsert(sessionId).catch(() => undefined);
     },
@@ -244,7 +257,11 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
   const detection = new CatalogDetection({ db, config, projects, classifier, changed: id => sessions.upsert(id), log: app.log.child({ part: 'projects' }) });
   projects.setCatalogDetection(detection);
   await catalog.load();
+  // single-project-classifier D2: the legacy path projects removed, their sessions evaluated by the catalog.
+  await projects.dropLegacy();
   // claude-subscriptions: the registry of subscriptions (tokens decrypted only to build a command to an agent)
+  // provider-parity R3: Codex homes of retired or re-signed subscriptions are removed on the machines
+  const codexHomes = new CodexHomesSync({ db, bus, agents, log: app.log.child({ part: 'subscriptions' }) });
   const subscriptions = new SubscriptionService({
     db,
     ui,
@@ -252,8 +269,29 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
     key: config.SUBSCRIPTION_TOKEN_KEY,
     connectorsHint: config.SUBSCRIPTION_CONNECTORS_HINT,
     ...(deps.sessions?.now ? { now: deps.sessions.now } : {}),
+    codexHomesChanged: (userId, forget) => void codexHomes.sync(userId, forget),
   });
+  // Web Push (change web-push-notifications D1/D2): off without the full VAPID set
+  if (config.pushIncomplete) app.log.warn('push disabled: incomplete VAPID configuration');
+  const vapid = config.pushEnabled ? { subject: config.VAPID_SUBJECT!, publicKey: config.VAPID_PUBLIC_KEY!, privateKey: config.VAPID_PRIVATE_KEY! } : undefined;
+  // a sender of a test is trusted; the real keys are checked once: a broken set means push is off, not a hub that wipes subscriptions
+  const vapidWorks = vapid !== undefined && (deps.push?.sender !== undefined || isValidVapid(vapid));
+  if (vapid && !vapidWorks) app.log.warn('push disabled: the VAPID keys are not a valid pair or the subject is wrong');
+  const pushEnabled = vapidWorks;
+  const pushSender = deps.push?.sender ?? (pushEnabled && vapid ? createWebPushSender(vapid) : undefined);
+  const push = new PushService({
+    db,
+    ui,
+    agents,
+    log: app.log.child({ part: 'push' }),
+    enabled: pushEnabled,
+    ...(pushSender ? { sender: pushSender } : {}),
+    ...(deps.defaultLocale ? { defaultLocale: deps.defaultLocale } : {}),
+    ...(deps.push?.now ? { now: deps.push.now } : {}),
+  });
+  await push.init();
   const sessions = new SessionService({
+    push,
     subscriptions,
     projects,
     store,
@@ -292,9 +330,12 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
     const user = req.user!;
     return {
       user: { id: user.id, email: user.email, role: user.role, name: user.name, provider: user.provider },
-      vapidPublicKey: config.VAPID_PUBLIC_KEY || null,
+      vapidPublicKey: pushEnabled ? config.VAPID_PUBLIC_KEY || null : null,
       voiceInput: !!config.ELEVENLABS_API_KEY,
+      voiceTalk: config.voiceTalkEnabled,
       locale: user.locale ?? null,
+      accountUrl: config.accountUrl,
+      singleProvider: config.singleProvider ? (config.OIDC_PROVIDER_LABEL ?? 'OIDC') : null,
     };
   });
 
@@ -369,13 +410,20 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
     ...deps.peers,
   });
   registerPeersApi(app, { db });
+  registerPushRoutes(app, { db, push });
   registerBlobs(app, { db, store, sessions });
   registerMultiUser(app, { config, db, bus, agents, ui, limits, build: agentBuild });
   registerVoice(app, { config, ...(deps.voice?.fetch ? { fetch: deps.voice.fetch } : {}) });
+  registerVoiceTalk(app, {
+    config,
+    sessions,
+    ...(deps.voice?.fetch ? { fetch: deps.voice.fetch } : {}),
+    ...(deps.voice?.heartbeatMs ? { heartbeatMs: deps.voice.heartbeatMs } : {}),
+  });
 
   // Content-Security-Policy for the web app (D19): own scripts (plus the inline theme script by its hash), Google Fonts,
   // images from the hub and blob:/data: previews only — a Markdown image with an external URL is not loaded.
-  const csp = cspProvider(config.publicOrigins, config.WEB_DIST_DIR);
+  const csp = cspProvider(config.publicOrigins, config.WEB_DIST_DIR, config.voiceTalkEnabled ? voiceConnectSources(config.ELEVENLABS_API_URL) : []);
   app.addHook('onSend', async (_req, reply, payload) => {
     const type = String(reply.getHeader('content-type') ?? '');
     if (type.startsWith('text/html') && !reply.getHeader('content-security-policy')) {
@@ -422,7 +470,10 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
     log: app.log.child({ part: 'alerts' }),
   });
   const diskCheck = () => disk.tick().catch((err: unknown) => app.log.warn({ err }, 'disk check failed'));
-  const diskEvery = deps.ops?.diskCheckMs ?? 10 * 60_000;
+  const diskEvery = diskCheckPeriodMs({ dataPath: config.DATA_VOLUME_PATH, periodMs: deps.ops?.diskCheckMs ?? 10 * 60_000, injectedStat: Boolean(deps.ops?.stat) });
+  if (diskEvery === 0 && !deps.ops?.stat && deps.ops?.diskCheckMs !== 0) {
+    app.log.info({ path: config.DATA_VOLUME_PATH }, 'disk monitor disabled: the data volume is not mounted');
+  }
   const diskTimer = diskEvery > 0 ? setInterval(() => void diskCheck(), diskEvery) : null;
   diskTimer?.unref();
 
@@ -560,6 +611,7 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
     async close() {
       closing = true;
       sessions.close();
+      push.close();
       sessions.replication?.close();
       clearInterval(merge);
       projects.stop();

@@ -14,12 +14,10 @@ import type { UiSocket } from '../../api/uiSocket';
 import { projectKey, useStore, type ChatLog, type PendingResume } from '../../store';
 import * as L from '../layout/layout';
 import { useFiles } from '../files/filesStore';
-import { baseName } from '../files/paths';
 import { parseSnapshot, readWindow, toIso, toMs, writeWindow } from './windowState';
 import { projectItems } from '../projects/projects';
 import { draftArrived } from '../fork/drafts';
 import { providerLoginArrived } from '../machines/ProviderLogin';
-import { subTitle } from '../subagents/model';
 import { loadSubscriptions } from '../subscriptions/actions';
 import { loadLimits } from '../limits/actions';
 import { handleMcpMessage } from '../mcp/actions';
@@ -332,32 +330,6 @@ function clearUnread(sid: string) {
   if (s?.unread) get().upsertSessions([{ ...s, unread: false }]);
 }
 
-/** The toast names the evicted session; a card not loaded yet is fetched first (UI review M3b). */
-function evictToast(sid: string) {
-  if (L.isFileTab(sid)) {
-    const f = L.parseFileTabId(sid);
-    get().pushToast({ title: t('workspace.actions.tabRemoved'), text: t('workspace.actions.evictFile', { name: f ? baseName(f.path) : '' }), color: 'var(--accent)' });
-    return;
-  }
-  // a subagent tab: its title from the registry, no session card fetch, and it is not in the left panel
-  if (get().tabKinds[sid] === 'subagent') {
-    const v = get().subagents[sid];
-    const title = v ? subTitle(v) : t('workspace.actions.subagent');
-    get().pushToast({ title: t('workspace.actions.tabRemoved'), text: t('workspace.actions.evictSubagent', { title }), color: 'var(--accent)' });
-    return;
-  }
-  const show = (title: string) => get().pushToast({ title: t('workspace.actions.tabRemoved'), text: t('workspace.actions.evictSession', { title }), color: 'var(--accent)' });
-  const known = get().sessions[sid]?.title;
-  if (known) return show(known);
-  api.session(sid).then(
-    s => {
-      get().upsertSessions([s]);
-      show(s.title);
-    },
-    () => show(get().sessions[sid]?.title ?? t('workspace.actions.session')),
-  );
-}
-
 /** A file tab that left the window (closed, evicted, replaced) takes its pin and its session with it. */
 function forgetLostFileTabs(before: L.Workspace, after: L.Workspace) {
   const kept = new Set(L.allTabs(after));
@@ -369,38 +341,19 @@ function forgetLostFileTabs(before: L.Workspace, after: L.Workspace) {
   }
 }
 
-function tabsFullToast() {
-  get().pushToast({ title: t('workspace.actions.tabsFull'), text: '', color: 'var(--warn)' });
-}
-
 /**
- * Applies a change that may add tab `sid` to the window under the 8-tab limit of this window (eviction by the
- * window's `openedAt`; active tabs of the layout and of «Одно окно» are kept). Returns false when the tab could not be
- * opened (all other tabs are active in panes).
+ * Applies a change that may add tab `sid` to the window. The window has no tab limit (spec tab-strip: Вкладки без
+ * лимита): nothing is evicted, the tab always opens.
  */
-function commitWithTab(next: L.Workspace, sid: string, wasTab: boolean, extra: Partial<ReturnType<typeof useStore.getState>> = {}): boolean {
+function commitWithTab(next: L.Workspace, sid: string, extra: Partial<ReturnType<typeof useStore.getState>> = {}): void {
   const openedAt = { ...get().openedAt, [sid]: Date.now() };
-  let ws = next;
-  let evicted: string | null = null;
-  if (!wasTab) {
-    const lim = L.enforceLimit(next, sid, openedAt, get().ws, new Set(useFiles.getState().pinned));
-    if (lim.full) {
-      tabsFullToast();
-      return false;
-    }
-    ws = lim.ws;
-    evicted = lim.evicted;
-  }
-  if (evicted) delete openedAt[evicted];
   const before = get().ws;
-  set({ ws, openedAt, ...extra });
-  forgetLostFileTabs(before, ws);
-  if (evicted) evictToast(evicted);
+  set({ ws: next, openedAt, ...extra });
+  forgetLostFileTabs(before, next);
   if (!L.isFileTab(sid)) {
     clearUnread(sid);
     ensureLog(sid);
   }
-  return true;
 }
 
 /**
@@ -574,9 +527,8 @@ export function openSubagent(v: SubagentView | string): void {
     set({ modal: null, inChat: true });
     return;
   }
-  const wasTab = L.allTabs(get().ws).includes(id);
   set({ modal: null });
-  commitWithTab(L.openSession(get().ws, id), id, wasTab, { inChat: true });
+  commitWithTab(L.openSession(get().ws, id), id, { inChat: true });
   void ensureSubagent(id);
   ensureLog(id);
 }
@@ -606,9 +558,8 @@ export function openSession(sid: string): void {
     set({ modal: null, inChat: true });
     return;
   }
-  const wasTab = L.allTabs(get().ws).includes(sid);
   set({ modal: null });
-  commitWithTab(L.openSession(get().ws, sid), sid, wasTab, { inChat: true });
+  commitWithTab(L.openSession(get().ws, sid), sid, { inChat: true });
 }
 
 /** Closing a tab does not stop the session and does not touch other windows. */
@@ -631,7 +582,8 @@ export function activateTab(pid: string, sid: string) {
  * replaces the previous preview, a double click (or `pin`) keeps the tab; a file open already is activated, not
  * duplicated. `sessionId` is the session whose folder the file was opened from (the hub reads by its folder).
  */
-export function openFileTab(runnerId: string, path: string, opts: { pin?: boolean; sessionId?: string } = {}): void {
+/** `beside` — the pane of a chat the file is opened from: the file goes to another pane when there is one. */
+export function openFileTab(runnerId: string, path: string, opts: { pin?: boolean; sessionId?: string; beside?: string } = {}): void {
   const id = L.fileTabId(runnerId, path);
   const files = useFiles.getState();
   if (loading) {
@@ -653,9 +605,9 @@ export function openFileTab(runnerId: string, path: string, opts: { pin?: boolea
     const pinned = new Set(files.pinned);
     for (const t of L.allTabs(ws0)) if (L.isFileTab(t) && !pinned.has(t)) ws = L.closeTab(ws, t);
   }
+  if (opts.beside && ws.panes[opts.beside]) ws = L.focusPane(ws, L.paneBeside(ws, opts.beside));
   set({ modal: null });
-  // the pin and the session are kept only for a tab that really opened (the limit may refuse it)
-  if (!commitWithTab(L.openSession(ws, id), id, false, { inChat: true })) return;
+  commitWithTab(L.openSession(ws, id), id, { inChat: true });
   if (opts.sessionId) files.rememberSession(id, opts.sessionId);
   if (opts.pin) files.pin(id);
 }
@@ -674,17 +626,15 @@ export function focusPane(pid: string) {
 export function dropToPane(sid: string, pid: string, beforeSid: string | null) {
   // the panes of the loading layout are not known yet: the drop becomes an opening
   if (queueWhileLoading(sid)) return;
-  const wasTab = L.allTabs(get().ws).includes(sid);
-  commitWithTab(L.moveToPane(get().ws, sid, pid, beforeSid), sid, wasTab);
+  commitWithTab(L.moveToPane(get().ws, sid, pid, beforeSid), sid);
 }
 
 export function dropSplit(sid: string, pid: string, zone: Exclude<L.Zone, 'center'>) {
   if (queueWhileLoading(sid)) return;
-  const wasTab = L.allTabs(get().ws).includes(sid);
   const r = L.split(get().ws, sid, pid, zone);
   if (r.error === 'nothing_to_split') return get().pushToast({ title: t('workspace.actions.nothingToSplit'), text: t('workspace.actions.nothingToSplitHint') });
   if (r.error === 'pane_limit') return get().pushToast({ title: t('workspace.layout.paneLimit'), text: t('workspace.actions.paneLimitHint') });
-  commitWithTab(r.ws, sid, wasTab);
+  commitWithTab(r.ws, sid);
 }
 
 export function closePane(pid: string) {
@@ -1072,7 +1022,8 @@ export function openFork(sid: string, sourceId: string, right: boolean): void {
   const src = L.paneOf(ws, sourceId);
   if (right && device === 'desktop' && src && L.leaves(ws.layout).length < 4 && !L.allTabs(ws).includes(sid)) {
     const r = L.split(ws, sid, src.id, 'right');
-    if (!r.error && commitWithTab(r.ws, sid, false, { inChat: true, modal: null })) {
+    if (!r.error) {
+      commitWithTab(r.ws, sid, { inChat: true, modal: null });
       ensureLog(sid);
       return;
     }
@@ -1114,6 +1065,18 @@ export async function createSession(body: CreateSessionRequest & { attachments?:
 let socket: UiSocket | null = null;
 let lastSubscribe = '';
 let lastPresence = '';
+/** When the window lost focus or the tab got hidden (change push-voice-fixes): Android reports the hiding seconds late. */
+let hiddenSince: number | null = null;
+
+/** The window lost focus (blur) or the tab got hidden: the earliest of them since the last focus counts. */
+export function noteHidden(at = Date.now()) {
+  if (hiddenSince === null) hiddenSince = at;
+}
+
+/** The window got focus or the tab is visible again. */
+export function noteShown() {
+  hiddenSince = null;
+}
 
 /** Sessions whose chat is on screen: active tab of every pane on desktop, of the focused pane on the phone. */
 export function visibleSessionIds(): string[] {
@@ -1145,9 +1108,12 @@ export function syncSocket(force = false) {
     lastSubscribe = sub;
   }
   const visible = typeof document === 'undefined' || document.visibilityState !== 'hidden';
+  if (visible) noteShown();
+  else noteHidden();
   const pres = JSON.stringify([visible, sessionIds]);
   if (force || pres !== lastPresence) {
-    socket.send({ type: 'presence', visible, activeSessionIds: visible ? sessionIds : [] });
+    if (visible) socket.send({ type: 'presence', visible, activeSessionIds: sessionIds });
+    else socket.send({ type: 'presence', visible, activeSessionIds: [], hiddenForMs: Math.min(Math.max(0, Date.now() - (hiddenSince ?? Date.now())), 600_000) });
     lastPresence = pres;
   }
 }

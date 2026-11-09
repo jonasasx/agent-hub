@@ -74,6 +74,8 @@ export default {
   'machines.enroll.path1': '1. 名称和系统',
   'machines.enroll.path2': '2. 命令',
   'machines.enroll.path3': '3. 连接',
+  'machines.enroll.path4': '4. MCP',
+  'machines.enroll.mcpTitle': '该机器的 MCP 服务器',
   'machines.enroll.nameLabel': '机器名称',
   'machines.enroll.nameHint': '之后可在「设置 → 机器」中修改。',
   'machines.enroll.osLabel': '系统',
@@ -97,4 +99,9 @@ export default {
   'machines.enroll.macTitle': '无法访问 macOS 受保护的文件夹。',
   'machines.enroll.macBefore': '代理无法读取 ~/Documents、~/Desktop 和 ~/Downloads。请打开「系统设置 → 隐私与安全性 → 完全磁盘访问权限」并添加',
   'machines.enroll.macAfter': '。这些文件夹之外的目录（例如 ~/code）无需设置即可使用。',
+  'machines.defaultDir.label': '默认文件夹',
+  'machines.defaultDir.change': '更改…',
+  'machines.defaultDir.hint': '此机器上的会话从这里启动；项目文件夹相对于它设置。',
+  'machines.defaultDir.failed': '无法更改默认文件夹',
+  'machines.menu.defaultDir': '默认文件夹…',
 } satisfies Dict;

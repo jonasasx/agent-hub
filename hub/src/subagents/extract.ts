@@ -57,15 +57,17 @@ export type Fact =
   /** 7. SubagentStop / TeammateIdle hook in a subagent file */
   | { t: 'hook'; agentId: string; state: 'completed' | 'idle'; ts: Date | null }
   /** 8. a background command started (Bash/PowerShell run_in_background) or a monitor (Monitor): its tool result names the task */
-  | { t: 'bgstart'; toolUseId: string; taskId: string; kind: BgKind; timeoutMs: number | null; persistent: boolean; ts: Date | null }
+  | { t: 'bgstart'; toolUseId: string; taskId: string; kind: BgKind; timeoutMs: number | null; persistent: boolean; ownerAgentId: string | null; ts: Date | null }
   /** 9. the call of a background command or a monitor (change `background-tasks` D2): its metadata, a `pending` row */
-  | { t: 'bgcall'; toolUseId: string; kind: BgKind; description: string | null; command: string | null; ts: Date | null }
+  | { t: 'bgcall'; toolUseId: string; kind: BgKind; description: string | null; command: string | null; timeoutMs: number | null; persistent: boolean; ownerAgentId: string | null; ts: Date | null }
   /** 10. TaskStop stopped a task (D4) */
   | { t: 'bgstop'; taskId: string; ts: Date | null }
   /** 11. an event of a monitor (D3): a <task-notification> without a status */
   | { t: 'bgevent'; taskId: string; text: string; ts: Date | null }
   /** 12. the monitor's own notice of its timeout («[Monitor expired after 3m …]», QA 2026-10-29) */
-  | { t: 'bgexpire'; taskId: string; ts: Date | null };
+  | { t: 'bgexpire'; taskId: string; ts: Date | null }
+  /** 13. the result of a call is an error: a call that never started a task (an invalid Monitor, a denied Bash) */
+  | { t: 'bgfail'; toolUseId: string; ts: Date | null };
 
 export type BgKind = 'bash' | 'monitor';
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
@@ -97,11 +99,23 @@ export function promptSha(prompt: string | null): Buffer | null {
 /** «Command running in background with ID: <id>.» — the tool result of a run_in_background command. */
 const BG_STARTED = /^Command running in background with ID: ([\w-]+)/;
 
+/** «Command did not complete within its 600s timeout and was moved to the background (ID: <id>).» — a foreground command auto-backgrounded. */
+const BG_MOVED = /^Command did not complete within its \d+\w* timeout and was moved to the background \(ID: ([\w-]+)\)/;
+
 const NOTIFY = /<task-notification>([\s\S]*?)<\/task-notification>/g;
 const tag = (body: string, name: string) => new RegExp(`<${name}>([^<]*)</${name}>`).exec(body)?.[1]?.trim() ?? null;
 
 /** «Monitor started (task <id>, expires in …)» — the tool result of a Monitor call (when toolUseResult is not there). */
 const MONITOR_STARTED = /^Monitor started \(task ([\w-]+)/;
+
+/** «… expires in 30m unless the source ends first» — the timeout of a monitor in the text of its result. */
+const MONITOR_EXPIRES = /expires in (\d+)(ms|s|m|h)\b/;
+const UNIT_MS: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 };
+
+function monitorTimeoutOfText(text: string): number | null {
+  const m = MONITOR_EXPIRES.exec(text);
+  return m ? Number(m[1]) * UNIT_MS[m[2]!]! : null;
+}
 
 /** The event Claude Code sends when a monitor times out: the end of the monitor, not an event of its command. */
 const MONITOR_EXPIRED = /^\[Monitor expired after /;
@@ -159,6 +173,8 @@ export function teammateName(agentId: string): string | null {
 export function scanLines(ctx: FileCtx, lines: Array<{ lineNo: number; obj: Record<string, unknown> | null }>): Fact[] {
   const facts: Fact[] = [];
   const parent = ctx.kind === 'subagent' ? ctx.agentIdOfFile : null;
+  // foreground shell calls of this chunk: their metadata when Claude Code moves one to the background
+  const shellCalls = new Map<string, { description: string | null; command: string | null; ts: Date | null }>();
   for (const { lineNo, obj } of lines) {
     if (!obj) continue;
     const ts = tsOf(obj);
@@ -199,7 +215,25 @@ export function scanLines(ctx: FileCtx, lines: Array<{ lineNo: number; obj: Reco
         const bgKind: BgKind | null = b.name === 'Monitor' ? 'monitor' : SHELL_TOOLS.has(b.name) && b.input?.run_in_background === true ? 'bash' : null;
         if (bgKind) {
           const command = str(b.input?.command);
-          facts.push({ t: 'bgcall', toolUseId: b.id, kind: bgKind, description: str(b.input?.description), command: command ? command.slice(0, BG_COMMAND_MAX) : null, ts });
+          // its own timeout (ms) for the safety net of the sweep: `timeout` of a command, `timeout_ms` of a monitor (its result may repeat it)
+          const timeout = num(bgKind === 'bash' ? b.input?.timeout : b.input?.timeout_ms);
+          const timeoutMs = timeout !== null && timeout > 0 ? timeout : null;
+          facts.push({
+            t: 'bgcall',
+            toolUseId: b.id,
+            kind: bgKind,
+            description: str(b.input?.description),
+            command: command ? command.slice(0, BG_COMMAND_MAX) : null,
+            timeoutMs,
+            persistent: bgKind === 'monitor' && b.input?.persistent === true,
+            ownerAgentId: parent,
+            ts,
+          });
+          continue;
+        }
+        if (SHELL_TOOLS.has(b.name)) {
+          const command = str(b.input?.command);
+          shellCalls.set(b.id, { description: str(b.input?.description), command: command ? command.slice(0, BG_COMMAND_MAX) : null, ts });
           continue;
         }
         if (!AGENT_TOOLS.has(b.name)) continue;
@@ -235,16 +269,47 @@ export function scanLines(ctx: FileCtx, lines: Array<{ lineNo: number; obj: Reco
         for (const b of content as Array<{ type?: string; tool_use_id?: string; is_error?: boolean; content?: unknown }>) {
           if (b?.type !== 'tool_result' || !b.tool_use_id) continue;
           const text = contentText(b.content);
+          // 13. an error result: a call of the registry of background tasks that is waiting for its result ends failed
+          if (b.is_error) facts.push({ t: 'bgfail', toolUseId: b.tool_use_id, ts });
           // 8. a background command: it ends with a <task-notification> carrying this tool_use_id
           const bg = b.is_error ? null : BG_STARTED.exec(text.trimStart());
           if (bg) {
-            facts.push({ t: 'bgstart', toolUseId: b.tool_use_id, taskId: bg[1]!, kind: 'bash', timeoutMs: null, persistent: false, ts });
+            facts.push({ t: 'bgstart', toolUseId: b.tool_use_id, taskId: bg[1]!, kind: 'bash', timeoutMs: null, persistent: false, ownerAgentId: parent, ts });
             continue;
           }
-          // a monitor: toolUseResult {taskId, timeoutMs, persistent}, or the text when the result was not kept
+          // a foreground command over its timeout went on in the background: a task like run_in_background (its own
+          // `timeout` was the foreground one, so the background limit is the default); the call's metadata if seen here
+          const moved = b.is_error ? null : (BG_MOVED.exec(text.trimStart())?.[1] ?? (r && typeof r.timedOutAfterMs === 'number' ? str(r.backgroundTaskId) : null));
+          if (moved) {
+            const call = shellCalls.get(b.tool_use_id);
+            if (call)
+              facts.push({
+                t: 'bgcall',
+                toolUseId: b.tool_use_id,
+                kind: 'bash',
+                description: call.description,
+                command: call.command,
+                timeoutMs: null,
+                persistent: false,
+                ownerAgentId: parent,
+                ts: call.ts,
+              });
+            facts.push({ t: 'bgstart', toolUseId: b.tool_use_id, taskId: moved, kind: 'bash', timeoutMs: null, persistent: false, ownerAgentId: parent, ts });
+            continue;
+          }
+          // a monitor: toolUseResult {taskId, timeoutMs, persistent}, or the text when the result was not kept (its timeout from «expires in …»)
           const mon = b.is_error ? null : ((r && typeof r.persistent === 'boolean' ? str(r.taskId) : null) ?? MONITOR_STARTED.exec(text.trimStart())?.[1] ?? null);
           if (mon) {
-            facts.push({ t: 'bgstart', toolUseId: b.tool_use_id, taskId: mon, kind: 'monitor', timeoutMs: num(r?.timeoutMs), persistent: r?.persistent === true, ts });
+            facts.push({
+              t: 'bgstart',
+              toolUseId: b.tool_use_id,
+              taskId: mon,
+              kind: 'monitor',
+              timeoutMs: num(r?.timeoutMs) ?? monitorTimeoutOfText(text),
+              persistent: r?.persistent === true,
+              ownerAgentId: parent,
+              ts,
+            });
             continue;
           }
           const status = str(r?.status);
@@ -276,7 +341,11 @@ export function scanLines(ctx: FileCtx, lines: Array<{ lineNo: number; obj: Reco
     // 11. a monitor event delivered mid-turn (attachment queued_command)
     if (type === 'attachment') {
       const a = obj.attachment as { type?: unknown; prompt?: unknown } | undefined;
-      if (a?.type === 'queued_command' && typeof a.prompt === 'string') for (const e of monitorEvents(a.prompt)) facts.push(eventFact(e, ts));
+      if (a?.type === 'queued_command' && typeof a.prompt === 'string') {
+        for (const e of monitorEvents(a.prompt)) facts.push(eventFact(e, ts));
+        // 3. the copy of a task's notification delivered mid-turn (a subagent's file keeps only this copy); a repeat is idempotent
+        for (const n of notifications(a.prompt)) facts.push({ t: 'notify', agentId: n.taskId, toolUseId: n.toolUseId, state: n.state, ts });
+      }
     }
     // 3. notifications in the queue (a queued message is written there before it reaches the conversation)
     if (type === 'queue-operation' && obj.operation === 'enqueue' && typeof obj.content === 'string') {

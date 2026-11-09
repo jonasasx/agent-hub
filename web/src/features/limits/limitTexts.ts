@@ -15,7 +15,7 @@ export interface WindowText {
   desc: string | null;
 }
 
-const KNOWN_WINDOWS = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'seven_day_oauth_apps'] as const;
+const KNOWN_WINDOWS = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'seven_day_oauth_apps', 'seven_day_overage_included'] as const;
 type KnownWindow = (typeof KNOWN_WINDOWS)[number];
 
 export const isKnownWindow = (type: string): type is KnownWindow => (KNOWN_WINDOWS as readonly string[]).includes(type);

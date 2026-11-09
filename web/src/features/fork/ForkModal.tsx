@@ -3,23 +3,22 @@
  * - «Полная копия»: the same machine and directory, the whole history, a new session waiting for a message; unavailable
  *   with a reason for an offline machine, a cron session, a missing directory or an unknown machine.
  * - «Handoff»: the hub writes a prompt from the replica (indicator, «Повторить» on an error), the prompt is editable,
- *   the runner and the directory are chosen (by default the source's; with the source offline — the first runner in
- *   the network and its vault root).
+ *   the runner is chosen (by default the source's; with the source offline — the first runner in the network). No folder
+ *   field (session-folder D3): the hub starts the copy in the folder of the source's project on that runner.
  * - «Открыть справа, рядом с исходной» (on by default, desktop only) — see openFork.
  * API: POST /api/sessions/:id/fork {mode:'copy'} → 201 / 409 copy_unavailable|runner_offline|agent_outdated;
- * POST …/handoff-drafts → 202, WS handoff.draft; POST …/fork {mode:'handoff', prompt, runnerId, cwd, draftId} → 201 /
- * 422 cwd_not_found|bad_path / 409 runner_offline (D10).
+ * POST …/handoff-drafts → 202, WS handoff.draft; POST …/fork {mode:'handoff', prompt, runnerId, draftId} → 201 /
+ * 422 cwd_not_found / 409 runner_offline (D10).
  * claude-subscriptions (Requirement: Выбор подписки при запуске и handoff): «Подписка» in the handoff form only (a full
  * copy resumes under the last choice), `subscriptionId` in the body; 422 subscription_unavailable — under the field.
  */
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ApiError, api } from '../../api/client';
-import { isAbsoluteLocalPath, type RunnerView, type SessionView } from '../../api/types';
+import type { RunnerView, SessionView } from '../../api/types';
 import { useStore } from '../../store';
 import { t as tNow, useT } from '../../i18n';
 import { useDialog } from '../ui/a11y';
-import { cwdFormatError, defaultCwd } from '../newSession/NewSessionModal';
 import { openFork } from '../workspace/actions';
 import { draftError, startDraft, stopDraftPolling, useDrafts } from './drafts';
 import { SubscriptionField, useSubscriptionChoice } from '../subscriptions/SubscriptionField';
@@ -37,12 +36,11 @@ export function copyUnavailable(s: SessionView, runners: RunnerView[]): string |
   return null;
 }
 
-/** The runner and directory a handoff starts with: the source's, or the first online runner and its vault root. */
-export function handoffTarget(s: SessionView, runners: RunnerView[]): { runnerId: string; cwd: string } {
+/** The runner a handoff starts with: the source's, or the first online runner. */
+export function handoffTarget(s: SessionView, runners: RunnerView[]): { runnerId: string } {
   const src = runners.find(r => r.id === s.runnerId);
-  if (src?.online) return { runnerId: src.id, cwd: s.cwd ?? defaultCwd(src) };
-  const first = runners.find(r => r.online);
-  return { runnerId: first?.id ?? '', cwd: defaultCwd(first) };
+  if (src?.online) return { runnerId: src.id };
+  return { runnerId: runners.find(r => r.online)?.id ?? '' };
 }
 
 function forkError(err: unknown, runnerName: string): { field: 'cwd' | 'runner' | 'form' | 'subscription'; message: string } {
@@ -52,7 +50,6 @@ function forkError(err: unknown, runnerName: string): { field: 'cwd' | 'runner' 
       return { field: 'subscription', message: tNow('sessions.fork.error.subscription') };
     }
     if (err.code === 'cwd_not_found') return { field: 'cwd', message: err.serverMessage ?? tNow('sessions.fork.error.cwdNotFound', { runner: runnerName }) };
-    if (err.code === 'bad_path') return { field: 'cwd', message: err.serverMessage ?? tNow('sessions.fork.error.badPath') };
     if (err.code === 'runner_offline') return { field: 'runner', message: tNow('sessions.fork.error.runnerOffline', { runner: runnerName }) };
     if (err.code === 'agent_outdated') return { field: 'form', message: tNow('sessions.fork.error.agentOutdated', { runner: runnerName }) };
     if (err.code === 'copy_unavailable') return { field: 'form', message: err.serverMessage ?? tNow('sessions.fork.error.copyUnavailable') };
@@ -68,9 +65,8 @@ export function ForkModal({ sessionId, initialMode, onClose }: { sessionId: stri
   const phone = useStore(st => st.device === 'phone');
   const blocked = s ? copyUnavailable(s, runners) : t('sessions.fork.unavailable.generic');
   const [mode, setMode] = useState<'copy' | 'handoff'>(blocked || initialMode === 'handoff' ? 'handoff' : 'copy');
-  const start = s ? handoffTarget(s, runners) : { runnerId: '', cwd: '' };
+  const start = s ? handoffTarget(s, runners) : { runnerId: '' };
   const [runnerId, setRunnerId] = useState(start.runnerId);
-  const [cwd, setCwd] = useState(start.cwd);
   const [right, setRight] = useState(true);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [draftFail, setDraftFail] = useState<string | null>(null);
@@ -118,8 +114,6 @@ export function ForkModal({ sessionId, initialMode, onClose }: { sessionId: stri
     const errs: typeof errors = {};
     if (mode === 'handoff') {
       if (!runner || !runner.online) errs.runner = t('sessions.fork.validation.runner');
-      if (!cwd.trim()) errs.cwd = t('sessions.fork.validation.cwd');
-      else if (!isAbsoluteLocalPath(cwd.trim())) errs.cwd = cwdFormatError();
       if (!prompt.trim()) errs.prompt = pending ? t('sessions.fork.validation.promptWait') : t('sessions.fork.validation.prompt');
       if (sub.blocked) errs.subscription = sub.blocked;
     }
@@ -134,7 +128,6 @@ export function ForkModal({ sessionId, initialMode, onClose }: { sessionId: stri
               mode: 'handoff',
               prompt: prompt.trim(),
               runnerId,
-              cwd: cwd.trim(),
               ...(draftId ? { draftId } : {}),
               ...(provider !== 'claude' ? { provider } : {}),
               ...(sub.send ? { subscriptionId: sub.send } : {}),
@@ -249,7 +242,6 @@ export function ForkModal({ sessionId, initialMode, onClose }: { sessionId: stri
                         disabled={!r.online}
                         onClick={() => {
                           setRunnerId(r.id);
-                          setCwd(r.id === s.runnerId && s.cwd ? s.cwd : defaultCwd(r));
                           setErrors({});
                         }}
                       >
@@ -258,30 +250,13 @@ export function ForkModal({ sessionId, initialMode, onClose }: { sessionId: stri
                       </button>
                     ))}
                   </div>
-                  {errors.runner && (
+                  {(errors.runner ?? errors.cwd) && (
                     <span className="field-error" role="alert">
-                      {errors.runner}
+                      {errors.runner ?? errors.cwd}
                     </span>
                   )}
                 </div>
                 <ProviderField id={`${titleId}-prov`} runner={runner} value={provider} onChange={setProvider} />
-                <div className="field">
-                  <label htmlFor={`${titleId}-cwd`}>{t('sessions.fork.cwd')}</label>
-                  <input
-                    id={`${titleId}-cwd`}
-                    className="input mono"
-                    value={cwd}
-                    spellCheck={false}
-                    onChange={e => setCwd(e.target.value)}
-                    aria-invalid={!!errors.cwd}
-                    aria-describedby={errors.cwd ? `${titleId}-cwd-err` : undefined}
-                  />
-                  {errors.cwd && (
-                    <span className="field-error" id={`${titleId}-cwd-err`} role="alert">
-                      {errors.cwd}
-                    </span>
-                  )}
-                </div>
                 <SubscriptionField
                   id={`${titleId}-sub`}
                   runner={runner}

@@ -30,9 +30,9 @@ async function config(url: string) {
     PORT: String(await freePort()),
     DATABASE_URL: url,
     COOKIE_SECRET: 'test-cookie-secret-0123456789abcdef0123',
-    OIDC_CLIENT_ID: 'x',
-    OIDC_CLIENT_SECRET: 'y',
-    OIDC_ALLOWED_EMAILS: 'jonasasx@gmail.com',
+    OIDC_GOOGLE_CLIENT_ID: 'x',
+    OIDC_GOOGLE_CLIENT_SECRET: 'y',
+    OIDC_ALLOWED_EMAILS: 'alice@example.com',
     WEB_DIST_DIR: '/nonexistent-web-dist',
     LOG_LEVEL: 'silent',
   });
@@ -72,7 +72,7 @@ describe('hub start (production order)', () => {
       await mkdir(dir, { recursive: true });
       for (const f of await readdir(MIGRATIONS_DIR)) if (!f.startsWith(last)) await copyFile(`${MIGRATIONS_DIR}/${f}`, `${dir}/${f}`);
       expect(await migrate(t.pool, { dir })).toEqual(versions.slice(0, -1));
-      await t.pool.query(`INSERT INTO users (email) VALUES ('jonasasx@gmail.com')`);
+      await t.pool.query(`INSERT INTO users (email) VALUES ('alice@example.com')`);
       const c = await config(t.url);
       const started = await startHub(c, { logger: false, ops: { diskCheckMs: 0 } });
       try {
@@ -93,7 +93,7 @@ describe('hub start (production order)', () => {
   it('bootstrap: the existing user of OIDC_ALLOWED_EMAILS becomes admin, runners and sessions untouched; a second start changes nothing', async () => {
     const t = await createTestDb();
     try {
-      const uid = (await t.pool.query<{ id: string }>(`INSERT INTO users (email) VALUES ('jonasasx@gmail.com') RETURNING id`)).rows[0]!.id;
+      const uid = (await t.pool.query<{ id: string }>(`INSERT INTO users (email) VALUES ('alice@example.com') RETURNING id`)).rows[0]!.id;
       await t.pool.query(`INSERT INTO runners (id, user_id, name, hostname) VALUES ('hp', $1, 'HP', 'HP-Elitebook')`, [uid]);
       await t.pool.query(`INSERT INTO sessions (user_id, runner_id, claude_session_id, source, status) VALUES ($1, 'hp', gen_random_uuid(), 'terminal', 'closed')`, [uid]);
       const snapshot = async () => ({
@@ -107,13 +107,13 @@ describe('hub start (production order)', () => {
         const started = await startHub(c, { logger: false, ops: { diskCheckMs: 0 } });
         await started.close();
         const after = await snapshot();
-        expect(after.users).toEqual([{ id: uid, email: 'jonasasx@gmail.com', role: 'admin', provider: 'google', status: 'active' }]);
+        expect(after.users).toEqual([{ id: uid, email: 'alice@example.com', role: 'admin', provider: 'google', status: 'active' }]);
         expect(after.runners).toEqual(before.runners);
         expect(after.sessions).toEqual(before.sessions);
       }
       // the second start wrote nothing to users (the conflict update is skipped for an admin)
       const { bootstrapAdmins } = await import('./users/repo.js');
-      expect(await bootstrapAdmins(t.db, ['jonasasx@gmail.com'])).toBe(0);
+      expect(await bootstrapAdmins(t.db, ['alice@example.com'])).toBe(0);
       expect(await bootstrapAdmins(t.db, ['second-admin@example.com'])).toBe(1);
     } finally {
       await t.drop();

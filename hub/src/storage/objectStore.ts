@@ -14,6 +14,27 @@ export interface ObjectStore {
   check(): Promise<void>;
 }
 
+/** Where the store is and how to sign in to it; only `region` — AWS with the SDK's default credential chain. */
+export interface S3Location {
+  region: string;
+  /** S3-compatible endpoint (MinIO, Ceph RGW and others). */
+  endpoint?: string | undefined;
+  forcePathStyle?: boolean | undefined;
+  accessKeyId?: string | undefined;
+  secretAccessKey?: string | undefined;
+}
+
+/** The S3 client of a location: static keys only when both are given, otherwise the default chain. */
+export function createS3Client(loc: S3Location): S3Client {
+  const credentials = loc.accessKeyId && loc.secretAccessKey ? { accessKeyId: loc.accessKeyId, secretAccessKey: loc.secretAccessKey } : undefined;
+  return new S3Client({
+    region: loc.region,
+    ...(loc.endpoint ? { endpoint: loc.endpoint } : {}),
+    ...(loc.forcePathStyle ? { forcePathStyle: true } : {}),
+    ...(credentials ? { credentials } : {}),
+  });
+}
+
 export class S3Store implements ObjectStore {
   private readonly s3: S3Client;
 
@@ -24,7 +45,7 @@ export class S3Store implements ObjectStore {
     private readonly prefix = '',
     client?: S3Client,
   ) {
-    // Credentials: the SDK's default chain (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from the hub's .env).
+    // Without a client (tests, tools): AWS by region, credentials from the SDK's default chain. The hub passes createS3Client.
     this.s3 = client ?? new S3Client({ region });
   }
 

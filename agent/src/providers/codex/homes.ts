@@ -2,7 +2,7 @@
 // ChatGPT sign-in. Each subscription gets its own home under the agent's state dir; `sessions` is a link to the
 // machine's ~/.codex/sessions, so a thread started under one subscription resumes under another; config.toml is a copy
 // of the machine's. The tokens rotate: the file is read back and the hub gets the new one.
-import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -14,11 +14,17 @@ export interface CodexHomesDeps {
   /** The machine's own ~/.codex (tests: a temp folder). */
   baseHome?: string;
   log?: Pick<Logger, 'warn'>;
+  now?: () => number;
 }
+
+/** The folder name of a subscription home: the subscription id. Temporary sign-in homes are `login-*`. */
+const HOME_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export class CodexHomes {
   /** What the hub knows per subscription: the last auth.json it stored or sent. */
   private readonly known = new Map<string, string>();
+  /** provider-parity R3: homes the hub dropped while a live session ran under them; removed when it exits. */
+  private readonly deferred = new Set<string>();
 
   constructor(private readonly d: CodexHomesDeps) {}
 
@@ -36,11 +42,13 @@ export class CodexHomes {
     await mkdir(home, { recursive: true, mode: 0o700 });
     await this.link(home, true, registryEnabled);
     // the hub is the source of truth, but a file refreshed by a live process is newer: it is replaced only when
-    // the hub's copy differs from the last one this agent knew
-    if (this.known.get(subscriptionId) !== authJson) {
+    // the hub's copy differs from the last one this agent knew, or when the file is gone (codex-auth-restore: removed
+    // between turns, or empty/broken — the memory of a written file says nothing about the disk)
+    const missing = !(await this.hasAuth(home));
+    if (missing || this.known.get(subscriptionId) !== authJson) {
       // after a restart (or a write-back the hub never got) the file on disk may be newer than the hub's copy:
       // keep it, changed() sends it again
-      if (!(await this.diskIsNewer(home, authJson))) await writeFile(join(home, 'auth.json'), authJson, { mode: 0o600 });
+      if (missing || !(await this.diskIsNewer(home, authJson))) await writeFile(join(home, 'auth.json'), authJson, { mode: 0o600 });
       this.known.set(subscriptionId, authJson);
     }
     return home;
@@ -68,11 +76,32 @@ export class CodexHomes {
     this.known.set(subscriptionId, authJson);
   }
 
+  /** The home has an auth.json: false only when it is absent, empty or not JSON — another read error is not a loss. */
+  private async hasAuth(home: string): Promise<boolean> {
+    const state = async (): Promise<'ok' | 'absent' | 'broken'> => {
+      try {
+        JSON.parse(await readFile(join(home, 'auth.json'), 'utf8'));
+        return 'ok';
+      } catch (error) {
+        if (error instanceof SyntaxError) return 'broken';
+        return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'absent' : 'ok';
+      }
+    };
+    const first = await state();
+    if (first !== 'broken') return first === 'ok';
+    // a live Codex process of the same subscription may be rewriting the file: look again before replacing it
+    await new Promise(resolve => setTimeout(resolve, 200));
+    return (await state()) === 'ok';
+  }
+
+  /** The file on disk is a later refresh of the same ChatGPT account (R3: after a re-login to another account the hub's copy wins). */
   private async diskIsNewer(home: string, hubJson: string): Promise<boolean> {
     try {
-      const at = (j: string): number => Date.parse((JSON.parse(j) as { last_refresh?: string }).last_refresh ?? '');
-      const disk = at(await readFile(join(home, 'auth.json'), 'utf8'));
-      return disk > at(hubJson);
+      const disk = authInfo(await readFile(join(home, 'auth.json'), 'utf8'));
+      const hub = authInfo(hubJson);
+      // another account on disk loses; a file without an account id on both sides compares by time as before
+      if (disk.accountId !== hub.accountId) return false;
+      return disk.refreshedAt > hub.refreshedAt;
     } catch {
       return false;
     }
@@ -103,30 +132,92 @@ export class CodexHomes {
     await rm(home, { recursive: true, force: true }).catch(() => undefined);
   }
 
-  /** A subscription removed from the registry or its credential replaced: forget the home. */
+  /** A subscription removed from the registry: forget the home. The `sessions` link is removed, not its target. */
   async forget(subscriptionId: string): Promise<void> {
     this.known.delete(subscriptionId);
+    this.deferred.delete(subscriptionId);
     await rm(join(this.root, subscriptionId), { recursive: true, force: true }).catch(() => undefined);
   }
 
+  /**
+   * provider.credentials.sync (provider-parity R3): every subscription home not in `keep` is removed, of the ones in
+   * `forget` (credential replaced) only the auth.json. A home a live session runs under (`busy`) waits for release().
+   */
+  async sync(keep: string[], forget: string[], busy: (subscriptionId: string) => boolean): Promise<{ removed: string[]; deferred: string[] }> {
+    const keepIds = new Set(keep.map(id => id.toLowerCase()));
+    const out = { removed: [] as string[], deferred: [] as string[] };
+    // brought back while a session was live: the home stays after release()
+    for (const id of keepIds) this.deferred.delete(id);
+    for (const id of forget) {
+      const lower = id.toLowerCase();
+      // a live session keeps its file; the next prepare() writes the hub copy, which is newer after a re-login
+      if (!keepIds.has(lower) || busy(lower)) continue;
+      this.known.delete(lower);
+      await rm(join(this.root, lower, 'auth.json'), { force: true }).catch(() => undefined);
+    }
+    let names: string[];
+    try {
+      names = await readdir(this.root);
+    } catch {
+      return out;
+    }
+    for (const name of names) {
+      if (!HOME_NAME.test(name) || keepIds.has(name.toLowerCase())) continue;
+      if (busy(name)) {
+        this.deferred.add(name);
+        out.deferred.push(name);
+        continue;
+      }
+      await this.forget(name);
+      out.removed.push(name);
+    }
+    return out;
+  }
+
+  /** The last live session under a subscription exited: a home the hub dropped meanwhile goes now. */
+  async release(subscriptionId: string): Promise<boolean> {
+    if (!this.deferred.has(subscriptionId)) return false;
+    await this.forget(subscriptionId);
+    return true;
+  }
+
+  /** At start (R6): temporary sign-in homes left by a crash, older than `maxAgeMs`. */
+  async sweepTemp(maxAgeMs: number): Promise<number> {
+    let names: string[];
+    try {
+      names = await readdir(this.root);
+    } catch {
+      return 0;
+    }
+    const now = this.d.now?.() ?? Date.now();
+    let removed = 0;
+    for (const name of names) {
+      if (!name.startsWith('login-')) continue;
+      const home = join(this.root, name);
+      const at = await stat(home).then(
+        st => st.mtimeMs,
+        () => now,
+      );
+      if (now - at < maxAgeMs) continue;
+      await this.dropTemp(home);
+      removed++;
+    }
+    return removed;
+  }
+
   private async link(home: string, sessions = true, registryEnabled = false): Promise<void> {
+    // R12: the copy always keeps its credentials in auth.json — with keyring the CLI would take the machine's account
     const cfg = join(this.base, 'config.toml');
+    let source = '';
     if (existsSync(cfg)) {
-      const target = join(home, 'config.toml');
-      if (!registryEnabled) {
-        await copyFile(cfg, target).catch(() => undefined);
-      } else {
-        try {
-          const source = await readFile(cfg, 'utf8');
-          await writeFile(target, stripMcpServers(source), { mode: 0o600 });
-        } catch (error) {
-          this.warnConfigCopy('Codex registry config isolation failed; copying source config', error);
-          await copyFile(cfg, target).catch(copyError => {
-            this.warnConfigCopy('Codex config fallback copy failed', copyError);
-          });
-        }
+      try {
+        source = await readFile(cfg, 'utf8');
+      } catch (error) {
+        this.warnConfigCopy('Codex config could not be read; the home gets the credential store only', error);
       }
     }
+    const config = fileCredentialStore(registryEnabled ? stripMcpServers(source) : source);
+    await writeFile(join(home, 'config.toml'), config, { mode: 0o600 }).catch(error => this.warnConfigCopy('Codex config copy failed', error));
     if (!sessions) return;
     const target = join(this.base, 'sessions');
     await mkdir(target, { recursive: true });
@@ -139,6 +230,27 @@ export class CodexHomes {
   private warnConfigCopy(message: string, error: unknown): void {
     this.d.log?.warn(message, { error: error instanceof Error ? error.message : 'unknown file error' });
   }
+}
+
+/** The CLI's own fields of an auth.json: the ChatGPT account and the time of the last refresh. */
+function authInfo(text: string): { accountId: string | null; refreshedAt: number } {
+  const j = JSON.parse(text) as { last_refresh?: string; tokens?: { account_id?: unknown } };
+  const accountId = typeof j.tokens?.account_id === 'string' ? j.tokens.account_id : null;
+  return { accountId, refreshedAt: Date.parse(j.last_refresh ?? '') };
+}
+
+/** `cli_auth_credentials_store = "file"` as the first root key; any root-level value of it removed (R12). */
+export function fileCredentialStore(toml: string): string {
+  const lines = toml.split(/\r?\n/);
+  const kept: string[] = [];
+  let rootTable = true;
+  for (const line of lines) {
+    if (/^\s*\[/.test(line)) rootTable = false;
+    if (rootTable && /^\s*cli_auth_credentials_store\s*=/.test(line)) continue;
+    kept.push(line);
+  }
+  const rest = kept.join('\n').replace(/^\n+/, '');
+  return `cli_auth_credentials_store = "file"\n${rest}`;
 }
 
 /** Drop the global Codex MCP tables from the isolated copy while preserving other preferences. */

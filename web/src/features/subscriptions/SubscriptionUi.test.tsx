@@ -16,7 +16,7 @@ import { connectorsHint } from './model';
 const R14 = [
   runner({ protocolVersion: '1.4' }),
   runner({ id: 'hp', name: 'HP', protocolVersion: '1.3' }),
-  runner({ id: 'vm', name: 'ВМ .3', protocolVersion: '1.4', vaultRoot: '/home/ubuntu/vault' }),
+  runner({ id: 'vm', name: 'ВМ .3', protocolVersion: '1.4', defaultDir: '/home/ubuntu/vault' }),
 ];
 const MODELS = [{ value: 'opus', displayName: 'Opus 5.5' }];
 

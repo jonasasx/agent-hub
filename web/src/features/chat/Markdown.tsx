@@ -2,7 +2,7 @@
 // Requirement (chat-images): Изображения в ответе ассистента — `![…](C:\…)` / `![…](/home/…)` shows «Показать
 // изображение» (the hub fetches the file from the session's machine, D19); `![…](https://…)` is a link and is not
 // loaded by the browser.
-import { createContext, memo, useContext, useState } from 'react';
+import { createContext, memo, useContext, useState, type MouseEvent, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { isAbsoluteLocalPath } from '../../api/types';
@@ -10,6 +10,8 @@ import { t, useT } from '../../i18n';
 import { ApiError, api } from '../../api/client';
 import { ImageGroup, picOf } from '../images/ImagePreview';
 import type { ImageRef } from '../images/format';
+import { isNameWithLine, type FileLinkResolver } from '../files/links';
+import { openFileLink } from '../files/fileActions';
 
 /** The session the text belongs to: «Показать изображение» asks the hub for a file of its machine. */
 export interface ImageSource {
@@ -102,12 +104,36 @@ function MdImg({ src, alt }: { src?: unknown; alt?: string }) {
   return <span>{alt ? `[${alt}]` : `[${t('chat.md.image')}]`}</span>;
 }
 
-const components: Components = {
-  a: ({ href, children }) => (
-    <a href={href} target="_blank" rel="noreferrer noopener">
+/**
+ * Links to files of the machine (change chat-file-links): the feed resolves them from the folder of the session, the
+ * Markdown viewer from the folder of the document. Without a resolver every link opens as a web address.
+ */
+export const FileLinkContext = createContext<FileLinkResolver | null>(null);
+
+function MdLink({ href, children }: { href?: string; children?: ReactNode }) {
+  const resolve = useContext(FileLinkContext);
+  const file = resolve ? resolve(decodePath(href ?? '')) : null;
+  if (!file)
+    return (
+      <a href={href} target="_blank" rel="noreferrer noopener">
+        {children}
+      </a>
+    );
+  // a file: a single click is a preview, a double click keeps the tab — as in the tree (Requirement: Файловые вкладки);
+  // a folder is revealed in the tree (Requirement: Ссылки на папки)
+  const open = (e: MouseEvent, pin: boolean) => {
+    e.preventDefault();
+    void openFileLink(file, pin);
+  };
+  return (
+    <a href={href} className="md-file-link" title={file.path} onClick={e => open(e, false)} onDoubleClick={e => open(e, true)}>
       {children}
     </a>
-  ),
+  );
+}
+
+const components: Components = {
+  a: ({ href, children }) => <MdLink href={href}>{children}</MdLink>,
   img: ({ src, alt }) => <MdImg src={src} alt={alt} />,
 };
 
@@ -123,22 +149,26 @@ function decodePath(url: string): string {
 
 /**
  * In a Markdown destination `\.` is an escaped dot, so `C:\vault\.tmp\x.png` would lose the backslash before `.tmp`.
- * Windows paths of images are protected before parsing: a backslash before ASCII punctuation is doubled.
+ * Windows paths of images and links are protected before parsing: a backslash before ASCII punctuation is doubled.
  */
-export function protectWindowsImagePaths(text: string): string {
-  return text.replace(/(!\[[^\]]*\]\()([A-Za-z]:\\[^)\s]*)(\))/g, (_m, a: string, path: string, b: string) => a + path.replace(/\\(?=[!-/:-@[-`{-~])/g, '\\\\') + b);
+export function protectWindowsPaths(text: string): string {
+  return text.replace(/(!?\[[^\]]*\]\()([A-Za-z]:\\[^)\s]*)(\))/g, (_m, a: string, path: string, b: string) => a + path.replace(/\\(?=[!-/:-@[-`{-~])/g, '\\\\') + b);
 }
 
-/** Local paths of images stay as written (the default transform would drop `C:` as an unknown scheme). */
+/**
+ * Local paths of images and links stay as written (the default transform would drop `C:` as an unknown scheme);
+ * `file:` links reach the file resolver and are never followed by the browser.
+ */
 function urlTransform(url: string, key: string): string {
-  if (key === 'src' && isAbsoluteLocalPath(decodePath(url))) return url;
+  if ((key === 'src' || key === 'href') && isAbsoluteLocalPath(decodePath(url))) return url;
+  if (key === 'href' && (/^file:/i.test(url) || isNameWithLine(url))) return url;
   return defaultUrlTransform(url);
 }
 
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
   return (
     <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={urlTransform}>
-      {protectWindowsImagePaths(text)}
+      {protectWindowsPaths(text)}
     </ReactMarkdown>
   );
 });

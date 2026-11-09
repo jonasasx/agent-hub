@@ -1,6 +1,6 @@
 // Unit tests of the client of the file routes. Requirements (file-explorer): Просмотрщик; Машина не в сети и ошибки; Совместимость со старым агентом.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FsError, fsFileUrl, fsList, fsListUrl, fsOpenFile, isUnsupported, limitFor } from './filesApi';
+import { FsError, fsDownloadProbe, fsDownloadUrl, fsFileUrl, fsList, fsListUrl, fsOpenFile, isUnsupported, limitFor } from './filesApi';
 import { dir, stubFs } from './testkit';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -10,6 +10,17 @@ describe('filesApi', () => {
     expect(fsListUrl('x 1', {})).toBe('/api/runners/x%201/fs/list');
     expect(fsListUrl('x1', { path: '/a b', sessionId: 's', hidden: true })).toBe('/api/runners/x1/fs/list?path=%2Fa+b&sessionId=s&hidden=1');
     expect(fsFileUrl('x1', '/a.md', 's')).not.toContain('root');
+  });
+
+  it('the download URL carries the path, the session and the probe flag; the probe checks the answer', async () => {
+    expect(fsDownloadUrl('x 1', '/a b.mp4')).toBe('/api/runners/x%201/fs/download?path=%2Fa+b.mp4');
+    expect(fsDownloadUrl('x1', '/a', 's', true)).toBe('/api/runners/x1/fs/download?path=%2Fa&sessionId=s&probe=1');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ name: 'a.mp4', size: 90, mtimeMs: 5 })));
+    await expect(fsDownloadProbe('x1', '/a.mp4')).resolves.toEqual({ name: 'a.mp4', size: 90, mtimeMs: 5 });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ name: 'a.mp4' })));
+    await expect(fsDownloadProbe('x1', '/a.mp4')).rejects.toMatchObject({ code: 'bad_response' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ error: 'restricted' }, { status: 403 })));
+    await expect(fsDownloadProbe('x1', '/a.mp4')).rejects.toMatchObject({ code: 'restricted' });
   });
 
   it('lists a folder', async () => {

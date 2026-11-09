@@ -1,9 +1,9 @@
 /**
  * The viewer of a file tab (change tool-windows-file-explorer, tasks 6.5/6.6/6.8). Markup after
  * docs/prototypes/file-explorer.html (`fileView`): breadcrumbs, the meta, the tools of the class, «В дереве», «@ В сообщение»,
- * copy, «только чтение». The file is shown by its class: picture, PDF (a lazy chunk), Markdown, text; the binary class,
+ * copy, «Скачать» (change file-download), «только чтение». The file is shown by its class: picture, PDF (a lazy chunk), Markdown, text; the binary class,
  * a file over the limit, an offline machine and the errors have their own states.
- * Requirement (file-explorer): Просмотрщик; Крошки и действия над файлом; Машина не в сети и ошибки.
+ * Requirement (file-explorer): Просмотрщик; Крошки и действия над файлом; Машина не в сети и ошибки; Скачивание файла.
  */
 import { lazy, Suspense, useCallback, useMemo, useState } from 'react';
 import { useT } from '../../i18n';
@@ -13,9 +13,10 @@ import { parseFileTabId } from '../layout/layout';
 import { Breadcrumbs } from './Breadcrumbs';
 import { copyPath, insertMention, revealInTree } from './fileActions';
 import { ICON_COPY, ICON_FOLDER_BTN } from './fileIcons';
-import { ImageView, MarkdownView, TextView, TooLarge, Unsupported, ViewerEmpty, type ImageZoom } from './fileViews';
+import { DownloadButton, ImageView, MarkdownView, TextView, TooLarge, Unsupported, ViewerEmpty, type DownloadTarget, type ImageZoom } from './fileViews';
 import { useFiles } from './filesStore';
 import { baseName } from './paths';
+import { runnerSupportsDownload } from './source';
 import { useFileContent } from './useFileContent';
 import { useLastSessionId } from './useSource';
 
@@ -40,6 +41,7 @@ function Viewer({ tabId, runnerId, path }: { tabId: string; runnerId: string; pa
   const runner = useStore(s => s.runners.find(r => r.id === runnerId));
   const phone = useStore(s => s.device === 'phone');
   const sessionId = useFiles(s => s.tabSession[tabId]);
+  const outdated = useFiles(s => !!s.outdated[runnerId]);
   const session = useStore(s => (sessionId ? s.sessions[sessionId] : undefined));
   const lastSession = useLastSessionId();
   const target = useStore(st => (lastSession ? st.sessions[lastSession]?.title : undefined));
@@ -58,6 +60,7 @@ function Viewer({ tabId, runnerId, path }: { tabId: string; runnerId: string; pa
   const machineName = runner?.name ?? runnerId;
   const onPages = useCallback((n: number) => setPages(n), []);
   const onPage = useCallback((n: number) => setPage(n), []);
+  const download: DownloadTarget = { runnerId, path, sessionId, machineName, supported: !!runner && runnerSupportsDownload(runner, { [runnerId]: outdated }) };
 
   const meta = useMemo(() => {
     if (state.status === 'image') return [natural ? `${natural.w}×${natural.h}` : null, state.size ? formatBytes(state.size) : null].filter(Boolean).join(' · ');
@@ -143,6 +146,7 @@ function Viewer({ tabId, runnerId, path }: { tabId: string; runnerId: string; pa
           >
             @{phone ? '' : ` ${t('files.action.mention')}`}
           </button>
+          {state.status === 'offline' ? null : <DownloadButton {...download} className={phone ? 'btn sm icon ghost' : 'btn sm ghost'} label={!phone} />}
           <button type="button" className="btn sm icon ghost opt" title={t('files.action.copyPath')} aria-label={t('files.action.copyPath')} onClick={() => void copyPath(path)}>
             {ICON_COPY}
           </button>
@@ -162,9 +166,9 @@ function Viewer({ tabId, runnerId, path }: { tabId: string; runnerId: string; pa
       case 'offline':
         return <ViewerEmpty big={t('files.error.runner_offline')}>{t('files.viewer.offlineHint', { machine: machineName })}</ViewerEmpty>;
       case 'unsupported':
-        return <Unsupported name={name} size={state.size} mime={state.mime} />;
+        return <Unsupported name={name} size={state.size} mime={state.mime} download={download} />;
       case 'toolarge':
-        return <TooLarge size={state.size} limit={state.limit} />;
+        return <TooLarge size={state.size} limit={state.limit} download={download} />;
       case 'error':
         return (
           <ViewerEmpty

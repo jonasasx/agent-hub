@@ -113,11 +113,30 @@ describe('the card', () => {
     expect(within(card).getByText(`Обновлено в ${clock(at(-3))} · ход сессии`)).toBeInTheDocument();
     expect(within(card).getByText(`Пробный ход в ${clock(at(-20))}`)).toBeInTheDocument();
     expect(within(card).getByText(/иначе в чате появится кнопка «Продолжить под другой подпиской»/)).toBeInTheDocument();
-    expect(within(card).getByText(/короткий служебный запрос к модели Haiku/)).toBeInTheDocument();
+    expect(within(card).getByText(/короткий служебный запрос к модели Haiku под этой подпиской: тратит малую долю лимита подписки\./)).toBeInTheDocument();
+    expect(within(card).queryByText(/Сервис не ограничивает 5-часовое окно/)).toBeNull();
     expect(calls).toHaveLength(0);
     await userEvent.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(row).toHaveFocus();
+  });
+
+  it('a subscription without a 5-hour window: the weekly windows and the note (limits-stale-windows)', async () => {
+    const windows = [
+      win({ type: 'seven_day', utilization: 41, resetsAt: at(5000), observedAt: at(-3) }),
+      win({ type: 'seven_day_overage_included', utilization: 0, resetsAt: at(5000), observedAt: at(-60) }),
+    ];
+    setup([subView()], [live({ windows })]);
+    mockFetch({});
+    block();
+    await userEvent.click(rowOf('Max личная'));
+    const card = screen.getByRole('dialog', { name: /Max личная/ });
+    expect(within(card).getByText('7 дней')).toBeInTheDocument();
+    expect(within(card).getByText('41%')).toBeInTheDocument();
+    expect(within(card).getByText('7 дней · Fable')).toBeInTheDocument();
+    expect(within(card).getByText(/Отдельный недельный лимит на запросы к моделям Fable/)).toBeInTheDocument();
+    expect(within(card).queryByText('5 часов')).toBeNull();
+    expect(within(card).getByText('Сервис не ограничивает 5-часовое окно для этой подписки.')).toBeInTheDocument();
   });
 
   it('«Закрыть» returns the focus; a press outside closes', async () => {

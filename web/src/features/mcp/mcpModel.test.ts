@@ -214,7 +214,7 @@ describe('«Войти», «Войти заново», «Выйти» (mcp-auth-
 
   it('texts: «Выход…», the confirmation, the hint of a dropped sign-in', () => {
     expect(pendingText(mcpServer({ pendingAction: 'logout' }))).toBe('Выход…');
-    expect(logoutConfirmText('scanner-fleet', 'HP')).toBe('Выйти из scanner-fleet на HP? Вход сбросится во всех сессиях HP и в новых сессиях; токен будет отозван у провайдера.');
+    expect(logoutConfirmText('fleet-ops', 'HP')).toBe('Выйти из fleet-ops на HP? Вход сбросится во всех сессиях HP и в новых сессиях; токен будет отозван у провайдера.');
     expect(resigninHint(mcpServer({ status: 'connected' }))).toBe(MCP_TEXTS.resigninHint);
     expect(resigninHint(mcpServer({ status: 'failed' }))).toBe(MCP_TEXTS.resigninHint);
     expect(resigninHint(mcpServer({ status: 'needs-auth' }))).toBeNull();

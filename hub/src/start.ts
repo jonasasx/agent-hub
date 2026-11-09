@@ -31,7 +31,12 @@ export async function startHub(config: Config, deps: Partial<Omit<HubDeps, 'conf
     // 1) The schema. A failure stops the start here, with the migration named (and no half-built hub).
     const applied = await migrate(pool, { log: { info: m => bootLog(config, m) } });
     // 2) The hub: its start-up loads (the project catalogue, the LISTEN connection) need the schema.
-    const oidc = deps.oidc ?? createOidcClient({ issuer: config.OIDC_GOOGLE_ISSUER, clientId: config.OIDC_GOOGLE_CLIENT_ID, clientSecret: config.OIDC_GOOGLE_CLIENT_SECRET });
+    // keycloak-auth D5: the single provider of OIDC_ISSUER, else Google of the two-provider mode (loadConfig checked the pair)
+    const oidc =
+      deps.oidc ??
+      (config.singleProvider
+        ? createOidcClient({ issuer: config.OIDC_ISSUER!, clientId: config.OIDC_CLIENT_ID!, clientSecret: config.OIDC_CLIENT_SECRET! })
+        : createOidcClient({ issuer: config.OIDC_GOOGLE_ISSUER, clientId: config.OIDC_GOOGLE_CLIENT_ID!, clientSecret: config.OIDC_GOOGLE_CLIENT_SECRET! }));
     // Change multi-user (M2): the second provider (Keycloak) when its issuer and client are configured.
     const oidcKeycloak =
       deps.oidcKeycloak ??

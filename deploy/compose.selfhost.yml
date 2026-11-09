@@ -9,7 +9,7 @@ services:
   hub:
     build:
       context: ..
-      dockerfile: hub/Dockerfile
+      dockerfile: Dockerfile
     image: agenthub-selfhost-hub:latest
     restart: unless-stopped
     mem_limit: 1536m

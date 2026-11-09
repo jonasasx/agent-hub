@@ -1,22 +1,29 @@
-// Read-only file explorer for the browser: GET /api/runners/:runnerId/fs/list and /fs/file (change `tool-windows-file-explorer`, design D2-D3).
-// Requirement: Безопасный доступ к файлам машины; Машина не в сети и ошибки; Ленивое дерево; Просмотрщик файлов.
+// Read-only file explorer for the browser: GET /api/runners/:runnerId/fs/list and /fs/file (change `tool-windows-file-explorer`, design D2-D3),
+// /fs/download (change `file-download`, design D1-D6).
+// Requirement: Безопасный доступ к файлам машины; Машина не в сети и ошибки; Ленивое дерево; Просмотрщик файлов; Скачивание файла.
 // The root is set here (session cwd or the machine's home), never taken from the browser. The agent checks the path against it.
 // Neither paths nor contents go to the log: only the runner, the class, the size and the error code.
+import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
+  FS_CHUNK_MAX,
   FS_ERROR_CODES,
   FS_ERROR_STATUS,
   FS_FILE_HEADERS,
+  fsDownloadQuerySchema,
   fsFileQuerySchema,
   fsListQuerySchema,
   fsListResultSchema,
+  fsReadChunkResultSchema,
   fsReadResultSchema,
   pathFitsPlatform,
   platformOfHome,
+  type FsDownloadProbe,
   type FsErrorCode,
   type FsFileKind,
   type FsListResponse,
+  type FsReadChunkResult,
   type FsUnsupportedResponse,
 } from '@agent-hub/shared';
 import type { Db } from '../db/db.js';
@@ -98,6 +105,26 @@ function fail(code: FsErrorCode): HttpError {
   return new HttpError(FS_ERROR_STATUS[code], code, MESSAGES[code]);
 }
 
+/**
+ * Content-Disposition of a download (file-download D6): an ASCII fallback with everything else replaced by `_`, and the
+ * real name in UTF-8 as `filename*` (RFC 6266 / 5987).
+ */
+export function attachmentDisposition(name: string): string {
+  const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_') || 'download';
+  const utf8 = encodeURIComponent(name).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${utf8}`;
+}
+
+/** The last segment of a path of either platform. */
+function baseName(p: string): string {
+  return (
+    p
+      .split(/[\\/]+/)
+      .filter(Boolean)
+      .pop() ?? 'download'
+  );
+}
+
 function parse<T extends z.ZodType>(schema: T, v: unknown): z.infer<T> {
   const r = schema.safeParse(v ?? {});
   if (!r.success) throw fail('invalid_request');
@@ -135,7 +162,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: { db: Db; agents:
   app.addHook('onClose', async () => rate.stop());
 
   /** Ownership, root, path syntax, rate limit, machine state: everything before the agent hears about the request. */
-  async function prepare(req: FastifyRequest, params: unknown, sessionId: string | undefined, path: string | undefined) {
+  async function prepare(req: FastifyRequest, params: unknown, sessionId: string | undefined, path: string | undefined, capability = 'fs.browse') {
     const { runnerId } = parse(z.object({ runnerId: z.string().min(1).max(200) }), params);
     const userId = req.user!.id;
     const runner = await getOwnedRunner(db, userId, runnerId);
@@ -146,7 +173,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: { db: Db; agents:
     if (!rate.hit(userId)) throw fail('too_many_requests');
     const connection = agents.get(runnerId);
     if (!connection) throw fail('runner_offline');
-    if (!connection.capabilities.includes('fs.browse')) throw fail('capability_unavailable');
+    if (!connection.capabilities.includes(capability)) throw fail('capability_unavailable');
     return { runnerId, root, target, connection };
   }
 
@@ -220,5 +247,59 @@ export function registerFileRoutes(app: FastifyInstance, deps: { db: Db; agents:
     reply.header(FS_FILE_HEADERS.kind, kind);
     reply.header(FS_FILE_HEADERS.size, String(body.length));
     return reply.type(type).send(body);
+  });
+
+  // Requirement: Скачивание файла — any class and size, read from the machine in pieces of FS_CHUNK_MAX (D1-D5).
+  app.get('/api/runners/:runnerId/fs/download', async (req, reply: FastifyReply) => {
+    const q = parse(fsDownloadQuerySchema, req.query);
+    const { runnerId, root, target, connection } = await prepare(req, req.params, q.sessionId, q.path, 'fs.download');
+    // each piece takes its own slot of the machine, so a long download does not hold one away from the viewer (D5)
+    const piece = async (offset: number, length: number): Promise<{ result: FsReadChunkResult; data: Buffer }> => {
+      const raw = await run(req, connection, runnerId, () => connection.request('fs.read_chunk', { path: target, root, offset, length }, o.readTimeoutMs));
+      const parsed = fsReadChunkResultSchema.safeParse(raw);
+      if (!parsed.success || parsed.data.offset !== offset) {
+        req.log.warn({ runnerId }, 'fs.read_chunk: malformed agent answer');
+        throw fail('io_error');
+      }
+      const r = parsed.data;
+      if (r.bytes === 0) return { result: r, data: Buffer.alloc(0) };
+      const data = (raw as { data?: unknown }).data;
+      if (r.binary !== true || !Buffer.isBuffer(data) || data.length !== r.bytes) throw fail('io_error');
+      return { result: r, data };
+    };
+    if (q.probe === '1') {
+      const { result } = await piece(0, 0);
+      const body: FsDownloadProbe = { name: baseName(target), size: result.size, mtimeMs: result.mtimeMs };
+      reply.header('Cache-Control', 'private, no-store');
+      return body;
+    }
+    // the first piece comes before the headers: a refusal is still an ordinary error answer
+    const first = await piece(0, FS_CHUNK_MAX);
+    const { size, mtimeMs } = first.result;
+    const started = Date.now();
+    async function* pieces(): AsyncGenerator<Buffer> {
+      if (first.data.length) yield first.data;
+      let offset = first.result.bytes;
+      while (offset < size) {
+        const next = await piece(offset, FS_CHUNK_MAX);
+        // a file changed in the middle would glue two versions: the answer is cut instead (D3)
+        if (next.result.size !== size || next.result.mtimeMs !== mtimeMs || next.result.bytes === 0) {
+          req.log.info({ runnerId, code: 'file_changed' }, 'fs download aborted');
+          throw new Error('file_changed');
+        }
+        offset += next.result.bytes;
+        yield next.data;
+      }
+      req.log.info({ runnerId, size, ms: Date.now() - started }, 'fs file downloaded');
+    }
+    // one piece waits in the buffer while the next is read: at most two pieces of a download in memory
+    const stream = Readable.from(pieces(), { objectMode: false, highWaterMark: FS_CHUNK_MAX });
+    reply.header('Cache-Control', 'private, no-store');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('Content-Security-Policy', "sandbox; default-src 'none'");
+    reply.header('X-Accel-Buffering', 'no');
+    reply.header('Content-Disposition', attachmentDisposition(baseName(target)));
+    reply.header('Content-Length', String(size));
+    return reply.type('application/octet-stream').send(stream);
   });
 }

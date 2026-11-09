@@ -6,12 +6,12 @@ import {
   mcpDraftUpdateSchema,
   mcpDraftValidateSchema,
   mcpGatewayStatusSchema,
-  mcpImportPreviewPayload,
   mcpImportCommitPayload,
-  mcpImportPreviewResultPayload,
   mcpRegistryDraftSchema,
   mcpRegistrySnapshotSchema,
   mcpRegistryValidateResultPayload,
+  mcpRegistryOAuthCompleteRequestSchema,
+  mcpRegistryOAuthCompleteResponseSchema,
   mcpRegistryOAuthStartRequestSchema,
   mcpRegistryOAuthStartResponseSchema,
   mcpRegistryOAuthRevokeRequestSchema,
@@ -22,8 +22,13 @@ import {
   mcpRegistryOAuthConnectRequestSchema,
   mcpRegistryOAuthConnectResponseSchema,
   mcpRegistryAgentStatusSchema,
-  mcpRegistryMachineToggleRequestSchema,
-  mcpRegistryMachineToggleResponseSchema,
+  mcpRegistryMachineOverrideRequestSchema,
+  mcpRegistryMachineOverrideResponseSchema,
+  mcpRegistryServerMachineSchema,
+  mcpImportCommitResponseSchema,
+  mcpImportEntrySchema,
+  mcpImportPreviewRequestSchema,
+  mcpImportPreviewResponseSchema,
   mcpServerConfigSchema,
 } from '@agent-hub/shared';
 
@@ -44,18 +49,18 @@ export type McpDraftUpdateRequest = Infer<typeof mcpDraftUpdateSchema>;
 export type McpDraftValidateRequest = Infer<typeof mcpDraftValidateSchema>;
 export type McpDraftConnectRequest = Infer<typeof mcpDraftConnectSchema>;
 export type McpDraftSaveUncheckedRequest = Infer<typeof mcpDraftSaveUncheckedSchema>;
-export type McpImportPreviewRequest = Infer<typeof mcpImportPreviewPayload>;
-export type McpImportPreviewResult = Infer<typeof mcpImportPreviewResultPayload>;
-export type McpImportPreviewServer = McpImportPreviewResult['servers'][number];
-
-export type McpImportPreviewResponse = Omit<McpImportPreviewResult, 'secretValues'> & {
-  revision: number;
-};
+export type McpImportPreviewRequest = Infer<typeof mcpImportPreviewRequestSchema>;
+export type McpImportPreviewResponse = Infer<typeof mcpImportPreviewResponseSchema>;
+export type McpImportEntry = Infer<typeof mcpImportEntrySchema>;
 export type McpRegistryImportCommitRequest = Infer<typeof mcpImportCommitPayload>;
+export type McpImportCommitResponse = Infer<typeof mcpImportCommitResponseSchema>;
+export type McpRegistryServerMachine = Infer<typeof mcpRegistryServerMachineSchema>;
+/** A registry server as `GET /api/mcp/registry` returns it: the config plus its state on each machine (D2). */
+export type McpRegistryServerView = McpServerConfig & { machines?: McpRegistryServerMachine[] };
 
 export interface McpRegistryResponse {
   revision: number;
-  servers: McpServerConfig[];
+  servers: McpRegistryServerView[];
   drafts: McpRegistryDraftView[];
 }
 
@@ -69,6 +74,8 @@ export interface McpRegistryStatus {
 }
 
 export type McpRegistryOAuthStatus = Infer<typeof mcpRegistryOAuthStatusSchema>;
+export type McpRegistryOAuthCompleteRequest = Infer<typeof mcpRegistryOAuthCompleteRequestSchema>;
+export type McpRegistryOAuthCompleteResponse = Infer<typeof mcpRegistryOAuthCompleteResponseSchema>;
 export type McpRegistryOAuthStartRequest = Infer<typeof mcpRegistryOAuthStartRequestSchema>;
 export type McpRegistryOAuthStartResponse = Infer<typeof mcpRegistryOAuthStartResponseSchema>;
 export type McpRegistryOAuthRevokeRequest = Infer<typeof mcpRegistryOAuthRevokeRequestSchema>;
@@ -77,8 +84,8 @@ export type McpRegistryOAuthValidateRequest = Infer<typeof mcpRegistryOAuthValid
 export type McpRegistryOAuthValidateResponse = Infer<typeof mcpRegistryOAuthValidateResponseSchema>;
 export type McpRegistryOAuthConnectRequest = Infer<typeof mcpRegistryOAuthConnectRequestSchema>;
 export type McpRegistryOAuthConnectResponse = Infer<typeof mcpRegistryOAuthConnectResponseSchema>;
-export type McpRegistryMachineToggleRequest = Infer<typeof mcpRegistryMachineToggleRequestSchema>;
-export type McpRegistryMachineToggleResponse = Infer<typeof mcpRegistryMachineToggleResponseSchema>;
+export type McpRegistryMachineOverrideRequest = Infer<typeof mcpRegistryMachineOverrideRequestSchema>;
+export type McpRegistryMachineOverrideResponse = Infer<typeof mcpRegistryMachineOverrideResponseSchema>;
 
 export interface McpRegistryPersistedDraftResponse {
   serverId: string;

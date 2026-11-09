@@ -12,6 +12,9 @@ import { findSession, SESSION_COOKIE } from '../auth/sessions.js';
 /** Close code for a browser socket whose session ended (logout, expiry). */
 export const UI_CLOSE_SESSION_ENDED = UiCloseCode.SessionEnded;
 
+/** How far back a late «hidden» report may move the moment of hiding (change push-voice-fixes, D2). */
+export const HIDDEN_LATE_MAX_MS = 15_000;
+
 interface UiClient {
   ws: WebSocket;
   userId: string;
@@ -41,6 +44,8 @@ export class UiGateway {
       pingIntervalMs?: number;
       /** A client reported what it shows: the hub clears «unread» of visible active sessions. */
       onPresence?: (userId: string, visibleActiveSessionIds: string[]) => void;
+      /** A visible client with active sessions got hidden (change push-voice-fixes); lateMs — how long ago, capped. */
+      onHidden?: (userId: string, sessionIds: string[], lateMs: number) => void;
     },
   ) {
     opts.bus.on('runner.status', (userId, runner) => this.broadcast(userId, { type: 'runner.status', runner }));
@@ -158,9 +163,13 @@ export class UiGateway {
       if (m.type === 'ping') ws.send(JSON.stringify({ type: 'pong' } satisfies UiServerMessage));
       // Requirement: Вид клиента и признак видимости в хабе — presence of a desktop client is ignored.
       else if (m.type === 'presence' && client.kind !== 'desktop') {
+        const wasShown = client.visible ? client.activeSessionIds : [];
         client.visible = m.visible;
         client.activeSessionIds = m.activeSessionIds;
         if (m.visible && m.activeSessionIds.length > 0) this.opts.onPresence?.(userId, m.activeSessionIds);
+        if (!m.visible && wasShown.length > 0) {
+          this.opts.onHidden?.(userId, wasShown, Math.min(m.hiddenForMs ?? 0, HIDDEN_LATE_MAX_MS));
+        }
       } else if (m.type === 'subscribe') {
         const sessions = new Set(m.sessionIds);
         client.subscribed = sessions;

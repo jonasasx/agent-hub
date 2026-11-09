@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useStore } from '../../store';
 import { resetStore, runner, session } from '../../test/factories';
@@ -59,6 +59,24 @@ describe('FilesWindow', () => {
     stubFs({ list: { '/home/u': dir('/home/u', ['proj']) }, files: {} });
     render(<FilesWindow />);
     expect(await screen.findByRole('button', { name: 'Выше' })).toBeDisabled();
+  });
+
+  it('revealing a path through a hidden folder turns hidden files on and selects the row', async () => {
+    stubFs({ list: { '/home/u': dir('/home/u', ['.claude', 'a.txt']), '/home/u/.claude': dir('/home/u/.claude', ['b.md']) }, files: {} });
+    render(<FilesWindow />);
+    await screen.findByRole('button', { name: 'Скрытые файлы', pressed: false });
+    act(() => useFiles.getState().requestReveal({ runnerId: 'vm', path: '/home/u/.claude', dir: true }));
+    expect(await screen.findByRole('button', { name: 'Скрытые файлы', pressed: true })).toBeInTheDocument();
+    expect(useFiles.getState().selected['machine:vm']).toBe('/home/u/.claude');
+  });
+
+  it('revealing a plain path leaves hidden files off', async () => {
+    stubFs({ list: { '/home/u': dir('/home/u', ['proj']), '/home/u/proj': dir('/home/u/proj', ['a.txt']) }, files: {} });
+    render(<FilesWindow />);
+    await screen.findByRole('button', { name: 'Скрытые файлы', pressed: false });
+    act(() => useFiles.getState().requestReveal({ runnerId: 'vm', path: '/home/u/proj', dir: true }));
+    expect(useFiles.getState().selected['machine:vm']).toBe('/home/u/proj');
+    expect(useFiles.getState().hidden).toBe(false);
   });
 });
 

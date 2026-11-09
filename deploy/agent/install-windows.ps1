@@ -10,7 +10,7 @@
 #   powershell -ExecutionPolicy Bypass -File deploy\agent\install-windows.ps1                  # update, keeps agent.env
 #   powershell -ExecutionPolicy Bypass -File deploy\agent\install-windows.ps1 -NewToken        # replace the token (hidden input)
 #   powershell -ExecutionPolicy Bypass -File deploy\agent\install-windows.ps1 -Uninstall
-# The token comes from Vaultwarden «Agent Hub — agent token <id>»; it is written only to agent.env (ACL: this user).
+# The token comes from your password manager; it is written only to agent.env (ACL: this user).
 param(
     [string]$Token,
     [string]$HubUrl = '',
@@ -77,7 +77,7 @@ Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $App 'run-agent.cmd'
 
 if (-not $Token -and ($NewToken -or -not (Test-Path $EnvFile))) {
     # Hidden input: the token never lands in the shell history or on the command line.
-    $secure = Read-Host -AsSecureString 'Agent token (Vaultwarden «Agent Hub — agent token <id>»)'
+    $secure = Read-Host -AsSecureString 'Agent token'
     $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
     try { $Token = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
     finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }

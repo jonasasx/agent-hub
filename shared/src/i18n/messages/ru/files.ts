@@ -2,6 +2,10 @@ import type { PluralMessage } from '../../index.js';
 
 export default {
   'files.action.copyPath': 'Копировать путь',
+  'files.action.download': 'Скачать',
+  'files.action.downloadFailed': 'Не удалось скачать {name}',
+  'files.action.downloadNamed': 'Скачать {name}',
+  'files.action.downloadOutdated': 'Обновите агента на {machine}, чтобы скачивать файлы',
   'files.action.inTree': 'В дереве',
   'files.action.mention': 'В сообщение',
   'files.action.mentionTitle': 'Вставить путь в поле ввода сессии «{title}»',

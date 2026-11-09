@@ -11,6 +11,9 @@ const safeText = z.string().max(500);
 
 export const MCP_REGISTRY_PROTOCOL_VERSION = '1.13' as const;
 export const MCP_REGISTRY_CAPABILITIES = ['mcp.registry.v1', 'mcp.gateway.streamable-http.v1', 'mcp.secrets.encrypted.v1', 'mcp.oauth.v1', 'mcp.registry.tools.v1'] as const;
+/** Import v2 (change `mcp-hub-only`, D4): Codex, plugins, all projects; the agent honours `projectIds`. Kept apart from the list above. */
+export const MCP_IMPORT_V2_CAPABILITY = 'mcp.import.v2' as const;
+export const mcpImportStateSchema = z.enum(['auto-pending', 'done']);
 export const mcpTransportSchema = z.enum(['stdio', 'http', 'sse']);
 export const mcpInstanceModeSchema = z.enum(['remote', 'machine-shared', 'per-session']);
 export const mcpSecretStateSchema = z.enum(['set', 'needs-secret']);
@@ -42,6 +45,7 @@ const mcpServerConfigBaseSchema = z.object({
   secrets: z.array(mcpSecretReferenceSchema).max(256).default([]),
   machineScope: mcpMachineScopeSchema,
   projectIds: z.array(id).max(100).default([]),
+  oauthClientId: z.string().min(1).max(256).optional(),
   revision: z.number().int().nonnegative(),
 });
 const mcpServerConfigInputBaseSchema = mcpServerConfigBaseSchema.extend({
@@ -124,6 +128,12 @@ export const mcpRegistryAgentStatusSchema = z.object({
   protocolVersion: z.string().max(32),
   capabilities: z.array(z.string().max(128)).max(100),
   registryEnabled: z.boolean().default(false),
+  importState: mcpImportStateSchema.optional(),
+  importedAt: z.number().int().nonnegative().nullable().optional(),
+  importReport: z
+    .object({ imported: z.array(z.string().max(128)).max(1000), skipped: z.array(z.string().max(128)).max(1000) })
+    .nullable()
+    .optional(),
 });
 export const mcpRegistryDraftSchema = z.object({
   draftId: id,
@@ -252,6 +262,8 @@ export const mcpOAuthStartSchema = z.object({
   redirectUri: z.url().max(2048),
   serverUrl: z.url().max(4096),
   transport: z.enum(['http', 'sse']),
+  /** Pre-registered client (Claude plugins): the server is not in the machine's registry until the first sign-in. */
+  oauthClientId: z.string().min(1).max(256).optional(),
 });
 export const mcpOAuthStartResultSchema = z.object({ flowId: id, authorizationUrl: z.url().max(8192), state: z.string().min(16).max(512), expiresAt: z.number().int().nonnegative() });
 export const mcpOAuthCallbackSchema = z.object({ flowId: id, callbackUrl: z.string().min(1).max(8192) });
@@ -272,6 +284,11 @@ export const mcpOAuthCredentialSchema = z.object({
   expiresAt: z.number().int().nonnegative().optional(),
   oauthClientState: z.string().min(1).max(65536).optional(),
 });
+/**
+ * Redirect of servers with a pre-registered OAuth client: such clients (Claude plugins, corporate Keycloak) accept only loopback
+ * addresses. Nothing listens there; the browser shows an error page and the user pastes its address into the hub.
+ */
+export const OAUTH_LOOPBACK_REDIRECT_URI = 'http://localhost:45129/callback';
 export const mcpRegistryOAuthStartRequestSchema = z.object({ machineId });
 export const mcpRegistryOAuthStartResponseSchema = z.object({
   serverId: id,
@@ -279,7 +296,11 @@ export const mcpRegistryOAuthStartResponseSchema = z.object({
   state: z.literal('pending'),
   authorizationUrl: z.url().max(8192),
   expiresAt: z.number().int().nonnegative(),
+  /** `hub` — the provider returns to the hub by itself; `manual` — the user pastes the loopback address it landed on. */
+  callback: z.enum(['hub', 'manual']).optional(),
 });
+export const mcpRegistryOAuthCompleteRequestSchema = z.object({ machineId, callbackUrl: z.string().min(1).max(8192) });
+export const mcpRegistryOAuthCompleteResponseSchema = z.object({ serverId: id, machineId, state: z.literal('pending') });
 export const mcpRegistryOAuthRevokeRequestSchema = z.object({ machineId });
 export const mcpRegistryOAuthRevokeResponseSchema = z.object({ serverId: id, machineId, state: z.literal('needs-login') });
 export const mcpRegistryOAuthValidateRequestSchema = z.object({ machineId });
@@ -314,14 +335,21 @@ export const mcpRegistryStatusSchema = z.object({
     )
     .optional(),
 });
-export const mcpRegistryMachineToggleRequestSchema = z.object({ enabled: z.boolean() });
-export const mcpRegistryMachineToggleResponseSchema = z.object({ machineId, registryEnabled: z.boolean() });
+export const mcpRegistryMachineOverrideRequestSchema = z
+  .object({ revision: z.number().int().nonnegative(), enabled: z.boolean().optional(), resetConfig: z.literal(true).optional() })
+  .refine(body => body.enabled !== undefined || body.resetConfig, { message: 'enabled or resetConfig required' });
+export const mcpRegistryServerMachineSchema = z.object({ machineId, enabled: z.boolean(), customConfig: z.boolean() });
+export const mcpRegistryMachineOverrideResponseSchema = z.object({ serverId: id, revision: z.number().int().nonnegative(), machines: z.array(mcpRegistryServerMachineSchema).max(100) });
 export type McpRegistryOAuthStatus = z.infer<typeof mcpRegistryOAuthStatusSchema>;
 export type McpRegistryStatus = z.infer<typeof mcpRegistryStatusSchema>;
-export type McpRegistryMachineToggleRequest = z.infer<typeof mcpRegistryMachineToggleRequestSchema>;
-export type McpRegistryMachineToggleResponse = z.infer<typeof mcpRegistryMachineToggleResponseSchema>;
+export type McpRegistryMachineOverrideRequest = z.infer<typeof mcpRegistryMachineOverrideRequestSchema>;
+export type McpRegistryMachineOverrideResponse = z.infer<typeof mcpRegistryMachineOverrideResponseSchema>;
+export type McpRegistryServerMachine = z.infer<typeof mcpRegistryServerMachineSchema>;
+export type McpImportState = z.infer<typeof mcpImportStateSchema>;
 export type McpRegistryOAuthStartRequest = z.infer<typeof mcpRegistryOAuthStartRequestSchema>;
 export type McpRegistryOAuthStartResponse = z.infer<typeof mcpRegistryOAuthStartResponseSchema>;
+export type McpRegistryOAuthCompleteRequest = z.infer<typeof mcpRegistryOAuthCompleteRequestSchema>;
+export type McpRegistryOAuthCompleteResponse = z.infer<typeof mcpRegistryOAuthCompleteResponseSchema>;
 export type McpRegistryOAuthRevokeRequest = z.infer<typeof mcpRegistryOAuthRevokeRequestSchema>;
 export type McpRegistryOAuthRevokeResponse = z.infer<typeof mcpRegistryOAuthRevokeResponseSchema>;
 export type McpRegistryOAuthValidateRequest = z.infer<typeof mcpRegistryOAuthValidateRequestSchema>;
@@ -374,14 +402,76 @@ export const mcpOAuthRevokePayload = mcpOAuthRevokeSchema;
 export const mcpOAuthStatusUpdatePayload = mcpOAuthStatusUpdateSchema;
 export const mcpOAuthCredentialPayload = mcpOAuthCredentialSchema;
 export const mcpOAuthTokenUpdatePayload = mcpOAuthCredentialSchema;
-export const mcpImportPreviewPayload = z.object({ machineId, projectRoot: z.string().min(1).max(4096) });
+export const mcpImportProjectRootSchema = z.object({ projectId: id, path: z.string().min(1).max(4096) });
+/** `projectRoot` is what agents before import v2 read; `projectRoots` are the machine's project bindings (D4). */
+export const mcpImportPreviewPayload = z.object({
+  machineId,
+  projectRoot: z.string().min(1).max(4096),
+  projectRoots: z.array(mcpImportProjectRootSchema).max(1000).optional(),
+});
 export const mcpImportCommitPayload = z.object({ importId: id, revision: z.number().int().nonnegative(), serverIds: z.array(id).min(1).max(1000), userConfirmed: z.literal(true) });
 /** Sensitive one-time agent-to-hub import payload. Hub encrypts these values on receipt and never returns them. */
-export const mcpImportSecretValueSchema = z.object({ serverName: name, location: z.enum(['env', 'header', 'url']), key: z.string().min(1).max(256), value: z.string().min(1).max(65536) });
+export const mcpImportSecretValueSchema = z.object({
+  serverName: name,
+  entryId: id.optional(),
+  location: z.enum(['env', 'header', 'url']),
+  key: z.string().min(1).max(256),
+  value: z.string().min(1).max(65536),
+});
+export const mcpImportSourceSchema = z.enum(['user', 'local', 'project', 'codex', 'plugin']);
+export const mcpImportDecisionSchema = z.enum(['new', 'add-machine', 'machine-config', 'unchanged', 'conflict']);
+export const mcpImportWarningSchema = z.enum(['unbound-path', 'duplicate-skipped', 'disabled-in-source', 'project-conflict']);
 export const mcpImportPreviewResultPayload = z.object({
   importId: id,
-  servers: z.array(z.object({ ...mcpServerConfigSchema.shape, source: z.enum(['user', 'local', 'project']) })).max(1000),
+  servers: z
+    .array(
+      z.object({
+        ...mcpServerConfigSchema.shape,
+        source: mcpImportSourceSchema,
+        origin: z.string().max(4096).optional(),
+        projectId: id.optional(),
+        warnings: z.array(mcpImportWarningSchema).max(10).optional(),
+      }),
+    )
+    .max(1000),
   secretsCaptured: z.number().int().nonnegative(),
   warnings: z.array(safeText).max(100),
   secretValues: z.array(mcpImportSecretValueSchema).max(1000).default([]),
 });
+/** One preview entry as the hub shows it: secrets masked, decision computed by the hub (D5). */
+export const mcpImportEntrySchema = z.object({
+  id,
+  name,
+  transport: mcpTransportSchema,
+  command: z.string().max(2048).optional(),
+  url: z.string().max(4096).optional(),
+  source: mcpImportSourceSchema,
+  origin: z.string().max(4096).optional(),
+  projectId: id.optional(),
+  decision: mcpImportDecisionSchema,
+  selected: z.boolean(),
+  selectable: z.boolean(),
+  warnings: z.array(mcpImportWarningSchema).max(10),
+  secrets: z.array(z.object({ name: z.string().max(256), masked: z.literal(true) })).max(256),
+});
+export const mcpImportNoticeSchema = z.enum(['claude-ai-connectors']);
+export const mcpImportPreviewResponseSchema = z.object({
+  importId: id,
+  machineId,
+  revision: z.number().int().nonnegative(),
+  servers: z.array(mcpImportEntrySchema).max(1000),
+  secretsCaptured: z.number().int().nonnegative(),
+  warnings: z.array(safeText).max(100),
+  notices: z.array(mcpImportNoticeSchema).max(10),
+});
+export const mcpImportPreviewRequestSchema = z.object({ machineId, projectRoot: z.string().min(1).max(4096).optional() });
+export const mcpImportCommitResponseSchema = z.object({
+  imported: z.number().int().nonnegative(),
+  servers: z.array(z.object({ serverId: id, name, decision: mcpImportDecisionSchema })).max(1000),
+});
+export type McpImportEntry = z.infer<typeof mcpImportEntrySchema>;
+export type McpImportPreviewResponse = z.infer<typeof mcpImportPreviewResponseSchema>;
+export type McpImportCommitResponse = z.infer<typeof mcpImportCommitResponseSchema>;
+export type McpImportDecision = z.infer<typeof mcpImportDecisionSchema>;
+export type McpImportSource = z.infer<typeof mcpImportSourceSchema>;
+export type McpImportWarning = z.infer<typeof mcpImportWarningSchema>;

@@ -19,7 +19,7 @@ const runner = (over: Partial<RunnerView>): RunnerView => ({
   claudeVersion: '2.1.310',
   protocolVersion: '1.0',
   incompatible: false,
-  vaultRoot: null,
+  defaultDir: null,
   homeDir: null,
   ...over,
 });

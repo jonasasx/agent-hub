@@ -1,5 +1,6 @@
 // Unit tests of status helpers. Requirements: Статусы сессии; Засыпание по простою («уснёт через N мин»).
 import { describe, expect, it } from 'vitest';
+import type { SessionView } from '../../api/types';
 import { RUNNERS, session } from '../../test/factories';
 import { agoLabel, displayStatus, isNow, needsMe, nowList, isReadOnly, runnerIndex, sleepsInMin, statusText, tabNeedsGlyph } from './status';
 import { mergeEvents } from '../workspace/actions';
@@ -100,5 +101,24 @@ describe('change subagents: external and the pending tool (S10.1, S10.3)', () =>
     expect(statusText(p('ExitPlanMode'), 'permission')).toBe('ждёт утверждения плана');
     expect(statusText(p('Bash'), 'permission')).toBe('ждёт разрешения');
     expect(statusText(p(null), 'permission')).toBe('ждёт разрешения');
+  });
+
+  it('needsMe keeps the rule it had before it moved to @agent-hub/shared (change shared-attention-rule)', () => {
+    const idx = runnerIndex(RUNNERS);
+    // the formula of web needsMe before the move
+    const before = (s: SessionView) => {
+      const st = displayStatus(s, idx);
+      const children = s.status === 'waiting' ? (s.subagents?.working ?? 0) : 0;
+      return st === 'permission' || ((st === 'waiting' || (st === 'working' && children > 0)) && s.unread);
+    };
+    const subagents = [undefined, { total: 1, running: 1, working: 1 }, { total: 1, running: 0, working: 0, hub: { total: 1, working: 1 } }];
+    for (const runnerId of ['x1', 'hp'])
+      for (const status of ['working', 'waiting', 'permission', 'sleeping', 'closed'] as const)
+        for (const unread of [false, true])
+          for (const externalActive of [false, true])
+            for (const sub of subagents) {
+              const s = session({ runnerId, status, unread, externalActive, subagents: sub });
+              expect(needsMe(s, idx), JSON.stringify({ runnerId, status, unread, externalActive, sub })).toBe(before(s));
+            }
   });
 });

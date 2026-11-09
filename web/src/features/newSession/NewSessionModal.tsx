@@ -1,12 +1,11 @@
 import { colorVar } from '../sessions/status';
 /**
  * «Новая сессия» (docs/prototype.html modal() type 'new').
- * Requirement (sessions): Запуск сессии из UI — runner (offline ones unavailable), directory (default — the vault root
- * of that machine), permission mode (default bypassPermissions), model, first message; the project is not chosen;
- * «Каталог не найден на X1» keeps the form open.
- * Change `multi-user`: «Начать первую сессию» opens the form with the machine chosen and its home directory
- * (runner-enrollment «Окно подключения машины»); disabled machines are not offered.
- * API: POST /api/sessions → 201 / 422 cwd_not_found|bad_path (text under the directory field) / 409 runner_offline (D10).
+ * Requirement (sessions): Запуск сессии из UI — runner (offline ones unavailable), permission mode (default
+ * bypassPermissions), model, first message, project. session-folder D3: no folder field — the session starts in the
+ * default folder of the machine or in the project folder under it (the hint shows where); «Каталог не найден» keeps
+ * the form open. Change `multi-user`: «Начать первую сессию» opens the form with the machine chosen.
+ * API: POST /api/sessions → 201 / 422 cwd_not_found (text under the project list) / 409 runner_offline (D10).
  * runner-enrollment «Запуск под root»: on a machine whose agent runs as root bypassPermissions is disabled with a hint,
  * the default is acceptEdits (the hub answers 422 bypass_root otherwise).
  * claude-subscriptions (Requirement: Выбор подписки при запуске и handoff): «Подписка» with the last choice preselected,
@@ -23,25 +22,18 @@ import { AttachButton, AttachmentStrip } from '../images/AttachmentStrip';
 
 /** Images of the first message (chat-images «Картинка в новой сессии»): the composer key of the form. */
 const FORM_KEY = 'new';
-import { UI_PERMISSION_MODES, bypassUnavailable, isAbsoluteLocalPath, type Provider, type RunnerView, type UiPermissionMode } from '../../api/types';
+import { UI_PERMISSION_MODES, bypassUnavailable, type Provider, type RunnerView, type UiPermissionMode } from '../../api/types';
 import { usableRunner, useStore } from '../../store';
 import { createSession } from '../workspace/actions';
 import { SubscriptionField, useSubscriptionChoice } from '../subscriptions/SubscriptionField';
 import { ProviderField, providerModels, providerUnavailable } from './ProviderField';
 import { api } from '../../api/client';
-import { t, useT } from '../../i18n';
+import { useT } from '../../i18n';
 import type { UserProjectView } from '../../api/types';
-import { FolderPicker } from './FolderPicker';
-
-export const cwdFormatError = (): string => t('newSession.cwdFormatError');
-
-export function defaultCwd(r: RunnerView | undefined): string {
-  return r?.vaultRoot ?? r?.homeDir ?? '';
-}
+import { ProjectFolderField, folderInvalid, startFolder } from '../projects/ProjectFolderField';
 
 export interface NewSessionPreset {
   runnerId?: string;
-  cwd?: string;
   /** The first session after connecting a machine: the hint about where sessions appear. */
   first?: boolean;
 }
@@ -54,7 +46,6 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
   const initial = runners.find(r => r.id === preset.runnerId) ?? runners.find(r => r.online);
   const [runnerId, setRunnerId] = useState(initial?.id ?? '');
   const runner = runners.find(r => r.id === runnerId);
-  const [cwd, setCwd] = useState(preset.cwd && initial?.id === preset.runnerId ? preset.cwd : defaultCwd(initial));
   const [mode, setMode] = useState<UiPermissionMode>(bypassUnavailable(initial) ? 'acceptEdits' : 'bypassPermissions');
   const noBypass = bypassUnavailable(runner);
   // the default follows the machine (runsAsRoot may arrive after the form opened) until the user picks a mode himself
@@ -68,11 +59,9 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
   const [project, setProject] = useState('auto');
   const [projectSort, setProjectSort] = useState<'recent' | 'name'>('recent');
   const [projectName, setProjectName] = useState('');
-  const [projectPath, setProjectPath] = useState('');
+  const [projectFolder, setProjectFolder] = useState('');
   const [projectDescription, setProjectDescription] = useState('');
   const [projectRemote, setProjectRemote] = useState('');
-  const [bindingPath, setBindingPath] = useState('');
-  const [pickerTarget, setPickerTarget] = useState<'project' | 'binding' | null>(null);
   const models = providerModels(runner, provider, claudeModels);
   const [model, setModel] = useState(models[0]?.value ?? '');
   const [prompt, setPrompt] = useState('');
@@ -90,10 +79,7 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
       .launchPreferences()
       .then(p => {
         const preferredRunner = runners.find(r => r.id === p.runnerId && r.online);
-        if (!launchChoiceTouched.current.runner && preferredRunner) {
-          setRunnerId(preferredRunner.id);
-          setCwd(defaultCwd(preferredRunner));
-        }
+        if (!launchChoiceTouched.current.runner && preferredRunner) setRunnerId(preferredRunner.id);
         if (!launchChoiceTouched.current.provider && p.provider) setProvider(p.provider);
       })
       .catch(() => undefined);
@@ -123,7 +109,6 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
   const pick = (r: RunnerView) => {
     launchChoiceTouched.current.runner = true;
     setRunnerId(r.id);
-    setCwd(defaultCwd(r));
     if (bypassUnavailable(r) && mode === 'bypassPermissions') setMode('acceptEdits');
     setErrors({});
   };
@@ -137,48 +122,26 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
     if (!prompt.trim() && !images.length) errs.prompt = tr('newSession.err.prompt');
     if (sub.blocked) errs.subscription = sub.blocked;
     if (!model) errs.form = tr('newSession.err.noModels');
-    let launchCwd = cwd.trim();
     let explicitProjectId: string | undefined = project !== 'auto' && project !== 'create' ? project : undefined;
-    const chosen = projects.find(p => p.id === project);
     if (project === 'create') {
       if (!projectName.trim()) errs.form = tr('newSession.err.projectName');
-      if (!projectPath.trim()) errs.cwd = tr('newSession.err.projectPath');
-      else if (!isAbsoluteLocalPath(projectPath.trim())) errs.cwd = cwdFormatError();
-      if (!Object.keys(errs).length && !errs.cwd && runner) {
+      if (folderInvalid(projectFolder)) errs.cwd = tr('projects.folder.invalid');
+      if (!Object.keys(errs).length) {
         try {
           const created = await api.createCatalogProject({
             name: projectName.trim(),
             description: projectDescription,
             remote: projectRemote.trim() || null,
-            runnerId: runner.id,
-            path: projectPath.trim(),
+            folder: projectFolder.trim() || null,
           });
           setProjects(p => [created, ...p]);
           setProject(created.id);
-          launchCwd = projectPath.trim();
           explicitProjectId = created.id;
         } catch {
           errs.form = tr('newSession.err.createFailed');
         }
       }
-    } else if (project !== 'auto') {
-      const binding = chosen?.bindings.find(b => b.runnerId === runner?.id);
-      if (binding) launchCwd = binding.path;
-      else if (bindingPath.trim() && runner && chosen) {
-        if (!isAbsoluteLocalPath(bindingPath.trim())) errs.cwd = cwdFormatError();
-        else {
-          try {
-            await api.bindCatalogProject(chosen.id, runner.id, bindingPath.trim());
-            launchCwd = bindingPath.trim();
-          } catch {
-            errs.cwd = tr('newSession.err.bindFailed');
-          }
-        }
-      } else errs.cwd = tr('newSession.err.noBinding');
     }
-    if (project === 'auto' && !cwd.trim()) errs.cwd = tr('newSession.err.cwd');
-    // Same check as the hub (shared/src/paths.ts): network paths would make the machine authenticate to another host.
-    if (!errs.cwd && !isAbsoluteLocalPath(launchCwd)) errs.cwd = cwdFormatError();
     setErrors(errs);
     if (Object.keys(errs).length || !runner) return focusFirstInvalid(errs);
     setBusy(true);
@@ -186,7 +149,6 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
     const r = await createSession(
       {
         runnerId: runner.id,
-        cwd: launchCwd,
         permissionMode: mode,
         model,
         prompt: prompt.trim(),
@@ -227,7 +189,7 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
 
   return createPortal(
     <div className="scrim modal-top" onMouseDown={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-modal="true" aria-hidden={pickerTarget !== null} aria-labelledby={titleId} ref={dialog}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} ref={dialog}>
         <form
           onSubmit={e => void submit(e)}
           onKeyDown={e => {
@@ -322,26 +284,23 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
                 </button>
                 {projects
                   .filter(p => !p.archived)
-                  .map(p => {
-                    const binding = p.bindings.find(b => b.runnerId === runnerId);
-                    return (
-                      <button
-                        type="button"
-                        key={p.id}
-                        className={`seg-opt project-option${project === p.id ? ' on' : ''}`}
-                        onClick={() => setProject(p.id)}
-                        title={binding?.path ?? tr('newSession.noDirTip', { machine: runner?.name ?? tr('newSession.machineFallback') })}
-                      >
-                        <div className="project-option-heading">
-                          <span className="pdot project-initial" aria-hidden="true" style={{ background: colorVar(p.colorKey), display: 'inline-grid' }}>
-                            {Array.from(p.name)[0]?.toLocaleUpperCase()}
-                          </span>
-                          <b>{p.name}</b>
-                        </div>
-                        {!binding && <span>{tr('newSession.noDirBind', { machine: runner?.name ?? tr('newSession.machineFallback') })}</span>}
-                      </button>
-                    );
-                  })}
+                  .map(p => (
+                    <button
+                      type="button"
+                      key={p.id}
+                      className={`seg-opt project-option${project === p.id ? ' on' : ''}`}
+                      onClick={() => setProject(p.id)}
+                      title={startFolder(runner, p.folder) ?? undefined}
+                    >
+                      <div className="project-option-heading">
+                        <span className="pdot project-initial" aria-hidden="true" style={{ background: colorVar(p.colorKey), display: 'inline-grid' }}>
+                          {Array.from(p.name)[0]?.toLocaleUpperCase()}
+                        </span>
+                        <b>{p.name}</b>
+                      </div>
+                      {p.folder && <span className="mono">{p.folder}</span>}
+                    </button>
+                  ))}
                 <button type="button" className={`seg-opt${project === 'create' ? ' on' : ''}`} onClick={() => setProject('create')}>
                   <b>{tr('newSession.createName')}</b>
                   <span>{tr('newSession.createHint')}</span>
@@ -350,21 +309,11 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
             </div>
             {project === 'create' && (
               <>
-                <div className="row2">
-                  <div className="field">
-                    <label htmlFor={`${titleId}-pname`}>{tr('newSession.name')}</label>
-                    <input id={`${titleId}-pname`} className="input" value={projectName} onChange={e => setProjectName(e.target.value)} />
-                  </div>
-                  <div className="field">
-                    <label htmlFor={`${titleId}-ppath`}>{tr('newSession.folderOn', { machine: runner?.name ?? '' })}</label>
-                    <div className="folder-path-row">
-                      <input id={`${titleId}-ppath`} className="input mono" value={projectPath} onChange={e => setProjectPath(e.target.value)} />
-                      <button type="button" className="btn" onClick={() => setPickerTarget('project')}>
-                        {tr('newSession.choose')}
-                      </button>
-                    </div>
-                  </div>
+                <div className="field">
+                  <label htmlFor={`${titleId}-pname`}>{tr('newSession.name')}</label>
+                  <input id={`${titleId}-pname`} className="input" value={projectName} onChange={e => setProjectName(e.target.value)} />
                 </div>
+                <ProjectFolderField id={`${titleId}-pfolder`} value={projectFolder} runner={runner} onChange={setProjectFolder} />
                 <div className="field">
                   <label htmlFor={`${titleId}-pdesc`}>{tr('newSession.description')}</label>
                   <input id={`${titleId}-pdesc`} className="input" value={projectDescription} onChange={e => setProjectDescription(e.target.value)} />
@@ -373,23 +322,9 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
                   <label htmlFor={`${titleId}-premote`}>{tr('newSession.remote')}</label>
                   <input id={`${titleId}-premote`} className="input mono" value={projectRemote} onChange={e => setProjectRemote(e.target.value)} placeholder={tr('newSession.remotePlaceholder')} />
                 </div>
-                <span className="hint">{tr('newSession.createNote')}</span>
               </>
             )}
-            {project !== 'auto' && project !== 'create' && !projects.find(p => p.id === project)?.bindings.some(b => b.runnerId === runnerId) && (
-              <div className="banner">
-                <div className="field">
-                  <b>{tr('newSession.noBinding', { machine: runner?.name ?? '' })}</b>
-                  <label htmlFor={`${titleId}-bind`}>{tr('newSession.bindPath')}</label>
-                  <div className="folder-path-row">
-                    <input id={`${titleId}-bind`} className="input mono" value={bindingPath} onChange={e => setBindingPath(e.target.value)} />
-                    <button type="button" className="btn" onClick={() => setPickerTarget('binding')}>
-                      {tr('newSession.choose')}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
+            {runner && project !== 'create' && <span className="hint">{tr('newSession.startsIn', { path: startFolder(runner, projects.find(p => p.id === project)?.folder) ?? '' })}</span>}
             {errors.cwd && (
               <span className="field-error" role="alert">
                 {errors.cwd}
@@ -464,14 +399,6 @@ export function NewSessionModal({ onClose, preset = {} }: { onClose: () => void;
             </button>
           </div>
         </form>
-        {pickerTarget && runner && (
-          <FolderPicker
-            runnerId={runner.id}
-            initialPath={pickerTarget === 'project' ? projectPath : bindingPath}
-            onChoose={path => (pickerTarget === 'project' ? setProjectPath(path) : setBindingPath(path))}
-            onClose={() => setPickerTarget(null)}
-          />
-        )}
       </div>
     </div>,
     document.body,

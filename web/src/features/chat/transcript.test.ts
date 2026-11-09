@@ -1,5 +1,6 @@
 // buildChat on real `.jsonl` lines (fixtures/real-session.jsonl).
 import { describe, expect, it } from 'vitest';
+import { wrapVoiceTurn } from '@agent-hub/shared';
 import type { PermissionView } from '../../api/types';
 import { fixtureEvents } from './fixtures';
 import { buildChat, matchPending, pendingSlot, toolDiff, toolTarget } from './transcript';
@@ -207,5 +208,20 @@ describe('buildChat: no duplicate notes', () => {
       line('l2', { type: 'system', subtype: 'api_error', error: { formatted: '401 OAuth access token is invalid.' } }),
     ]);
     expect(notes(items)).toEqual(['Ошибка API: 529 Overloaded', 'Ошибка API: 401 OAuth access token is invalid.']);
+  });
+});
+
+// change voice-conversation D6: an utterance of a voice conversation shows its text and the «голосом» mark
+describe('buildChat: voice turns', () => {
+  const ev = (id: string, line: Record<string, unknown>) => ({ kind: 'line', id, ts: '', line }) as never;
+  const user = (id: string, content: unknown) => ev(id, { type: 'user', uuid: id, message: { role: 'user', content } });
+
+  it('the <voice-turn> wrapper is dropped, the item carries voice; a typed message does not', () => {
+    const items = buildChat([user('e1', wrapVoiceTurn('какая погода')), user('e2', [{ type: 'text', text: wrapVoiceTurn('и завтра') }]), user('e3', 'набрано')]);
+    expect(items.map(i => (i.kind === 'user' ? [i.text, i.voice ?? false] : i.kind))).toEqual([
+      ['какая погода', true],
+      ['и завтра', true],
+      ['набрано', false],
+    ]);
   });
 });

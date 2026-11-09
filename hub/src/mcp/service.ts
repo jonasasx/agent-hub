@@ -240,6 +240,11 @@ export class McpService {
     const stored = await storeSessionSnapshot(this.o.db, s.id, snap);
     if (stored?.problemsChanged) await this.o.sessions.upsert(s.id);
     if (await storeMachineServers(this.o.db, s.runner_id, snap, 'session')) await this.emitMachine(s.runner_id);
+    // a server that came up after a failed action (a registry update, a reconnect of the CLI): the old error is history
+    for (const name of stored?.becameConnected ?? []) {
+      const st = this.states.get(s.id)?.get(name);
+      if (st?.lastError && !st.pending) this.setPending(s.id, name, undefined, null);
+    }
     // the sign-in passed without the hub (the CLI's own localhost callback in a browser of the same machine): an accepted
     // newer snapshot shows the server connected — the attempt is over with ok, an earlier error of the server goes too
     // (the agents' clock is not compared with the hub's). An attempt started on a `connected` server («Войти заново»)

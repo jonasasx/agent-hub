@@ -1,6 +1,6 @@
 // The limits snapshot of a subscription in Postgres (subscription-limits design L4, task 5.1): one row per
-// subscription, windows merged by type (a window is replaced only by a newer observation; windows missing from an event
-// stay), `quiet` touches only last_quiet_at. Every query is scoped by user_id. No token here.
+// subscription, windows merged by type (a window is replaced only by a newer observation; a window missing from an event
+// with windows goes once its reset has passed — limits-stale-windows D1), `quiet` touches only last_quiet_at. Every query is scoped by user_id. No token here.
 // Requirements: Снимок лимитов подписки; Состояния «нет данных»; Устаревшие данные; Изоляция лимитов по пользователям.
 import { sql, type Selectable } from 'kysely';
 import type { LimitOverage, LimitWindow, LimitsReason, LimitsSnapshot, SubscriptionLimitsView } from '@agent-hub/shared';
@@ -22,8 +22,10 @@ export function storedWindows(row: Pick<LimitsRow, 'windows'> | undefined): Stor
 }
 
 /**
- * Merge (L4): an incoming window replaces the stored one of its type when it was observed later; stored windows the
- * event does not mention stay. Order: the stored order, new types appended. Returns null when nothing changed.
+ * Merge (L4): an incoming window replaces the stored one of its type when it was observed later. A stored window the
+ * event does not mention stays until its reset; once the reset is at or before `observedAt` of a later event it is dropped (the service
+ * stopped sending it: an Ultra subscription has no `five_hour`, limits-stale-windows D1). An event without windows drops
+ * nothing (D2). Order: the stored order, new types appended. Returns null when nothing changed.
  */
 export function mergeWindows(stored: StoredLimitWindow[], incoming: LimitWindow[], observedAt: Date, source: LimitSource): StoredLimitWindow[] | null {
   const at = observedAt.toISOString();
@@ -40,7 +42,12 @@ export function mergeWindows(stored: StoredLimitWindow[], incoming: LimitWindow[
       changed = true;
     }
   }
-  return changed ? out.slice(-32) : null;
+  if (incoming.length === 0) return changed ? out.slice(-32) : null;
+  const atMs = observedAt.getTime();
+  const gone = (s: StoredLimitWindow) => !incoming.some(w => w.type === s.type) && Date.parse(s.observedAt) < atMs && !!s.resetsAt && Date.parse(s.resetsAt) <= atMs;
+  const kept = out.filter(s => !gone(s));
+  if (kept.length < out.length) changed = true;
+  return changed ? kept.slice(-32) : null;
 }
 
 export async function getLimits(db: Db, userId: string, subscriptionId: string): Promise<LimitsRow | undefined> {

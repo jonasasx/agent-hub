@@ -22,11 +22,11 @@ describe('paths (D9 p. 2)', () => {
     expect(toVaultRelative('../01-ledger/a', '/home/ubuntu/vault/20-personal/01-finance/systems/x', VM)).toBe('20-personal/01-finance/systems/01-ledger/a');
     expect(toVaultRelative('C:\\Users\\alice\\vault', null, HP)).toBe('');
     expect(toVaultRelative('C:\\tmp\\x.txt', null, HP)).toBeNull();
-    expect(toVaultRelative('C:\\Users\\alice\\orca\\workspaces\\scanner-fleet\\fat-agent\\x.go', null, HP)).toBeNull();
+    expect(toVaultRelative('C:\\Users\\alice\\orca\\workspaces\\fleet-ops\\fat-agent\\x.go', null, HP)).toBeNull();
   });
 
   it('a runner without vault_root: the vault found by its shape', () => {
-    expect(toVaultRelative('C:\\Users\\old\\vault\\04-systems\\16-scanner-fleet\\CLAUDE.md', null, UNKNOWN)).toBe('04-systems/16-scanner-fleet/CLAUDE.md');
+    expect(toVaultRelative('C:\\Users\\old\\vault\\04-systems\\16-fleet-ops\\CLAUDE.md', null, UNKNOWN)).toBe('04-systems/16-fleet-ops/CLAUDE.md');
     expect(toVaultRelative('D:\\work\\vault-backup\\x', null, UNKNOWN)).toBeNull();
   });
 
@@ -106,7 +106,7 @@ describe('decisions (D9 p. 6, spec project-grouping)', () => {
   });
 
   it('Одно чтение карточки проекта: 04-site-c «1 чтение в 04-site-c»', () => {
-    expect(decide([touch('read', '10-work/01-scanner/projects/04-site-c/CLAUDE.md')])).toEqual({ project: '04-site-c', secondary: null, text: '1 read in 04-site-c' });
+    expect(decide([touch('read', '10-work/01-devices/projects/04-site-c/CLAUDE.md')])).toEqual({ project: '04-site-c', secondary: null, text: '1 read in 04-site-c' });
   });
 
   it('Запуск в каталоге проекта: 04-copilot «каталог запуска в 04-copilot»', () => {
@@ -114,7 +114,11 @@ describe('decisions (D9 p. 6, spec project-grouping)', () => {
   });
 
   it('Запуск в каталоге области: «Поддержка» «каталог запуска в Поддержка»', () => {
-    const d = decide([touch('cwd', '10-work/04-support'), touch('read', '10-work/04-support/systems/02-mm-sd-bot/README.md'), touch('read', '10-work/04-support/projects/04-itsm-to-jira/CLAUDE.md')]);
+    const d = decide([
+      touch('cwd', '10-work/04-support'),
+      touch('read', '10-work/04-support/systems/02-helpdesk-bot/README.md'),
+      touch('read', '10-work/04-support/projects/04-itsm-to-jira/CLAUDE.md'),
+    ]);
     expect(d.project).toBe('Поддержка');
     expect(d.text).toBe('launch folder in Поддержка');
   });
@@ -178,6 +182,6 @@ describe('decisions (D9 p. 6, spec project-grouping)', () => {
   it('основание: «2 правки и 5 чтений», «git remote g/r», склонения', () => {
     expect(evidenceText({ edits: 2, reads: 5, cwd: 0, remote: null }, 'X')).toBe('2 edits and 5 reads in X');
     expect(evidenceText({ edits: 1, reads: 21, cwd: 1, remote: null }, 'X')).toBe('1 edit and 21 reads in X, launch folder in X');
-    expect(evidenceText({ edits: 0, reads: 0, cwd: 0, remote: 'git.example.com/development/scanner/scanner-fleet' }, 'X')).toBe('git remote development/scanner/scanner-fleet');
+    expect(evidenceText({ edits: 0, reads: 0, cwd: 0, remote: 'git.example.com/development/scanner/fleet-ops' }, 'X')).toBe('git remote development/scanner/fleet-ops');
   });
 });

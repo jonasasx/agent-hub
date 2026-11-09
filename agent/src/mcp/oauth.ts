@@ -133,7 +133,11 @@ export class McpOAuthManager {
         this.pending.delete(flowId);
       }
     }
-    const provider = new OAuthProvider(payload.redirectUri, payload.flowId, payload.serverId, payload.machineId, payload.serverUrl);
+    // A server with a pre-registered client (Claude plugins: `oauth.clientId`) skips dynamic client registration.
+    // The hub sends the id with the command: before the first sign-in the server is not in the machine's registry.
+    const clientId = payload.oauthClientId ?? known?.oauthClientId;
+    const clientInfo = clientId ? { client_id: clientId, redirect_uris: [payload.redirectUri] } : undefined;
+    const provider = new OAuthProvider(payload.redirectUri, payload.flowId, payload.serverId, payload.machineId, payload.serverUrl, clientInfo ? { clientInfo } : undefined);
     try {
       const result = await auth(provider, { serverUrl: provider.serverUrl });
       if (result !== 'REDIRECT' || !provider.authorizationUrl || !provider.codeVerifierValue) throw new Error('OAuth server did not start an authorization flow');
@@ -149,7 +153,8 @@ export class McpOAuthManager {
       timer.unref();
       this.pending.set(payload.flowId, { provider, expiresAt, timer });
       return { flowId: payload.flowId, authorizationUrl: provider.authorizationUrl.toString(), state: provider.stateValue, expiresAt };
-    } catch {
+    } catch (error) {
+      this.log.warn('MCP OAuth start failed', { serverId: payload.serverId, error: error instanceof Error ? error.message : String(error) });
       throw new CmdError('oauth_start_failed', 'MCP OAuth discovery or authorization setup failed');
     }
   }

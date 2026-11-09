@@ -6,27 +6,39 @@ import { tr } from '../i18n.js';
 
 type Tx = ReturnType<typeof tr>;
 
+/** «Sign in with another account» of the two-provider pages: the provider asks for the account again. */
+export const SWITCH_ACCOUNT_HREF = '/auth/login?prompt=select_account';
+/** The same button in single-provider mode (idtoken-at-rest-denied-logout D3): ends the provider session first. */
+export const PROVIDER_LOGOUT_HREF = '/auth/provider-logout';
+
 function esc(s: string): string {
   return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
-function page(locale: Locale, title: string, body: string, head = ''): string {
+/**
+ * The theme of the SPA before first paint (`web/index.html`): the choice is stored per device in `ah-theme`, dark by default.
+ * The pages share the SPA's origin, so they follow the same choice; the CSP lets the script in by its hash (`csp.ts`).
+ */
+export const PAGE_THEME_SCRIPT = "try{document.documentElement.dataset.theme=localStorage.getItem('ah-theme')==='light'?'light':'dark'}catch(e){}";
+
+function page(locale: Locale, title: string, body: string, head = '', themeScript = true): string {
   return `<!doctype html>
 <html lang="${locale}" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)} — Agent Hub</title>
+${themeScript ? `<script>${PAGE_THEME_SCRIPT}</script>` : ''}
 ${head}<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap">
 <style>
   :root { --bg:#12151a; --surface:#1b1f27; --raised:#242a35; --line-strong:#3a4252; --fg:#e4e8ef; --muted:#8d96a7;
     --accent:#f2b544; --accent-fg:#1a1406; color-scheme: dark; }
-  @media (prefers-color-scheme: light) { :root { --bg:#f3f4f6; --surface:#fff; --raised:#e8ebf0; --line-strong:#c7cdd8;
-    --fg:#1b1f27; --muted:#5d6676; --accent:#b97806; --accent-fg:#fff; color-scheme: light; } }
+  :root[data-theme="light"] { --bg:#f3f4f6; --surface:#fff; --raised:#e8ebf0; --line-strong:#c7cdd8;
+    --fg:#1b1f27; --muted:#5d6676; --accent:#b97806; --accent-fg:#fff; color-scheme: light; }
   * { box-sizing: border-box; }
-  body { margin:0; min-height:100vh; display:grid; place-items:center; padding:16px; background:var(--bg); color:var(--fg);
+  body { margin:0; min-height:100vh; display:grid; grid-template-columns:minmax(0, 420px); place-content:center; padding:16px; background:var(--bg); color:var(--fg);
     font: 14px/1.5 "Onest","Segoe UI",system-ui,sans-serif; }
-  .card { width:420px; max-width:100%; background:var(--surface); border:1px solid var(--line-strong); border-radius:14px; padding:24px; }
+  .card { min-width:0; background:var(--surface); border:1px solid var(--line-strong); border-radius:14px; padding:24px; }
   .brand { display:flex; align-items:center; gap:8px; font-weight:700; margin-bottom:16px; }
   .mark { width:22px; height:22px; border-radius:6px; background:var(--accent); color:var(--accent-fg); display:grid; place-items:center;
     font: 600 12px "JetBrains Mono", ui-monospace, Consolas, monospace; }
@@ -75,7 +87,7 @@ export function desktopBadLinkPage(locale: Locale): string {
 
 /**
  * Requirement: Одноразовый код входа — hands the code back to the desktop app: meta refresh to `agenthub://auth?…`
- * and a button with the same link. No inline script (CSP script-src 'self' stays as is).
+ * and a button with the same link. No inline script, not even the theme one: the page carrying the code stays script-free (dark theme).
  */
 export function desktopReturnPage(locale: Locale, link: string): string {
   const t = tr(locale);
@@ -88,6 +100,7 @@ export function desktopReturnPage(locale: Locale, link: string): string {
     `<meta http-equiv="refresh" content="0;url=${href}">
 <meta name="referrer" content="no-referrer">
 `,
+    false,
   );
 }
 
@@ -122,14 +135,56 @@ export function chooseProviderPage(locale: Locale, providers: ProviderId[], retu
   );
 }
 
-/** /invite/<код> of a valid invite: the provider of the invite only. */
-export function invitePage(locale: Locale, email: string, provider: ProviderId, code: string): string {
+/** /invite/<код> of a valid invite: the provider of the invite only; null — the single provider (keycloak-auth D6). */
+export function invitePage(locale: Locale, email: string, provider: ProviderId | null, code: string): string {
   const t = tr(locale);
+  if (provider === null) {
+    return page(
+      locale,
+      t.text('hub.page.invite.title'),
+      `<h1>${esc(t.text('hub.page.invite.h1'))}</h1><p>${t.text('hub.page.invite.textAny', { email: esc(email) })}</p>
+<a class="btn" href="${esc(`/auth/login?invite=${encodeURIComponent(code)}`)}">${esc(t.text('hub.page.signIn'))}</a>`,
+    );
+  }
   return page(
     locale,
     t.text('hub.page.invite.title'),
     `<h1>${esc(t.text('hub.page.invite.h1'))}</h1><p>${t.text('hub.page.invite.text', { email: esc(email), provider: esc(providerLabel(provider)) })}</p>
 ${loginButton(t, provider, `&invite=${encodeURIComponent(code)}`)}`,
+  );
+}
+
+/** A button of the single-provider login page: `label` — the shown text as is. */
+export interface SignInChoice {
+  label: string;
+  href: string;
+}
+
+/**
+ * keycloak-auth D5: the login page of the single provider on an address with hints — the main button (the provider's own
+ * form) and one button per hint («Войти через Corp»). `mainLabel` null — «Войти».
+ */
+export function signInPage(locale: Locale, mainHref: string, mainLabel: string | null, hints: SignInChoice[]): string {
+  const t = tr(locale);
+  const main = `<a class="btn" href="${esc(mainHref)}">${esc(mainLabel ?? t.text('hub.page.signIn'))}</a>`;
+  const others = hints.map(h => `<a class="btn" href="${esc(h.href)}">${esc(t.text('hub.page.signInWith', { provider: h.label }))}</a>`);
+  return page(
+    locale,
+    t.text('hub.page.choose.title'),
+    `<h1>${esc(t.text('hub.page.choose.h1'))}</h1>
+<p>${[main, ...others].join(' ')}</p>`,
+  );
+}
+
+/** keycloak-auth D6 step 4: the address belongs to a hub user bound to another account of the provider. */
+/** `switchHref` — the «sign in with another account» button (single provider: /auth/provider-logout). */
+export function accountMismatchPage(locale: Locale, email: string | null, switchHref = SWITCH_ACCOUNT_HREF): string {
+  const t = tr(locale);
+  return page(
+    locale,
+    t.text('hub.page.accountMismatch.title'),
+    `<h1>${esc(t.text('hub.page.accountMismatch.title'))}</h1><p>${signedInAs(t, email)}${esc(t.text('hub.page.accountMismatch.text'))}</p>
+<a class="btn" href="${esc(switchHref)}">${esc(t.text('hub.page.signInAnother'))}</a>`,
   );
 }
 
@@ -153,21 +208,43 @@ export function inviteMismatchPage(locale: Locale, invitedEmail: string, provide
   return page(locale, t.text('hub.page.inviteMismatch.title'), `<h1>${t.text('hub.page.inviteMismatch.h1', { email: esc(invitedEmail) })}</h1><p>${signedInAs(t, actual)}${text}</p>${again}`);
 }
 
+/**
+ * Scenario «Вход под другим адресом» of the single provider: the invite stays valid; the button signs out of the provider
+ * (idtoken-at-rest-denied-logout D3) so that the right account can be chosen.
+ */
+export function singleInviteMismatchPage(locale: Locale, invitedEmail: string, label: string, actual: string | null, switchHref = PROVIDER_LOGOUT_HREF): string {
+  const t = tr(locale);
+  const text = t.text('hub.page.inviteMismatch.text', { provider: esc(label), email: esc(invitedEmail) });
+  return page(
+    locale,
+    t.text('hub.page.inviteMismatch.title'),
+    `<h1>${t.text('hub.page.inviteMismatch.h1', { email: esc(invitedEmail) })}</h1><p>${signedInAs(t, actual)}${text}</p>
+<a class="btn" href="${esc(switchHref)}">${esc(t.text('hub.page.signInAnother'))}</a>`,
+  );
+}
+
 /** Scenario «Вход без приглашения» (also an unverified address). */
-export function inviteOnlyPage(locale: Locale, email: string | null): string {
+export function inviteOnlyPage(locale: Locale, email: string | null, switchHref = SWITCH_ACCOUNT_HREF): string {
   const t = tr(locale);
   return page(
     locale,
     t.text('hub.page.inviteOnly.title'),
     `<h1>${esc(t.text('hub.page.inviteOnly.title'))}</h1><p>${signedInAs(t, email)}${esc(t.text('hub.page.inviteOnly.text'))}</p>
-<a class="btn" href="/auth/login?prompt=select_account">${esc(t.text('hub.page.signInAnother'))}</a>`,
+<a class="btn" href="${esc(switchHref)}">${esc(t.text('hub.page.signInAnother'))}</a>`,
   );
 }
 
-/** Scenario «Отключение коллеги»: login of a disabled user, and the page /auth/disabled the windows go to (ws 4403). */
-export function disabledPage(locale: Locale): string {
+/**
+ * Scenario «Отключение коллеги»: login of a disabled user, and the page /auth/disabled the windows go to (ws 4403).
+ * `switchHref` — single provider only (idtoken-at-rest-denied-logout D3): the button that ends the provider session.
+ */
+export function disabledPage(locale: Locale, switchHref?: string): string {
   const t = tr(locale);
-  return page(locale, t.text('hub.page.disabled.title'), `<h1>${esc(t.text('hub.page.disabled.title'))}</h1><p>${esc(t.text('hub.page.disabled.text'))}</p>`);
+  const button = switchHref
+    ? `
+<a class="btn" href="${esc(switchHref)}">${esc(t.text('hub.page.signInAnother'))}</a>`
+    : '';
+  return page(locale, t.text('hub.page.disabled.title'), `<h1>${esc(t.text('hub.page.disabled.title'))}</h1><p>${esc(t.text('hub.page.disabled.text'))}</p>${button}`);
 }
 
 /** /auth/desktop/start without a provider when both are configured. */

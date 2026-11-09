@@ -13,6 +13,7 @@ import { fmt, t } from '../../i18n';
 import { useStore } from '../../store';
 import { appendDictation } from './append';
 import { micError, startRecording, type Recording } from './recorder';
+import { useTalk } from './talk';
 
 export type VoicePhase = 'starting' | 'recording' | 'transcribing' | 'error';
 
@@ -120,7 +121,8 @@ function stopWatching() {
 
 /** «Диктовка»: asks for the microphone and starts recording. Does nothing while another dictation runs. */
 export async function startDictation(sessionId: string, paneId: string): Promise<void> {
-  if (get().active) return;
+  // one microphone per window: no dictation during a voice conversation (change voice-conversation)
+  if (get().active || useTalk.getState().active) return;
   const id = ++seq;
   setVoiceNote(sessionId, undefined);
   useVoice.setState({ active: { id, sessionId, paneId, phase: 'starting', startedAt: Date.now(), mime: '' } });

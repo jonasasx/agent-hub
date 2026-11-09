@@ -234,7 +234,7 @@ describe('replication of all transcripts (integration)', () => {
     };
     const cliRc = await mk(VAULT, o => [F.userText({ ...o, entrypoint: 'cli' }, 'привет'), F.bridge(o)]);
     expect(cliRc).toMatchObject({ source: 'terminal', remoteControl: true, isCron: false, readOnlyReason: null });
-    const orca = await mk('C:\\Users\\alice\\orca\\workspaces\\scanner-fleet\\fat-agent', o => [F.userText({ ...o, entrypoint: 'cli' }, 'x'), F.bridge(o)]);
+    const orca = await mk('C:\\Users\\alice\\orca\\workspaces\\fleet-ops\\fat-agent', o => [F.userText({ ...o, entrypoint: 'cli' }, 'x'), F.bridge(o)]);
     expect(orca).toMatchObject({ source: 'orca', remoteControl: true });
     const desktop = await mk(
       VAULT,

@@ -6,7 +6,7 @@
 import { stripRemoteUserinfo } from '@agent-hub/shared';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { watch, type FSWatcher } from 'node:fs';
+import { realpathSync, watch, type FSWatcher } from 'node:fs';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { AGENT_META_LIMIT, PROTOCOL_VERSION, REPL_FILES_PAGE } from '@agent-hub/shared';
@@ -131,7 +131,9 @@ export class Replicator {
     await this.walk();
     if (this.d.watch !== false) {
       try {
-        this.watcher = watch(this.d.projectsDir, { recursive: true }, (_ev, name) => {
+        // The long path: libuv after 1.51 keeps the watched folder as given, and an 8.3 one (TEMP of C:\Users\IVOLYN~1) aborts the
+        // process on the first event — the long name of the file does not start with it (libuv#5010, fs-event.c assert, fixed by #5152).
+        this.watcher = watch(realpathSync.native(this.d.projectsDir), { recursive: true }, (_ev, name) => {
           if (name) void this.touch(String(name));
         });
         this.watcher.on('error', err => this.d.log.warn('transcript watch failed', { error: err.message }));

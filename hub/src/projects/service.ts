@@ -1,8 +1,8 @@
 import type { CatalogDetection } from './detection.js';
-// Path signals and project decisions of sessions (design D9 p. 5–6, 9; tasks 4.4, 4.5, 4.7): touches extracted in the
-// transaction that stores the events (replication and import), the start directory and its remote, a debounced
-// recompute (2 s per session) with the toast «Проект определён», re-matching after a catalogue change without parsing
-// events again, and the full rebuild of projects:reclassify. Pinned (manual) sessions are never changed.
+// Path signals of sessions (design D9 p. 5, 9; tasks 4.4, 4.7): touches extracted in the transaction that stores the
+// events (replication and import), the start directory and its remote, and the full rebuild of projects:reclassify.
+// The project of a session is decided only by the catalog detection (single-project-classifier): a debounced
+// evaluation (2 s per session) after new events, re-evaluation after a catalog change. Pinned sessions are never changed.
 import type { FastifyBaseLogger } from 'fastify';
 import { sql, type Transaction } from 'kysely';
 import { platformOfHome, type I18nText } from '@agent-hub/shared';
@@ -10,7 +10,7 @@ import type { Database, Db } from '../db/db.js';
 import type { RunnerRow } from '../runners/repo.js';
 import { normalizeRemote, stripUserinfo } from './catalog.js';
 import type { ProjectCatalog } from './catalogService.js';
-import { classify, DELETED_EVIDENCE, type Decision, type Evidence, type Touch } from './classify.js';
+import { DELETED_EVIDENCE, type Evidence } from './classify.js';
 import { signalPath, toolPaths, toVaultRelative, type RunnerPaths } from './signals.js';
 import { KeyedSerial } from '../util/serial.js';
 
@@ -34,16 +34,6 @@ export async function withDbRetry<T>(fn: () => Promise<T>, attempts = 3): Promis
       await new Promise(r => setTimeout(r, 100 * (2 * i - 1)));
     }
   }
-}
-
-export interface RecomputeOptions {
-  toast?: boolean;
-  fresh?: boolean;
-  dryRun?: boolean;
-  /** The start touches are already current (rebuild). */
-  skipStart?: boolean;
-  /** No session.upsert or toast (unpin answers with the view). */
-  quiet?: boolean;
 }
 
 /**
@@ -74,15 +64,14 @@ export interface ProjectServiceOptions {
   db: Db;
   catalog: ProjectCatalog;
   log: Pick<FastifyBaseLogger, 'info' | 'warn' | 'error'>;
-  /** A project decided or changed by the paths (not by a catalogue change or the CLI): toast + session.upsert. */
-  onDecided?: (sessionId: string, projectId: string | null) => Promise<void>;
   /** After any change of the project fields of a session (session.upsert). */
   onChanged?: (sessionId: string) => Promise<void>;
   debounceMs?: number;
 }
 
-export function runnerPaths(r: Pick<RunnerRow, 'home_dir' | 'vault_root'> | null | undefined): RunnerPaths {
-  return { windows: platformOfHome(r?.home_dir ?? null) === 'windows', homeDir: r?.home_dir ?? null, vaultRoot: r?.vault_root ?? null };
+/** session-folder D5: relative paths count from the machine's default folder (it replaced VAULT_ROOT). */
+export function runnerPaths(r: Pick<RunnerRow, 'home_dir' | 'default_dir'> | null | undefined): RunnerPaths {
+  return { windows: platformOfHome(r?.home_dir ?? null) === 'windows', homeDir: r?.home_dir ?? null, vaultRoot: r?.default_dir ?? null };
 }
 
 export class ProjectService {
@@ -103,7 +92,7 @@ export class ProjectService {
     if (this.detection) this.track(sessionId, this.detection.evaluate(sessionId, firstMessage));
   }
   private async recomputeWithCatalog(sessionId: string): Promise<void> {
-    await this.recompute(sessionId, { toast: true });
+    await this.refreshStart(sessionId);
     await this.detection?.evaluate(sessionId);
   }
   private readonly timers = new Map<string, NodeJS.Timeout>();
@@ -161,7 +150,7 @@ export class ProjectService {
     }
   }
 
-  /** Recompute of the session after its events arrived: debounced (2 s), the toast when the paths decide. */
+  /** Evaluation of the session after its events arrived: debounced (2 s). */
   schedule(sessionId: string): void {
     const t = this.timers.get(sessionId);
     if (t) clearTimeout(t);
@@ -189,7 +178,6 @@ export class ProjectService {
     const run = new Promise<void>(resolve => setImmediate(resolve)).then(async () => {
       for (const id of ids) {
         const fail = (err: unknown) => this.o.log.warn({ err, sessionId: id }, 'deleted project reclassification failed');
-        await this.recompute(id, { fresh: true, quiet: true, skipStart: true }).catch(fail);
         // Path and remote rules of the remaining catalog projects, never the model.
         await this.detection?.evaluate(id, undefined, true).catch(fail);
       }
@@ -214,24 +202,12 @@ export class ProjectService {
   }
 
   /**
-   * Runs `fn` in the queue of the session's project decisions: recompute, refreshStart, unpin, pin, rebuild of one
+   * Runs `fn` in the queue of the session's project decisions: evaluate, refreshStart, unpin, pin, rebuild of one
    * session never interleave in this process (review M4a p. 5). `fn` must not call the public methods of the same
    * session (they enqueue on the same key).
    */
   serialized<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
     return this.serial.run(sessionId, fn);
-  }
-
-  /** Touches of the session that count: not those of superseded files. */
-  private async touchesOf(sessionId: string): Promise<Touch[]> {
-    const rows = await this.o.db
-      .selectFrom('path_touches as pt')
-      .innerJoin('transcript_files as f', 'f.id', 'pt.file_id')
-      .select(['pt.op', 'pt.project_id', 'pt.path_norm'])
-      .where('pt.session_id', '=', sessionId)
-      .where('f.superseded_at', 'is', null)
-      .execute();
-    return rows.map(r => ({ op: r.op, projectId: r.project_id, pathNorm: r.path_norm }));
   }
 
   /** The start-directory touch of the session brought up to date (cwd and remote can arrive after the first lines). */
@@ -243,7 +219,7 @@ export class ProjectService {
     const s = await this.o.db
       .selectFrom('sessions as s')
       .innerJoin('runners as r', 'r.id', 's.runner_id')
-      .select(['s.id', 's.user_id', 's.cwd', 's.git_remote', 'r.home_dir', 'r.vault_root'])
+      .select(['s.id', 's.user_id', 's.cwd', 's.git_remote', 'r.home_dir', 'r.default_dir'])
       .where('s.id', '=', sessionId)
       .executeTakeFirst();
     if (!s) return;
@@ -268,97 +244,87 @@ export class ProjectService {
     });
   }
 
-  /** Decision for the session; written unless pinned. `fresh` — no hysteresis (unpin). Returns the decision. */
-  recompute(sessionId: string, opts: RecomputeOptions = {}): Promise<Decision | null> {
-    return this.serialized(sessionId, () => withDbRetry(() => this.recomputeNow(sessionId, opts)));
-  }
-
-  private async recomputeNow(sessionId: string, opts: RecomputeOptions): Promise<Decision | null> {
-    const s = await this.o.db
-      .selectFrom('sessions')
-      .select(['id', 'user_id', 'source', 'project_id', 'project_source', 'secondary_project_id', 'project_evidence'])
-      .where('id', '=', sessionId)
-      .executeTakeFirst();
-    if (!s || s.project_source === 'manual') return null;
-    if (!opts.dryRun && !opts.skipStart) await this.refreshStartNow(sessionId);
-    const current = !opts.fresh && s.project_source === 'auto' ? s.project_id : null;
-    let d = classify(await this.touchesOf(sessionId), this.o.catalog.infos(s.user_id), current, { cron: s.source === 'cron' });
-    // An inherited project (fork) stays until the paths name a leader.
-    // (also with `fresh`: --fresh turns off the hysteresis of an auto project only, review M4b p. 7)
-    if (s.project_source === 'inherited' && !d.projectId) d = { projectId: s.project_id, secondaryId: null, evidence: null };
-    if (opts.dryRun) return d;
-    const source = s.project_source === 'inherited' && d.projectId === s.project_id && !d.evidence ? 'inherited' : d.projectId ? 'auto' : 'none';
-    const evidence = d.evidence ? JSON.stringify(d.evidence) : null;
-    const same = s.project_id === d.projectId && s.secondary_project_id === d.secondaryId && s.project_source === source && JSON.stringify(s.project_evidence ?? null) === (evidence ?? 'null');
-    if (same) return d;
-    const r = await this.o.db
-      .updateTable('sessions')
-      .set({ project_id: d.projectId, secondary_project_id: d.secondaryId, project_source: source, project_evidence: evidence })
-      .where('id', '=', sessionId)
-      .where('project_source', '<>', 'manual')
-      .executeTakeFirst();
-    // Pinned meanwhile (another process): nothing written, no toast.
-    if (!Number(r.numUpdatedRows)) return d;
-    if (opts.quiet) return d;
-    if (opts.toast && d.projectId && d.projectId !== s.project_id) await this.o.onDecided?.(sessionId, d.projectId);
-    else await this.o.onChanged?.(sessionId);
-    return d;
-  }
-
-  /** «Открепить»: the label removed, the classifier decides afresh (no hysteresis); the caller sends session.upsert. */
-  unpin(sessionId: string): Promise<Decision | null> {
-    return this.serialized(sessionId, async () => {
-      await this.o.db.transaction().execute(async tx => {
+  /** «Открепить» «Без проекта»: the label removed, the catalog detection decides afresh; the caller sends session.upsert. */
+  async unpin(sessionId: string): Promise<void> {
+    await this.serialized(sessionId, () =>
+      this.o.db.transaction().execute(async tx => {
         await tx.deleteFrom('classification_labels').where('session_id', '=', sessionId).execute();
         await tx.updateTable('sessions').set({ project_source: 'none', project_id: null, secondary_project_id: null, project_evidence: null }).where('id', '=', sessionId).execute();
-      });
-      return this.recomputeNow(sessionId, { fresh: true, quiet: true });
-    });
+      }),
+    );
+    await this.detection?.evaluate(sessionId);
+  }
+
+  /**
+   * Hub start (single-project-classifier D2): the legacy path project removed from every session; a pin to «Без проекта»
+   * stays, a pin to a legacy group goes. The sessions without a catalog link are evaluated by the catalog detection in
+   * the background. Idempotent: nothing writes the legacy fields any more. Returns the ids evaluated.
+   */
+  async dropLegacy(): Promise<string[]> {
+    const linked = sql<boolean>`EXISTS (SELECT 1 FROM session_projects sp WHERE sp.user_id = sessions.user_id AND sp.session_id = sessions.id)`;
+    const rows = await this.o.db
+      .updateTable('sessions')
+      .set({
+        project_id: null,
+        secondary_project_id: null,
+        project_evidence: null,
+        project_source: sql`CASE WHEN project_source = 'manual' AND (project_id IS NULL OR ${linked}) THEN 'manual' ELSE 'none' END`,
+      })
+      .where(eb => eb.or([eb('project_id', 'is not', null), eb('secondary_project_id', 'is not', null), eb('project_source', 'in', ['inherited', 'auto'])]))
+      .returning(['id', sql<boolean>`${linked}`.as('linked')])
+      .execute();
+    if (rows.length) this.o.log.info({ sessions: rows.length }, 'legacy session projects dropped');
+    const ids = rows.filter(r => !r.linked).map(r => r.id);
+    // a copy: the caller may sort the result
+    const pending = [...ids];
+    if (this.detection)
+      this.track(
+        'legacy',
+        this.reevaluateLegacy(
+          this.detection,
+          pending,
+          rows.map(r => r.id),
+        ),
+      );
+    return ids;
+  }
+
+  /** The sessions left without a link by dropLegacy are evaluated by the catalog; every changed session is announced. */
+  private async reevaluateLegacy(detection: CatalogDetection, unlinked: string[], changed: string[]): Promise<void> {
+    for (const id of unlinked) {
+      await detection.evaluate(id).catch((err: unknown) => this.o.log.warn({ err, sessionId: id }, 'legacy session reclassification failed'));
+    }
+    for (const id of changed) await this.o.onChanged?.(id);
   }
 
   /**
    * projects:reclassify: the touches of the session rebuilt from its events (main and subagent, not superseded). Only
    * tool calls are read (jsonb_path_query); the events are read and the touches replaced in one transaction under the
-   * session's touch lock, so a chunk the running hub stores meanwhile is not lost (review M4a p. 7, 8).
+   * session's touch lock, so a chunk the running hub stores meanwhile is not lost (review M4a p. 7, 8). The project is
+   * decided by the catalog detection of the caller.
    */
-  rebuild(sessionId: string, dryRun: boolean, fresh = false): Promise<Decision | null> {
-    return this.serialized(sessionId, () => withDbRetry(() => this.rebuildNow(sessionId, dryRun, fresh)));
+  rebuild(sessionId: string): Promise<void> {
+    return this.serialized(sessionId, () => withDbRetry(() => this.rebuildNow(sessionId)));
   }
 
-  /** `fresh` (projects:reclassify --fresh): decided from scratch, the stored auto project not taken into account. */
-  private async rebuildNow(sessionId: string, dryRun: boolean, fresh: boolean): Promise<Decision | null> {
+  private async rebuildNow(sessionId: string): Promise<void> {
     const s = await this.o.db
       .selectFrom('sessions as s')
       .innerJoin('runners as r', 'r.id', 's.runner_id')
-      .select(['s.id', 's.user_id', 's.cwd', 's.git_remote', 's.source', 's.project_id', 's.project_source', 'r.home_dir', 'r.vault_root'])
+      .select(['s.id', 's.user_id', 's.cwd', 's.git_remote', 'r.home_dir', 'r.default_dir'])
       .where('s.id', '=', sessionId)
       .executeTakeFirst();
-    if (!s) return null;
-    if (dryRun) {
-      if (s.project_source === 'manual') return null;
-      const rows = await this.collect(this.o.db, s);
-      // The same decision as the live recompute (review of the M4a prod sample: a session the live path kept by
-      // hysteresis came out «Без проекта» from scratch): the auto project as `current`, an inherited one kept.
-      let d = classify(
-        rows.map(r => ({ op: r.op, projectId: r.project_id, pathNorm: r.path_norm })),
-        this.o.catalog.infos(s.user_id),
-        !fresh && s.project_source === 'auto' ? s.project_id : null,
-        { cron: s.source === 'cron' },
-      );
-      if (s.project_source === 'inherited' && !d.projectId) d = { projectId: s.project_id, secondaryId: null, evidence: null };
-      return d;
-    }
+    if (!s) return;
     await this.o.db.transaction().execute(async tx => {
       await lockSessionTouches(tx, sessionId);
       const rows = await this.collect(tx, s);
       await tx.deleteFrom('path_touches').where('session_id', '=', sessionId).execute();
       await this.insertTouches(tx, rows);
     });
-    return this.recomputeNow(sessionId, { toast: false, skipStart: true, fresh });
   }
 
   /** All touches of the session from its stored tool calls and its start directory. */
-  private async collect(db: Db | Transaction<Database>, s: SessionLike & Pick<RunnerRow, 'home_dir' | 'vault_root'>): Promise<TouchRow[]> {
+  private async collect(db: Db | Transaction<Database>, s: SessionLike & Pick<RunnerRow, 'home_dir' | 'default_dir'>): Promise<TouchRow[]> {
     const files = await db.selectFrom('transcript_files').select(['id', 'kind']).where('session_id', '=', s.id).where('superseded_at', 'is', null).orderBy('id').execute();
     if (!files.length) return [];
     const rp = runnerPaths(s);

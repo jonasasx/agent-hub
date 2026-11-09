@@ -2,6 +2,10 @@ import type { Dict } from '../../index.js';
 
 export default {
   'files.action.copyPath': 'Copiar ruta',
+  'files.action.download': 'Descargar',
+  'files.action.downloadFailed': 'No se pudo descargar {name}',
+  'files.action.downloadNamed': 'Descargar {name}',
+  'files.action.downloadOutdated': 'Actualiza el agente en {machine} para descargar archivos',
   'files.action.inTree': 'En el árbol',
   'files.action.mention': 'Al mensaje',
   'files.action.mentionTitle': 'Insertar la ruta en el campo de entrada de la sesión “{title}”',

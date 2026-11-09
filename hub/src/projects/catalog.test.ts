@@ -27,9 +27,9 @@ describe('path matcher', () => {
 
 describe('remotes', () => {
   it('normalisation and credentials', () => {
-    expect(normalizeRemote('git@git.example.com:development/scanner/scanner-fleet.git')).toBe('git.example.com/development/scanner/scanner-fleet');
+    expect(normalizeRemote('git@git.example.com:development/scanner/fleet-ops.git')).toBe('git.example.com/development/scanner/fleet-ops');
     expect(normalizeRemote('https://oauth2:glpat-xyz@git.example.com/alice/pos.git')).toBe('git.example.com/alice/pos');
-    expect(normalizeRemote('ssh://git@gitlab.com:22/Jonasasx/Agent-Hub.git/')).toBe('gitlab.com/jonasasx/agent-hub');
+    expect(normalizeRemote('ssh://git@git.example.com:22/Alice/Agent-Hub.git/')).toBe('git.example.com/alice/agent-hub');
     expect(normalizeRemote('https://u:p@ss@git.example.com/a/b.git')).toBe('git.example.com/a/b');
     expect(stripUserinfo('https://oauth2:glpat-xyz@git.example.com/alice/pos.git')).toBe('https://git.example.com/alice/pos.git');
     expect(stripUserinfo('https://u:p@ss@git.example.com/a/b.git')).toBe('https://git.example.com/a/b.git');
@@ -43,7 +43,7 @@ describe('catalogue from the DB (Postgres)', () => {
   let bob: string;
   beforeAll(async () => {
     t = await createTestDb();
-    ivan = (await t.pool.query(`INSERT INTO users (email, role) VALUES ('jonasasx@gmail.com', 'admin') RETURNING id`)).rows[0].id;
+    ivan = (await t.pool.query(`INSERT INTO users (email, role) VALUES ('alice@example.com', 'admin') RETURNING id`)).rows[0].id;
     bob = (await t.pool.query(`INSERT INTO users (email) VALUES ('bob@example.com') RETURNING id`)).rows[0].id;
     await seedLegacyProjects(t.db, ivan, fixtureCatalog(FIXTURE_VAULT));
   });
@@ -55,11 +55,11 @@ describe('catalogue from the DB (Postgres)', () => {
     const slug = (id: string | null) => catalog.row(id)?.slug ?? null;
     expect(slug(catalog.matchPath(ivan, '20-personal/01-finance/systems/01-ledger/x.py'))).toBe('01-ledger');
     expect(slug(catalog.matchPath(ivan, '20-personal/05-pos/repos/agent-hub/hub/src/app.ts'))).toBe('05-agent-hub');
-    expect(slug(catalog.matchPath(ivan, '10-work/04-support/repos/mm-sms-bridge/src/x.ts'))).toBe('03-mm-sms-bridge');
+    expect(slug(catalog.matchPath(ivan, '10-work/04-support/repos/sms-bridge/src/x.ts'))).toBe('03-sms-bridge');
     expect(catalog.row(catalog.matchPath(ivan, 'CLAUDE.md'))?.title).toBe('Vault');
     expect(catalog.row(catalog.matchPath(ivan, '10-work/04-support/notes.md'))).toMatchObject({ kind: 'area', title: 'Поддержка' });
     expect(catalog.matchPath(ivan, '50-unknown/x')).toBeNull();
-    expect(slug(catalog.matchRemote(ivan, 'git.example.com/development/scanner/scanner-fleet'))).toBe('02-scanner-fleet');
+    expect(slug(catalog.matchRemote(ivan, 'git.example.com/development/scanner/fleet-ops'))).toBe('02-fleet-ops');
     expect(catalog.matchRemote(ivan, 'git.example.com/none/none')).toBeNull();
     const vault = catalog.list(ivan).find(r => r.title === 'Vault')!;
     expect(catalog.infos(ivan).get(vault.id)).toMatchObject({ readsFree: true });

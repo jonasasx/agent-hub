@@ -5,17 +5,29 @@
  * адреса», «Приглашение на адрес существующего пользователя». Requirement: Отключение пользователя (not oneself).
  * Requirement: Администратор не видит чужие сессии — per user only the aggregates «2 машины, 1 в сети».
  * API: GET/POST/DELETE /api/admin/invites, GET /api/admin/users, POST /api/admin/users/:id/disable|enable (D10).
+ * keycloak-auth D6: with a single provider (`me.singleProvider`) the invite has no provider choice and a user shows the source.
  */
 import { useCallback, useEffect, useId, useState } from 'react';
 import { ApiError, api } from '../../api/client';
-import type { AdminUserView, CreateInviteResponse, InviteView, LoginProvider } from '../../api/types';
+import type { AdminUserView, CreateInviteResponse, InviteView, LoginProvider, UserSource } from '../../api/types';
 import { t, useT } from '../../i18n';
 import { useStore } from '../../store';
 import { CommandBox } from '../machines/EnrollModal';
 import { dateTime } from '../machines/machines';
 import { useUnsavedInput } from '../update/unsaved';
 
-export const PROVIDER_LABEL: Record<LoginProvider, string> = { google: 'Google', keycloak: 'Keycloak' };
+export const PROVIDER_LABEL: Record<LoginProvider, string> = { google: 'Google', keycloak: 'Keycloak', oidc: 'OIDC' };
+
+/** keycloak-auth: the name of the single provider from /api/me; null — two-provider mode. */
+const singleProviderOf = (s: ReturnType<typeof useStore.getState>): string | null => (s.auth.kind === 'signed_in' ? s.auth.me.singleProvider : null);
+
+/** A provider of a user, an invite or a login; `oidc` and an invite without a provider are the single provider. */
+export function providerLabel(p: LoginProvider | null): string {
+  if (p && p !== 'oidc') return PROVIDER_LABEL[p];
+  return singleProviderOf(useStore.getState()) ?? PROVIDER_LABEL.oidc;
+}
+
+const sourceText = (s: UserSource): string => t(`settings.users.source.${s}`);
 
 const inviteStatus = (status: InviteView['status']): string => t(`settings.users.status.${status}`);
 
@@ -39,7 +51,8 @@ function InviteForm({ onCreated }: { onCreated: (r: CreateInviteResponse) => voi
   const tr = useT();
   const id = useId();
   const [email, setEmail] = useState('');
-  const [provider, setProvider] = useState<LoginProvider>('google');
+  const [provider, setProvider] = useState<'google' | 'keycloak'>('google');
+  const single = useStore(singleProviderOf) !== null;
   useUnsavedInput(email.trim() !== '');
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -50,7 +63,7 @@ function InviteForm({ onCreated }: { onCreated: (r: CreateInviteResponse) => voi
     setBusy(true);
     setErr(null);
     try {
-      onCreated(await api.createInvite({ email: v, provider }));
+      onCreated(await api.createInvite(single ? { email: v } : { email: v, provider }));
       setEmail('');
     } catch (e2) {
       setErr(
@@ -80,18 +93,20 @@ function InviteForm({ onCreated }: { onCreated: (r: CreateInviteResponse) => voi
           aria-describedby={err ? `${id}-err` : undefined}
         />
       </div>
-      <div className="field">
-        <span className="lbl" id={`${id}-p`}>
-          {tr('settings.users.via')}
-        </span>
-        <div className="segmini" role="radiogroup" aria-labelledby={`${id}-p`}>
-          {(['google', 'keycloak'] as const).map(p => (
-            <button key={p} type="button" role="radio" aria-checked={provider === p} className={provider === p ? 'on' : ''} onClick={() => setProvider(p)}>
-              {PROVIDER_LABEL[p]}
-            </button>
-          ))}
+      {!single && (
+        <div className="field">
+          <span className="lbl" id={`${id}-p`}>
+            {tr('settings.users.via')}
+          </span>
+          <div className="segmini" role="radiogroup" aria-labelledby={`${id}-p`}>
+            {(['google', 'keycloak'] as const).map(p => (
+              <button key={p} type="button" role="radio" aria-checked={provider === p} className={provider === p ? 'on' : ''} onClick={() => setProvider(p)}>
+                {PROVIDER_LABEL[p]}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
       <button type="submit" className="btn primary" disabled={busy}>
         {busy ? tr('settings.users.creating') : tr('settings.users.invite')}
       </button>
@@ -122,13 +137,15 @@ function UserRow({ u, self, onChange }: { u: AdminUserView; self: boolean; onCha
     }
   };
   const off = u.status === 'disabled';
+  const single = useStore(singleProviderOf) !== null;
   return (
     <li className={`urow${off ? ' disabled' : ''}`} aria-label={u.email}>
       <div className="u-main">
         <b className="u-name">{u.name ?? u.email}</b>
         {u.name && <span className="u-mail">{u.email}</span>}
         <span className="u-tags">
-          <span className="tag">{PROVIDER_LABEL[u.provider]}</span>
+          <span className="tag">{providerLabel(u.provider)}</span>
+          {single && <span className="tag">{sourceText(u.source)}</span>}
           {u.role === 'admin' && <span className="tag">{tr('settings.users.tagAdmin')}</span>}
           {off && <span className="tag bad">{tr('settings.users.tagDisabled')}</span>}
           {self && <span className="tag">{tr('settings.users.tagSelf')}</span>}
@@ -155,11 +172,16 @@ function UserRow({ u, self, onChange }: { u: AdminUserView; self: boolean; onCha
               {tr('settings.users.enable')}
             </button>
           ) : confirm ? (
-            <div className="banner warn inline-warn" role="alertdialog" aria-label={tr('settings.users.confirmLabel', { email: u.email })}>
+            <div
+              className="banner warn inline-warn"
+              role="alertdialog"
+              aria-label={tr('settings.users.confirmLabel', { email: u.email })}
+              onKeyDown={e => e.key === 'Escape' && (e.stopPropagation(), setConfirm(false))}
+            >
               <div className="b-text">
                 <b>{tr('settings.users.confirmTitle', { name: u.name ?? u.email })}</b> {tr('settings.users.confirmBody')}
               </div>
-              <button type="button" className="btn ghost" onClick={() => setConfirm(false)}>
+              <button type="button" className="btn ghost" autoFocus onClick={() => setConfirm(false)}>
                 {tr('settings.users.cancel')}
               </button>
               <button type="button" className="btn danger" disabled={busy} onClick={() => void toggle(false)}>
@@ -229,7 +251,7 @@ export function UsersPage() {
         <div className="invite-link" role="status">
           <p>
             {tr('settings.users.linkBefore')} <b>{created.invite.email}</b>{' '}
-            {tr('settings.users.linkAfter', { provider: PROVIDER_LABEL[created.invite.provider], term: termLeft(created.invite.expiresAt) })}
+            {tr('settings.users.linkAfter', { provider: providerLabel(created.invite.provider), term: termLeft(created.invite.expiresAt) })}
           </p>
           <CommandBox command={created.url} label={tr('settings.users.linkLabel', { email: created.invite.email })} />
         </div>
@@ -261,7 +283,7 @@ export function UsersPage() {
               {load.invites.map(i => (
                 <li key={i.id} className={`irow ${i.status}`}>
                   <span className="i-mail">{i.email}</span>
-                  <span className="tag">{PROVIDER_LABEL[i.provider]}</span>
+                  <span className="tag">{providerLabel(i.provider)}</span>
                   <span className="i-st">
                     {i.status === 'active'
                       ? tr('settings.users.inviteActive', { term: termLeft(i.expiresAt) })

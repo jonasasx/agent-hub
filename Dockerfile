@@ -1,8 +1,10 @@
 # syntax=docker/dockerfile:1
 # Hub image (design.md D17): web build + hub build → runtime node:22-slim. Build context: repository root.
 #   docker compose -f deploy/compose.yml build hub
+# Builds from the repository root; --build-arg REGISTRY=<registry proxy> pulls the base image through a mirror (change paas-deployment D3).
 
-ARG NODE_IMAGE=node:22-slim
+ARG REGISTRY=docker.io
+ARG NODE_IMAGE=${REGISTRY}/library/node:22-slim
 
 # ---------- build: shared, hub, web, agent (the build the hub serves, change multi-user M5) ----------
 FROM ${NODE_IMAGE} AS build

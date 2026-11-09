@@ -8,12 +8,21 @@ import { useStore } from '../../store';
 import { mockFetch, resetStore } from '../../test/factories';
 import { UsersPage, machinesText, termLeft } from './UsersPage';
 
-const me: MeResponse = { user: { id: 'u-ivan', email: 'jonasasx@gmail.com', role: 'admin', name: 'Иван Волынкин', provider: 'google' }, vapidPublicKey: null, voiceInput: false, locale: null };
+const me: MeResponse = {
+  user: { id: 'u-ivan', email: 'alice@example.com', role: 'admin', name: 'Алиса Смит', provider: 'google' },
+  vapidPublicKey: null,
+  voiceInput: false,
+  voiceTalk: false,
+  locale: null,
+  accountUrl: null,
+  singleProvider: null,
+};
 const user = (over: Partial<AdminUserView>): AdminUserView => ({
   id: 'u-ivan',
-  email: 'jonasasx@gmail.com',
-  name: 'Иван Волынкин',
+  email: 'alice@example.com',
+  name: 'Алиса Смит',
   provider: 'google',
+  source: 'legacy',
   role: 'admin',
   status: 'active',
   invitedAt: null,
@@ -59,7 +68,7 @@ describe('UsersPage', () => {
     const ks = await screen.findByRole('listitem', { name: 'bob@example.com' });
     expect(within(ks).getByText('2 машины, 1 в сети')).toBeInTheDocument();
     expect(within(ks).getByRole('button', { name: 'Отключить' })).toBeInTheDocument();
-    const ivan = screen.getByRole('listitem', { name: 'jonasasx@gmail.com' });
+    const ivan = screen.getByRole('listitem', { name: 'alice@example.com' });
     expect(within(ivan).getByText('это вы')).toBeInTheDocument();
     expect(within(ivan).queryByRole('button', { name: 'Отключить' })).not.toBeInTheDocument();
     expect(screen.getByText(/использовано/)).toBeInTheDocument();
@@ -148,5 +157,29 @@ describe('UsersPage', () => {
     mockFetch({ 'GET /api/admin/users': () => ({ status: 500, body: {} }) });
     render(<UsersPage />);
     expect(await screen.findByText(/Список не загружен/)).toBeInTheDocument();
+  });
+
+  it('keycloak-auth D6: with a single provider the invite has no provider choice and users show their source', async () => {
+    useStore.setState({ auth: { kind: 'signed_in', me: { ...me, singleProvider: 'Agent Hub ID' } } });
+    const created = invite({ id: 'i3', email: 'carol@example.com', provider: null });
+    const calls = mockFetch({
+      'GET /api/admin/users': () => ({
+        status: 200,
+        body: { users: [user({ provider: 'oidc', source: 'legacy' }), user({ id: 'u-c', email: 'dan@example.com', name: null, provider: 'oidc', source: 'signup' })] },
+      }),
+      'GET /api/admin/invites': () => ({ status: 200, body: { invites: [] } }),
+      'POST /api/admin/invites': () => ({ status: 201, body: { invite: created, url: 'https://hub.example.com/invite/xyz' } }),
+    });
+    const u = userEvent.setup();
+    render(<UsersPage />);
+    const dan = await screen.findByRole('listitem', { name: 'dan@example.com' });
+    expect(within(dan).getByText('регистрация')).toBeInTheDocument();
+    expect(within(dan).getByText('Agent Hub ID')).toBeInTheDocument();
+    expect(within(screen.getByRole('listitem', { name: 'alice@example.com' })).getByText('до перехода')).toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Google' })).not.toBeInTheDocument();
+    await u.type(screen.getByLabelText('Почта'), 'carol@example.com');
+    await u.click(screen.getByRole('button', { name: 'Пригласить' }));
+    expect(calls.find(c => c.method === 'POST')?.body).toEqual({ email: 'carol@example.com' });
+    expect(await screen.findByText(/вход через Agent Hub ID/)).toBeInTheDocument();
   });
 });

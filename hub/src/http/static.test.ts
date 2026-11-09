@@ -18,6 +18,7 @@ describe('static web serving', () => {
     // client-versions: the build info the web build writes (fixture; the real file comes from the web build).
     writeFileSync(`${WEB}/version.json`, JSON.stringify(BUILD));
     writeFileSync(`${WEB}/sw.js`, 'self.skipWaiting()');
+    writeFileSync(`${WEB}/push-sw.js`, "self.addEventListener('push', () => {})");
     t = await startTestHub({ env: { WEB_DIST_DIR: WEB, VAPID_PUBLIC_KEY: '' } });
   });
   afterAll(async () => {
@@ -43,7 +44,7 @@ describe('static web serving', () => {
   });
 
   // client-versions D1: the files that name the build are revalidated on every request; hashed bundles are not.
-  it.each(['/', '/index.html', '/version.json', '/sw.js', '/s/6f1c2a3b'])('GET %s → Cache-Control: no-cache', async url => {
+  it.each(['/', '/index.html', '/version.json', '/sw.js', '/push-sw.js', '/s/6f1c2a3b'])('GET %s → Cache-Control: no-cache', async url => {
     const r = await t.hub.app.inject({ method: 'GET', url });
     expect(r.statusCode).toBe(200);
     expect(r.headers['cache-control']).toBe('no-cache');

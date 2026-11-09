@@ -2,6 +2,10 @@ import type { Dict } from '../../index.js';
 
 export default {
   'files.action.copyPath': '경로 복사',
+  'files.action.download': '다운로드',
+  'files.action.downloadFailed': '{name}을(를) 다운로드할 수 없습니다',
+  'files.action.downloadNamed': '{name} 다운로드',
+  'files.action.downloadOutdated': '파일을 다운로드하려면 {machine}의 에이전트를 업데이트하세요',
   'files.action.inTree': '트리에서',
   'files.action.mention': '메시지에 삽입',
   'files.action.mentionTitle': '세션 "{title}"의 입력란에 경로 삽입',

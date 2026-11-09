@@ -74,6 +74,8 @@ export default {
   'machines.enroll.path1': '1. Name und System',
   'machines.enroll.path2': '2. Befehl',
   'machines.enroll.path3': '3. Verbindung',
+  'machines.enroll.path4': '4. MCP',
+  'machines.enroll.mcpTitle': 'MCP-Server dieser Maschine',
   'machines.enroll.nameLabel': 'Rechnername',
   'machines.enroll.nameHint': 'Sie können ihn später unter Einstellungen → Rechner ändern.',
   'machines.enroll.osLabel': 'System',
@@ -98,4 +100,9 @@ export default {
   'machines.enroll.macBefore':
     'Der Agent kann ~/Documents, ~/Desktop und ~/Downloads nicht lesen. Öffnen Sie Systemeinstellungen → Datenschutz & Sicherheit → Voller Festplattenzugriff und fügen Sie hinzu:',
   'machines.enroll.macAfter': '. Verzeichnisse außerhalb dieser Ordner (zum Beispiel ~/code) funktionieren unverändert.',
+  'machines.defaultDir.label': 'Standardordner',
+  'machines.defaultDir.change': 'Ändern…',
+  'machines.defaultDir.hint': 'Sitzungen auf dieser Maschine starten hier; der Projektordner wird relativ dazu angegeben.',
+  'machines.defaultDir.failed': 'Standardordner konnte nicht geändert werden',
+  'machines.menu.defaultDir': 'Standardordner…',
 } satisfies Dict;

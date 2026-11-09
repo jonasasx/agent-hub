@@ -5,17 +5,22 @@
  * «Отключить» with the uninstall command. Scenarios «Отключение машины», «Нет входа в Claude».
  * Requirement: macOS — the warning about the full disk access. Requirement: Самообновление агента — «обновление не удалось».
  * API: GET /api/runners, PATCH /api/runners/:id, POST /api/runners/:id/disable (D10).
+ * Requirement (machine-mcp-onboarding): Повторный импорт со страницы машины — the MCP block: registry state, skipped
+ * servers of the auto-import and «Импортировать MCP» (disabled for an agent without `mcp.import.v2`), change `mcp-hub-only`.
  */
 import { useCallback, useEffect, useId, useState } from 'react';
 import { ApiError, api } from '../../api/client';
+import type { McpRegistryAgentStatus } from '../../api/mcpRegistryTypes';
 import type { RunnerDetail, RunnerView } from '../../api/types';
 import { t, useT } from '../../i18n';
 import { useStore } from '../../store';
+import { MCP_IMPORT_V2_CAPABILITY } from '@agent-hub/shared';
 import { formatLastSeen } from '../machines/runnerInfo';
 import { CommandBox, MacDiskWarning } from '../machines/EnrollModal';
 import { claudeLoginCommand, needsClaudeLogin, osFamily } from '../machines/machines';
 import { useUnsavedInput } from '../update/unsaved';
 import { ProviderStatusRow } from '../machines/ProviderLogin';
+import { McpImportDialog } from '../mcp/McpImportDialog';
 
 type Load = { kind: 'loading' } | { kind: 'error' } | { kind: 'ok'; runners: RunnerView[]; agentVersion: string | null };
 
@@ -79,7 +84,19 @@ function Rename({ r, onDone }: { r: RunnerView; onDone: (r: RunnerView | null) =
   );
 }
 
-function MachineCard({ r, agentVersion, onChange }: { r: RunnerView; agentVersion: string | null; onChange: (r: RunnerView) => void }) {
+function MachineCard({
+  r,
+  agentVersion,
+  mcp,
+  onChange,
+  onMcpImported,
+}: {
+  r: RunnerView;
+  agentVersion: string | null;
+  mcp: McpRegistryAgentStatus | undefined;
+  onChange: (r: RunnerView) => void;
+  onMcpImported: () => void;
+}) {
   const tr = useT();
   const [renaming, setRenaming] = useState(false);
   const [confirm, setConfirm] = useState(false);
@@ -185,11 +202,16 @@ function MachineCard({ r, agentVersion, onChange }: { r: RunnerView; agentVersio
         </div>
       )}
       {confirm && (
-        <div className="banner warn inline-warn" role="alertdialog" aria-label={tr('settings.machines.confirmLabel', { name: r.name })}>
+        <div
+          className="banner warn inline-warn"
+          role="alertdialog"
+          aria-label={tr('settings.machines.confirmLabel', { name: r.name })}
+          onKeyDown={e => e.key === 'Escape' && (e.stopPropagation(), setConfirm(false))}
+        >
           <div className="b-text">
             <b>{tr('settings.machines.confirmLabel', { name: r.name })}</b> {tr('settings.machines.confirmBody')}
           </div>
-          <button type="button" className="btn ghost" onClick={() => setConfirm(false)}>
+          <button type="button" className="btn ghost" autoFocus onClick={() => setConfirm(false)}>
             {tr('settings.machines.cancel')}
           </button>
           <button type="button" className="btn danger" disabled={busy} onClick={() => void disable()}>
@@ -222,7 +244,31 @@ function MachineCard({ r, agentVersion, onChange }: { r: RunnerView; agentVersio
         </div>
       )}
       {/* UI review M5: the MCP block after the machine's own buttons, in a box of its own */}
+      {!off && r.state !== 'pending' && mcp && <MachineMcp r={r} mcp={mcp} onImported={onMcpImported} />}
     </li>
+  );
+}
+
+function MachineMcp({ r, mcp, onImported }: { r: RunnerView; mcp: McpRegistryAgentStatus | undefined; onImported: () => void }) {
+  const tr = useT();
+  const [open, setOpen] = useState(false);
+  const supported = !!mcp?.capabilities.includes(MCP_IMPORT_V2_CAPABILITY);
+  const pending = mcp?.importState === 'auto-pending';
+  const skipped = mcp?.importReport?.skipped ?? [];
+  const reason = !supported ? tr('settings.machines.mcp.needsUpdate') : !r.online ? tr('settings.machines.mcp.offline') : null;
+  return (
+    <div className="mc-mcp" data-testid="machine-mcp">
+      <div className="mc-mcp-head">
+        <b>{tr('settings.machines.mcp.title')}</b>
+        <span className={`pill ${pending ? 'warn' : 'ok'}`}>{pending ? tr('settings.machines.mcp.pending') : tr('settings.machines.mcp.done')}</span>
+        <button type="button" className="btn" disabled={!!reason} title={reason ?? undefined} onClick={() => setOpen(true)}>
+          {tr('settings.machines.mcp.import')}
+        </button>
+      </div>
+      {reason && <span className="hint">{reason}</span>}
+      {skipped.length > 0 && <span className="hint">{tr('settings.machines.mcp.skipped', { count: skipped.length, names: skipped.join(', ') })}</span>}
+      {open && <McpImportDialog machineId={r.id} machineName={r.name} onClose={() => setOpen(false)} onImported={() => onImported()} />}
+    </div>
   );
 }
 
@@ -232,11 +278,17 @@ export function MachinesPage() {
   // live statuses (runner.status / runner.enroll) of the panel's machines win over the loaded list
   const liveRunners = useStore(s => s.runners);
   const modalOpen = useStore(s => s.modal?.type === 'enroll');
+  const [mcpAgents, setMcpAgents] = useState<McpRegistryAgentStatus[]>([]);
   const fetchList = useCallback(() => {
     api
       .runners()
       .then(r => setLoad({ kind: 'ok', runners: r.runners.filter(x => x.kind === 'machine'), agentVersion: r.agentVersion }))
       .catch(() => setLoad({ kind: 'error' }));
+    // the MCP block is secondary: a failed registry status leaves the cards without it, not the page in error
+    api
+      .mcpRegistryStatus()
+      .then(status => setMcpAgents(status.agents ?? []))
+      .catch(() => setMcpAgents([]));
   }, []);
   // on open, and when the enrollment window closes: a machine added or reconnected there shows up
   useEffect(() => {
@@ -299,7 +351,14 @@ export function MachinesPage() {
                   </li>,
                 ]
               : []),
-            <MachineCard key={r.id} r={r} agentVersion={load.kind === 'ok' ? load.agentVersion : null} onChange={update} />,
+            <MachineCard
+              key={r.id}
+              r={r}
+              agentVersion={load.kind === 'ok' ? load.agentVersion : null}
+              mcp={mcpAgents.find(agent => agent.machineId === r.id)}
+              onChange={update}
+              onMcpImported={fetchList}
+            />,
           ])}
         </ul>
       )}

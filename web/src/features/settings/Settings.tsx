@@ -13,6 +13,7 @@ import { useStore, type SettingsTab } from '../../store';
 import { SubscriptionsPage, UsagePage } from '../subscriptions/SubscriptionsPage';
 import { LanguagePage } from './LanguagePage';
 import { MachinesPage } from './MachinesPage';
+import { NotificationsPage } from './NotificationsPage';
 import { SecurityPage } from './SecurityPage';
 import { UsersPage } from './UsersPage';
 
@@ -22,6 +23,7 @@ const TABS: { id: SettingsTab; label: MessageKey; admin?: boolean; subs?: boolea
   { id: 'usage', label: 'settings.tab.usage', subs: true },
   { id: 'users', label: 'settings.tab.users', admin: true },
   { id: 'security', label: 'settings.tab.security' },
+  { id: 'notifications', label: 'settings.tab.notifications' },
   { id: 'language', label: 'settings.tab.language' },
 ];
 
@@ -120,6 +122,8 @@ export function Settings() {
           <UsersPage />
         ) : tab === 'security' ? (
           <SecurityPage />
+        ) : tab === 'notifications' ? (
+          <NotificationsPage />
         ) : (
           <LanguagePage />
         )}

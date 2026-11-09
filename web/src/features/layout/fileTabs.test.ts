@@ -1,6 +1,6 @@
 // Unit tests of file tabs in the workspace model. Requirement (file-explorer): Файловые вкладки.
 import { describe, expect, it } from 'vitest';
-import { TAB_LIMIT, allTabs, emptyWorkspace, enforceLimit, fileTabId, isFileTab, openSession, parseFileTabId, split, stripFileTabs, type Workspace } from './layout';
+import { allTabs, emptyWorkspace, fileTabId, isFileTab, openSession, paneBeside, parseFileTabId, split, stripFileTabs, type Workspace } from './layout';
 
 describe('Файловые вкладки: идентификатор', () => {
   it('builds file:<runnerId>:<path> and parses it back, a path may contain colons', () => {
@@ -23,33 +23,11 @@ describe('Файловые вкладки: идентификатор', () => {
 });
 
 describe('Файловые вкладки: общий лимит', () => {
-  const full = (): Workspace => {
+  it('there is no limit: a ninth tab opens next to eight session and file tabs, all of them stay', () => {
     const ids = ['s1', 's2', 'f-pin', 'f-prev', 's5', 's6', 's7', 's8'].map(id => (id.startsWith('f-') ? fileTabId('r', `/${id}`) : id));
-    return openSession(emptyWorkspace(ids), 'x');
-  };
-  const times = (ws: Workspace) => Object.fromEntries(allTabs(ws).map((id, i) => [id, i + 1]));
-
-  it('a preview file tab is evicted before older session tabs', () => {
-    const ws = full();
-    const pinned = new Set([fileTabId('r', '/f-pin')]);
-    const r = enforceLimit(ws, 'x', times(ws), null, pinned);
-    expect(r.evicted).toBe(fileTabId('r', '/f-prev'));
-    expect(allTabs(r.ws)).toHaveLength(TAB_LIMIT);
-  });
-
-  it('a pinned file tab is evicted by age like a session tab, after the previews', () => {
-    const ws = full();
-    const pinned = new Set([fileTabId('r', '/f-pin'), fileTabId('r', '/f-prev')]);
-    const opened = times(ws);
-    opened[fileTabId('r', '/f-pin')] = 0;
-    const r = enforceLimit(ws, 'x', opened, null, pinned);
-    expect(r.evicted).toBe(fileTabId('r', '/f-pin'));
-  });
-
-  it('without the pinned set file tabs are ordinary tabs', () => {
-    const ws = full();
-    const r = enforceLimit(ws, 'x', times(ws));
-    expect(r.evicted).toBe('s1');
+    const ws = openSession(emptyWorkspace(ids), fileTabId('r', '/x.md'));
+    expect(allTabs(ws)).toHaveLength(9);
+    expect(allTabs(ws)).toEqual(expect.arrayContaining([...ids, fileTabId('r', '/x.md')]));
   });
 });
 
@@ -78,3 +56,25 @@ describe('Файловые вкладки: раскладка на сервер'
     expect(out.panes.p1!.active).toBe('s1');
   });
 });
+
+describe('Файловые вкладки: панель для ссылки из чата', () => {
+  it('a single pane is the pane itself', () => {
+    expect(paneBeside(emptyWorkspace(['a']), 'p1')).toBe('p1');
+  });
+
+  it('prefers another pane that already shows a file, otherwise the next one', () => {
+    let ws = split(emptyWorkspace(['a', 'b', 'c']), 'b', 'p1', 'right').ws;
+    ws = split(ws, 'c', 'p1', 'bottom').ws;
+    const [first, second, third] = ws.layout.type === 'split' ? [...leavesOf(ws)] : [];
+    expect(paneBeside(ws, first!)).toBe(second);
+    const f = fileTabId('x1', '/a.md');
+    ws.panes[third!]!.tabs.push(f);
+    ws.panes[third!]!.active = f;
+    expect(paneBeside(ws, first!)).toBe(third);
+  });
+});
+
+function leavesOf(ws: Workspace): string[] {
+  const walk = (n: Workspace['layout']): string[] => (n.type === 'leaf' ? [n.pane] : [...walk(n.a), ...walk(n.b)]);
+  return walk(ws.layout);
+}

@@ -1,7 +1,7 @@
 // Unit tests of the source and the root of the «Файлы» window. Requirements (file-explorer): Окно «Файлы» и источники; Совместимость со старым агентом.
 import { describe, expect, it } from 'vitest';
 import { RUNNERS, runner, session } from '../../test/factories';
-import { defaultMachine, resolveSource, runnerSupportsFiles, upFrom } from './source';
+import { defaultMachine, resolveSource, runnerSupportsDownload, runnerSupportsFiles, upFrom } from './source';
 
 describe('source', () => {
   it('the protocol version decides until the hub says otherwise', () => {
@@ -10,6 +10,14 @@ describe('source', () => {
     expect(runnerSupportsFiles({ id: 'a', protocolVersion: '2.0' })).toBe(true);
     expect(runnerSupportsFiles({ id: 'a', protocolVersion: null })).toBe(true);
     expect(runnerSupportsFiles({ id: 'a', protocolVersion: '1.14' }, { a: true })).toBe(false);
+  });
+
+  it('download needs protocol 1.16 and the files of the machine', () => {
+    expect(runnerSupportsDownload({ id: 'a', protocolVersion: '1.15' })).toBe(false);
+    expect(runnerSupportsDownload({ id: 'a', protocolVersion: '1.16' })).toBe(true);
+    expect(runnerSupportsDownload({ id: 'a', protocolVersion: '2.0' })).toBe(true);
+    expect(runnerSupportsDownload({ id: 'a', protocolVersion: null })).toBe(true);
+    expect(runnerSupportsDownload({ id: 'a', protocolVersion: '1.16' }, { a: true })).toBe(false);
   });
 
   it('the session chip has the cwd as the root; «↑» goes one level up, never above home', () => {

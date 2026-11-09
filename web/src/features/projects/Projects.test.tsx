@@ -16,10 +16,10 @@ const ago = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 const NONE = { id: null, title: 'Без проекта', colorKey: 'none' as const, path: '' };
 const LEDGER = { id: 'p-ledger', title: '01-ledger', colorKey: 'personal' as const, path: '20-personal/01-finance/systems/01-ledger', kind: 'system' as const };
 const HUB = { id: 'p-hub', title: '05-agent-hub', colorKey: 'personal' as const, path: '20-personal/05-pos/systems/05-agent-hub', kind: 'system' as const };
-const SMS = { id: 'p-sms', title: '03-mm-sms-bridge', colorKey: 'support' as const, path: '10-work/04-support/systems/03-mm-sms-bridge', kind: 'system' as const };
+const SMS = { id: 'p-sms', title: '03-sms-bridge', colorKey: 'support' as const, path: '10-work/04-support/systems/03-sms-bridge', kind: 'system' as const };
 const DIR: ProjectItem[] = [
   { id: 'a-support', kind: 'area', title: 'Поддержка', path: '10-work/04-support', areaPath: '10-work/04-support', colorKey: 'support', archived: false },
-  { id: 'p-sms', kind: 'system', title: '03-mm-sms-bridge', path: SMS.path, areaPath: '10-work/04-support', colorKey: 'support', archived: false },
+  { id: 'p-sms', kind: 'system', title: '03-sms-bridge', path: SMS.path, areaPath: '10-work/04-support', colorKey: 'support', archived: false },
   { id: 'p-ledger', kind: 'system', title: '01-ledger', path: LEDGER.path, areaPath: '20-personal/01-finance', colorKey: 'personal', archived: false },
   { id: 'p-crm', kind: 'project', title: '04-twenty-crm', path: '10-work/05-infra/projects/99-archive/04-twenty-crm', areaPath: '10-work/05-infra', colorKey: 'infra', archived: true },
   { id: 'b-vault', kind: 'builtin', title: 'Vault', path: '00-meta', areaPath: null, colorKey: 'personal', archived: false },
@@ -95,7 +95,7 @@ describe('project line under the chat head (4.9)', () => {
     const btn = screen.getByRole('button', { name: 'Проект: 05-agent-hub' });
     expect(btn).toHaveAttribute('title', HUB.path);
     expect(screen.getByText('определено по путям: 3 правки в 05-agent-hub')).toBeInTheDocument();
-    expect(screen.getByText('+ 03-mm-sms-bridge')).toHaveAttribute('title', `Второй проект: ${SMS.path}`);
+    expect(screen.getByText('+ 03-sms-bridge')).toHaveAttribute('title', `Второй проект: ${SMS.path}`);
     await userEvent.click(btn);
     const menu = screen.getByRole('menu', { name: 'Проект сессии' });
     expect(
@@ -142,7 +142,7 @@ describe('project line under the chat head (4.9)', () => {
     expect(put.url).toBe(`/api/sessions/${s.id}/project`);
     expect(put.body).toEqual({ projectId: 'p-sms' });
     expect(await screen.findByText('закреплено вручную')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Проект: 03-mm-sms-bridge, закреплён' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Проект: 03-sms-bridge, закреплён' })).toBeInTheDocument();
   });
 
   it('Закрепить and Открепить: POST and DELETE …/pin; the toast project_pinned says «Проект закреплён»', async () => {

@@ -11,6 +11,8 @@ import { initialize, RpcClient, RpcError, spawnAppServer, type RpcTransport } fr
 const IDLE_MS = 5 * 60_000;
 /** A device code is valid about 15 minutes; the hub shows the time left. */
 const DEVICE_CODE_TTL_MS = 15 * 60_000;
+/** provider-parity R6: a sign-in nobody finished is cancelled after this time (the hub forgets it after the same). */
+export const LOGIN_TTL_MS = 20 * 60_000;
 
 export interface CodexModel {
   value: string;
@@ -30,6 +32,8 @@ export interface CodexServiceDeps {
   /** Tests: a fake transport instead of a process. */
   transport?: () => RpcTransport;
   now?: () => number;
+  /** Tests: LOGIN_TTL_MS. */
+  loginTtlMs?: number;
 }
 
 export class CodexService {
@@ -37,8 +41,9 @@ export class CodexService {
   private starting: Promise<RpcClient> | null = null;
   private idle: NodeJS.Timeout | null = null;
   private loginId: string | null = null;
+  private loginTimer: NodeJS.Timeout | null = null;
   /** provider-parity D3: sign-ins for the registry, each in its own app-server and temporary CODEX_HOME. */
-  private readonly subLogins = new Map<string, { client: RpcClient; home: string }>();
+  private readonly subLogins = new Map<string, { client: RpcClient; home: string; timer: NodeJS.Timeout }>();
   private models: CodexModel[] | null = null;
   status: ProviderStatus;
 
@@ -88,7 +93,7 @@ export class CodexService {
       const ok = params.success === true;
       const error = typeof params.error === 'string' ? params.error.slice(0, 500) : undefined;
       if (id && id === this.loginId) {
-        this.loginId = null;
+        this.setMachineLogin(null);
         this.d.log.info('codex sign-in ended', { ok });
         this.d.onLoginDone(id, ok, ok ? undefined : (error ?? 'sign-in did not complete'));
       }
@@ -133,7 +138,7 @@ export class CodexService {
     if (this.loginId) await c.request('account/login/cancel', { loginId: this.loginId }, 15_000).catch(() => undefined);
     const r = await c.request<{ type: string; loginId?: string; verificationUrl?: string; userCode?: string }>('account/login/start', { type: 'chatgptDeviceCode' }, 60_000);
     if (r.type !== 'chatgptDeviceCode' || !r.loginId || !r.verificationUrl || !r.userCode) throw new Error('the CLI returned no device code');
-    this.loginId = r.loginId;
+    this.setMachineLogin(r.loginId);
     this.d.log.info('codex sign-in started');
     return { loginId: r.loginId, verificationUrl: r.verificationUrl, userCode: r.userCode, expiresAt: (this.d.now?.() ?? Date.now()) + DEVICE_CODE_TTL_MS };
   }
@@ -166,7 +171,8 @@ export class CodexService {
       const r = await client.request<{ type: string; loginId?: string; verificationUrl?: string; userCode?: string }>('account/login/start', { type: 'chatgptDeviceCode' }, 60_000);
       if (r.type !== 'chatgptDeviceCode' || !r.loginId || !r.verificationUrl || !r.userCode) throw new Error('the CLI returned no device code');
       loginId = r.loginId;
-      this.subLogins.set(loginId, { client, home });
+      const id = loginId;
+      this.subLogins.set(id, { client, home, timer: this.expireAfter(() => this.expireSubscriptionLogin(id)) });
       this.d.log.info('codex subscription sign-in started');
       return { loginId, verificationUrl: r.verificationUrl, userCode: r.userCode, expiresAt: (this.d.now?.() ?? Date.now()) + DEVICE_CODE_TTL_MS };
     } catch (err) {
@@ -180,6 +186,7 @@ export class CodexService {
     const entry = this.subLogins.get(loginId);
     if (!entry) return;
     this.subLogins.delete(loginId);
+    clearTimeout(entry.timer);
     const credential = ok ? await this.d.homes!.takeLogin(entry.home) : (await this.d.homes!.dropTemp(entry.home), null);
     entry.client.close();
     this.d.log.info('codex subscription sign-in ended', { ok });
@@ -191,6 +198,7 @@ export class CodexService {
     const sub = this.subLogins.get(loginId);
     if (sub) {
       this.subLogins.delete(loginId);
+      clearTimeout(sub.timer);
       await sub.client.request('account/login/cancel', { loginId }, 15_000).catch(() => undefined);
       sub.client.close();
       await this.d.homes?.dropTemp(sub.home);
@@ -199,7 +207,41 @@ export class CodexService {
     if (this.loginId !== loginId) return;
     const c = await this.rpc();
     await c.request('account/login/cancel', { loginId }, 15_000).catch(() => undefined);
-    this.loginId = null;
+    this.setMachineLogin(null);
+  }
+
+  /** The machine's sign-in in progress, with its TTL (R6). */
+  private setMachineLogin(loginId: string | null): void {
+    if (this.loginTimer) clearTimeout(this.loginTimer);
+    this.loginTimer = null;
+    this.loginId = loginId;
+    if (loginId) this.loginTimer = this.expireAfter(() => this.expireMachineLogin(loginId));
+  }
+
+  private expireAfter(fn: () => Promise<void>): NodeJS.Timeout {
+    const t = setTimeout(() => void fn().catch((err: unknown) => this.d.log.warn('codex sign-in expiry failed', { error: (err as Error).message })), this.d.loginTtlMs ?? LOGIN_TTL_MS);
+    t.unref?.();
+    return t;
+  }
+
+  /** R6: nobody confirmed the device code — the sign-in is cancelled and reported as failed. */
+  private async expireMachineLogin(loginId: string): Promise<void> {
+    if (this.loginId !== loginId) return;
+    this.setMachineLogin(null);
+    this.d.log.info('codex sign-in expired');
+    await this.client?.request('account/login/cancel', { loginId }, 15_000).catch(() => undefined);
+    this.d.onLoginDone(loginId, false, 'sign-in expired');
+  }
+
+  private async expireSubscriptionLogin(loginId: string): Promise<void> {
+    const entry = this.subLogins.get(loginId);
+    if (!entry) return;
+    this.subLogins.delete(loginId);
+    this.d.log.info('codex subscription sign-in expired');
+    await entry.client.request('account/login/cancel', { loginId }, 15_000).catch(() => undefined);
+    entry.client.close();
+    await this.d.homes?.dropTemp(entry.home);
+    this.d.onLoginDone(loginId, false, 'sign-in expired');
   }
 
   async logout(): Promise<ProviderStatus> {
@@ -252,11 +294,13 @@ export class CodexService {
 
   stop(): void {
     for (const [id, e] of this.subLogins) {
+      clearTimeout(e.timer);
       e.client.close();
       void this.d.homes?.dropTemp(e.home);
       this.subLogins.delete(id);
     }
     if (this.idle) clearTimeout(this.idle);
+    if (this.loginTimer) clearTimeout(this.loginTimer);
     this.client?.close();
     this.client = null;
   }

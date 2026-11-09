@@ -22,7 +22,7 @@ NODE_BIN="$(command -v node)" || { echo "error: node not found in PATH" >&2; exi
 TOKEN="${AGENT_TOKEN:-}"
 if [[ -z "$TOKEN" && ( "$NEW_TOKEN" == 1 || ! -f "$ENV_FILE" ) ]]; then
   # Hidden input: the token stays out of the shell history and the process list.
-  read -rsp 'Agent token (Vaultwarden «Agent Hub — agent token vm»): ' TOKEN
+  read -rsp 'Agent token: ' TOKEN
   echo
   [[ -n "$TOKEN" ]] || { echo "error: no token entered" >&2; exit 1; }
 fi

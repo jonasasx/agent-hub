@@ -29,6 +29,8 @@ export function FilesWindow() {
       return;
     }
     const chain = ancestorsOf(target.root, reveal.path);
+    // a hidden folder or file on the way is not in the tree until hidden files are shown
+    if (!f.hidden && [...chain, reveal.path].some(p => baseName(p).startsWith('.'))) f.setHidden(true);
     f.setExpanded(target, reveal.dir ? [...chain, reveal.path] : chain);
     f.select(target, reveal.path);
     setFlash(reveal.path);

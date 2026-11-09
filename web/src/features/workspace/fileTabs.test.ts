@@ -84,19 +84,15 @@ describe('file tabs', () => {
     expect(calls.filter(c => c.url.includes('/api/sessions/'))).toEqual([]);
   });
 
-  it('a file evicted by the limit loses its pin and session: opened by a click again it is a preview', () => {
+  it('no tab limit (spec tab-strip): a pinned file stays with its pin and session after eight sessions are opened', () => {
     const list = Array.from({ length: 9 }, (_, i) => session({ id: `s${i}`, title: `S${i}` }));
     useStore.getState().upsertSessions(list);
     mockFetch({});
     openFileTab('x1', '/a.txt', { pin: true, sessionId: 's0' });
     for (let i = 0; i < 8; i += 1) openSession(`s${i}`);
-    expect(files()).toEqual([]);
-    expect(useFiles.getState().pinned).toEqual([]);
-    expect(useFiles.getState().tabSession).toEqual({});
-    openFileTab('x1', '/a.txt');
-    expect(useFiles.getState().pinned).toEqual([]);
-    openFileTab('x1', '/b.txt');
-    expect(files()).toEqual(['file:x1:/b.txt']);
+    expect(files()).toEqual(['file:x1:/a.txt']);
+    expect(useFiles.getState().pinned).toEqual(['file:x1:/a.txt']);
+    expect(useFiles.getState().tabSession).toEqual({ 'file:x1:/a.txt': 's0' });
   });
 
   it('closing a file tab forgets its pin and session', () => {

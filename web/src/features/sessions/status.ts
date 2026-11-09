@@ -2,6 +2,7 @@
  * Session status helpers shared by the left panel, tabs and chat (docs/prototype.html: LABEL, stOf, needsMe, isNow,
  * agoLabel). Requirements: Статусы сессии; Раздел «Сейчас»; Дерево «Проекты».
  */
+import { waitsForUser } from '@agent-hub/shared';
 import type { ColorKey, DisplayStatus, RunnerView, SessionSource, SessionView } from '../../api/types';
 import { fmt, t } from '../../i18n';
 
@@ -112,11 +113,14 @@ export function statusText(s: SessionView, st: DisplayStatus): string {
   return STATUS_LABEL[st];
 }
 
-/** Waits for the user: permission or an unread answer, machine online. */
+/**
+ * Waits for the user: permission or an unread answer, machine online — `waitsForUser` of `@agent-hub/shared`, the rule
+ * of the desktop tray counter. An unread answer still waits while subagents work (shown as working); a session written
+ * outside the hub (`external`) does not.
+ */
 export function needsMe(s: SessionView, runners: RunnerIndex): boolean {
-  const st = displayStatus(s, runners);
-  // an unread answer still waits for the user while subagents work (shown as working)
-  return st === 'permission' || ((st === 'waiting' || (st === 'working' && childrenWorking(s) > 0)) && s.unread);
+  if (displayStatus(s, runners) === 'external') return false;
+  return waitsForUser(s, runners[s.runnerId]?.online === true);
 }
 
 export function isNow(s: SessionView, runners: RunnerIndex): boolean {

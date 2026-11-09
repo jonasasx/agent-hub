@@ -74,6 +74,8 @@ export default {
   'machines.enroll.path1': '1. Nome e sistema',
   'machines.enroll.path2': '2. Comando',
   'machines.enroll.path3': '3. Conexão',
+  'machines.enroll.path4': '4. MCP',
+  'machines.enroll.mcpTitle': 'Servidores MCP desta máquina',
   'machines.enroll.nameLabel': 'Nome da máquina',
   'machines.enroll.nameHint': 'Você pode alterá-lo depois em Configurações → Máquinas.',
   'machines.enroll.osLabel': 'Sistema',
@@ -97,4 +99,9 @@ export default {
   'machines.enroll.macTitle': 'Sem acesso às pastas protegidas do macOS.',
   'machines.enroll.macBefore': 'O agente não consegue ler ~/Documents, ~/Desktop e ~/Downloads. Abra Ajustes do Sistema → Privacidade e Segurança → Acesso Total ao Disco e adicione',
   'machines.enroll.macAfter': '. Diretórios fora dessas pastas (por exemplo, ~/code) funcionam normalmente.',
+  'machines.defaultDir.label': 'Pasta padrão',
+  'machines.defaultDir.change': 'Alterar…',
+  'machines.defaultDir.hint': 'As sessões desta máquina começam aqui; a pasta do projeto é definida em relação a ela.',
+  'machines.defaultDir.failed': 'Não foi possível alterar a pasta padrão',
+  'machines.menu.defaultDir': 'Pasta padrão…',
 } satisfies Dict;

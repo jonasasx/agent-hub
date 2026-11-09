@@ -33,8 +33,11 @@ describe('local path check (no UNC/device paths: NTLM leak)', () => {
   it('the body schemas check only the form (the kind of path is a 422 from the hub)', () => {
     expect(statQuerySchema.safeParse({ path: '\\\\evil\\share' }).success).toBe(true);
     expect(statQuerySchema.safeParse({ path: '' }).success).toBe(false);
-    expect(createSessionRequestSchema.safeParse({ runnerId: 'hp', cwd: 'C:\\w', model: 'haiku', prompt: 'x' }).success).toBe(true);
-    expect(createSessionRequestSchema.safeParse({ runnerId: 'hp', model: 'haiku', prompt: 'x' }).success).toBe(false);
+    // session-folder D3: the request carries no folder — the hub starts the session in the project folder; a stray cwd is dropped.
+    const parsed = createSessionRequestSchema.safeParse({ runnerId: 'hp', cwd: 'C:\\w', model: 'haiku', prompt: 'x' });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data).not.toHaveProperty('cwd');
+    expect(createSessionRequestSchema.safeParse({ model: 'haiku', prompt: 'x' }).success).toBe(false);
   });
 });
 

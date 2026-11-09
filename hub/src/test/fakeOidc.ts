@@ -33,7 +33,8 @@ export interface FakeOidc {
   close(): Promise<void>;
 }
 
-export async function startFakeOidc(): Promise<FakeOidc> {
+/** `endSession` — the discovery document announces `end_session_endpoint` (keycloak-auth D7). */
+export async function startFakeOidc(opts: { endSession?: boolean } = {}): Promise<FakeOidc> {
   const { privateKey, publicKey } = await generateKeyPair('RS256');
   const rogue = await generateKeyPair('RS256');
   const jwk: JWK = { ...(await exportJWK(publicKey)), kid: 'k1', alg: 'RS256', use: 'sig' };
@@ -59,6 +60,7 @@ export async function startFakeOidc(): Promise<FakeOidc> {
         id_token_signing_alg_values_supported: ['RS256'],
         code_challenge_methods_supported: ['S256'],
         token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
+        ...(opts.endSession ? { end_session_endpoint: `${issuer}/logout` } : {}),
       });
     }
     if (url.pathname === '/jwks') return json(200, { keys: [jwk] });

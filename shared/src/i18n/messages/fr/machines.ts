@@ -74,6 +74,8 @@ export default {
   'machines.enroll.path1': '1. Nom et système',
   'machines.enroll.path2': '2. Commande',
   'machines.enroll.path3': '3. Connexion',
+  'machines.enroll.path4': '4. MCP',
+  'machines.enroll.mcpTitle': 'Serveurs MCP de cette machine',
   'machines.enroll.nameLabel': 'Nom de la machine',
   'machines.enroll.nameHint': 'Vous pourrez le modifier plus tard dans Paramètres → Machines.',
   'machines.enroll.osLabel': 'Système',
@@ -97,4 +99,9 @@ export default {
   'machines.enroll.macTitle': 'Pas d’accès aux dossiers protégés de macOS.',
   'machines.enroll.macBefore': 'L’agent ne peut pas lire ~/Documents, ~/Desktop et ~/Downloads. Ouvrez Réglages Système → Confidentialité et sécurité → Accès complet au disque et ajoutez',
   'machines.enroll.macAfter': '. Les répertoires situés en dehors de ces dossiers (par exemple ~/code) fonctionnent tels quels.',
+  'machines.defaultDir.label': 'Dossier par défaut',
+  'machines.defaultDir.change': 'Modifier…',
+  'machines.defaultDir.hint': 'Les sessions de cette machine démarrent ici ; le dossier du projet est indiqué par rapport à lui.',
+  'machines.defaultDir.failed': 'Impossible de modifier le dossier par défaut',
+  'machines.menu.defaultDir': 'Dossier par défaut…',
 } satisfies Dict;

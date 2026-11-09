@@ -27,7 +27,7 @@ describe('/ws/ui session end (integration)', () => {
     const b = openUi(t, s2);
     await Promise.all([a.opened, b.opened]);
     const out = await t.hub.app.inject({ method: 'POST', url: '/auth/logout', headers: { origin: PUBLIC_URL }, cookies: { ah_session: s1 } });
-    expect(out.statusCode).toBe(204);
+    expect(out.statusCode).toBe(200);
     expect(await a.closed).toBe(4401);
     expect(b.ws.readyState).toBe(WebSocket.OPEN);
     b.ws.close();

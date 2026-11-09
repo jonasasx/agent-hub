@@ -19,6 +19,8 @@ export default defineConfig({
     channel: process.env.E2E_CHANNEL ?? undefined,
     // Requests of a service worker would bypass route interception.
     serviceWorkers: 'block',
+    // the scenarios look for Russian strings; since change i18n the app follows the browser language (en-US by default)
+    locale: 'ru-RU',
   },
   webServer: {
     command: `npm run dev -w web -- --port ${PORT} --strictPort`,

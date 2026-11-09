@@ -14,6 +14,13 @@ import {
   mcpDraftValidateSchema,
   mcpSecretInputSchema,
   mcpImportCommitPayload,
+  mcpImportCommitResponseSchema,
+  mcpImportPreviewRequestSchema,
+  mcpImportPreviewResponseSchema,
+  mcpImportPreviewResultPayload,
+  type McpImportCommitResponse,
+  type McpImportDecision,
+  type McpImportPreviewResponse,
   mcpOAuthCredentialSchema,
   mcpOAuthStartResultSchema,
   mcpOAuthStatusUpdateSchema,
@@ -23,11 +30,17 @@ import {
   mcpRegistryOAuthRevokeResponseSchema,
   mcpRegistryOAuthConnectRequestSchema,
   mcpRegistryOAuthConnectResponseSchema,
+  mcpRegistryOAuthCompleteRequestSchema,
+  mcpRegistryOAuthCompleteResponseSchema,
   mcpRegistryOAuthStartRequestSchema,
+  OAUTH_LOOPBACK_REDIRECT_URI,
   mcpRegistryOAuthStartResponseSchema,
   mcpRegistryOAuthStatusSchema,
-  mcpRegistryMachineToggleRequestSchema,
-  mcpRegistryMachineToggleResponseSchema,
+  mcpRegistryMachineOverrideRequestSchema,
+  mcpRegistryMachineOverrideResponseSchema,
+  MCP_IMPORT_V2_CAPABILITY,
+  platformOfHome,
+  projectDir,
   mcpRegistryOAuthValidateRequestSchema,
   mcpRegistryOAuthValidateResponseSchema,
   mcpRegistrySessionUpdateAckPayload,
@@ -65,6 +78,33 @@ function parse<T extends z.ZodType>(schema: T, value: unknown): z.infer<T> {
 }
 const safe = (c: Cfg) => ({ ...c, secrets: (Array.isArray(c.secrets) ? c.secrets : []).map((s: Cfg) => ({ ...s, masked: true, state: s.state ?? 'set' })) });
 const URL_SECRET_PLACEHOLDER = '__AGENT_HUB_SECRET__';
+const SENSITIVE_KEY = /(?:token|api[-_]?key|secret|password|credential|authorization|cookie)/i;
+/**
+ * An empty sensitive value in a local config (nano-banana ships `GEMINI_API_KEY: ""`) is not a secret, yet the registry
+ * schema accepts sensitive keys only as secret references. Drop such keys so the server is imported, and name them in a warning.
+ */
+function dropEmptySensitiveValues(entry: Cfg): string[] {
+  const dropped: string[] = [];
+  for (const field of ['env', 'headers'] as const) {
+    const values = entry[field] as Record<string, { kind?: string; value?: string }> | undefined;
+    if (!values) continue;
+    for (const [key, value] of Object.entries(values)) {
+      if (!SENSITIVE_KEY.test(key) || value?.kind !== 'literal' || value.value !== '') continue;
+      delete values[key];
+      dropped.push(key);
+    }
+  }
+  if (typeof entry.url === 'string' && URL.canParse(entry.url)) {
+    const url = new URL(entry.url);
+    const empty = [...url.searchParams.entries()].filter(([key, value]) => SENSITIVE_KEY.test(key) && value === '').map(([key]) => key);
+    if (empty.length) {
+      for (const key of empty) url.searchParams.delete(key);
+      entry.url = url.toString();
+      dropped.push(...empty);
+    }
+  }
+  return dropped;
+}
 const OAUTH_FLOW_TTL_MS = 10 * 60_000;
 type PendingOAuthFlow = {
   flowId: string;
@@ -72,10 +112,101 @@ type PendingOAuthFlow = {
   serverId: string;
   machineId: string;
   state: string;
+  redirectUri: string;
   expiresAt: number;
   callbackForwarded: boolean;
   timer: NodeJS.Timeout;
 };
+/** mcp-hub-only D2: fields a machine override may replace; each one is replaced whole, env and headers are not merged. */
+const OVERRIDE_FIELDS = ['transport', 'mode', 'command', 'args', 'url', 'urlSecretId', 'env', 'headers', 'oauthClientId'] as const;
+type SecretRef = { secretId: string; name: string; state?: string };
+type MachineOverrideRow = { server_id: string; runner_id: string; enabled: boolean; config: Cfg | null };
+function referencedSecretIds(server: Cfg): Set<string> {
+  const ids = new Set<string>();
+  if (typeof server.urlSecretId === 'string') ids.add(server.urlSecretId);
+  for (const bucket of ['env', 'headers'] as const) {
+    const values = (server[bucket] ?? {}) as Record<string, { kind?: string; secretId?: string }>;
+    for (const value of Object.values(values)) if (value?.kind === 'secret' && value.secretId) ids.add(value.secretId);
+  }
+  return ids;
+}
+/** Effective server for one machine: the server config with the override fields on top; secrets limited to what the result references. */
+function effectiveServer(server: Cfg, overrideConfig: Cfg | null | undefined): Cfg {
+  if (!overrideConfig) return server;
+  const merged: Cfg = { ...server };
+  for (const field of OVERRIDE_FIELDS) {
+    if (!(field in overrideConfig)) continue;
+    if (overrideConfig[field] === undefined || overrideConfig[field] === null) delete merged[field];
+    else merged[field] = overrideConfig[field];
+  }
+  const used = referencedSecretIds(merged);
+  const refs = [...((server.secrets ?? []) as SecretRef[]), ...((overrideConfig.secrets ?? []) as SecretRef[])];
+  const seen = new Set<string>();
+  merged.secrets = refs.filter(ref => {
+    if (!used.has(ref.secretId) || seen.has(ref.secretId)) return false;
+    seen.add(ref.secretId);
+    return true;
+  });
+  return merged;
+}
+type ImportEntryRecord = Cfg & { id: string; name: string; transport: string; source: string; origin?: string; projectId?: string; warnings: string[]; secrets: SecretRef[] };
+type StoredImportPreview = { importId: string; machineId: string; revision: number; entries: ImportEntryRecord[]; secretsCaptured: number; warnings: string[] };
+type ImportRegistryServer = { id: string; config: Cfg; revision: number; override: { enabled: boolean; config: Cfg | null } | null };
+const IMPORT_CONFIG_FIELDS = ['transport', 'command', 'args', 'url', 'urlSecretId', 'env', 'headers', 'oauthClientId'] as const;
+function pickImportConfig(entry: Cfg): Cfg {
+  const picked: Cfg = {};
+  for (const field of IMPORT_CONFIG_FIELDS) if (entry[field] !== undefined && entry[field] !== null) picked[field] = entry[field];
+  return picked;
+}
+/** D5: what a server does on a machine — transport, command, args, URL, env, headers and OAuth client with secret values resolved. */
+function importFingerprint(server: Cfg, values: Map<string, string>): string {
+  const resolve = (secretId: string) => values.get(secretId) ?? `missing:${secretId}`;
+  const valueOf = (value: { kind?: string; value?: string; secretId?: string } | undefined) =>
+    value?.kind === 'secret' ? `secret:${resolve(String(value.secretId))}` : `literal:${value?.value ?? ''}`;
+  const bucket = (name: 'env' | 'headers') =>
+    Object.entries((server[name] ?? {}) as Record<string, { kind?: string; value?: string; secretId?: string }>)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, value]) => [key, valueOf(value)]);
+  let url = typeof server.url === 'string' ? server.url : null;
+  if (url && typeof server.urlSecretId === 'string') url = url.replaceAll(URL_SECRET_PLACEHOLDER, resolve(server.urlSecretId));
+  return JSON.stringify({
+    transport: server.transport,
+    command: server.command ?? null,
+    args: server.args ?? [],
+    url,
+    env: bucket('env'),
+    headers: bucket('headers'),
+    oauthClientId: server.oauthClientId ?? null,
+  });
+}
+/** D5: same-name entries of one scan that cannot all be imported — project entries that differ from the machine-level entry, or differ from each other. */
+function importConflicts(entries: ImportEntryRecord[], values: Map<string, string>): Set<string> {
+  const groups = new Map<string, ImportEntryRecord[]>();
+  for (const entry of entries) groups.set(entry.name, [...(groups.get(entry.name) ?? []), entry]);
+  const conflicts = new Set<string>();
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const prints = new Map(group.map(entry => [entry.id, importFingerprint(entry, values)]));
+    const primary = group.find(entry => !entry.projectId);
+    if (primary) {
+      for (const entry of group) if (entry !== primary && prints.get(entry.id) !== prints.get(primary.id)) conflicts.add(entry.id);
+    } else if (new Set(prints.values()).size > 1) {
+      for (const entry of group) conflicts.add(entry.id);
+    }
+  }
+  return conflicts;
+}
+/** D5: decision for one entry against the registry server of the same name as the machine sees it. */
+function importDecision(entry: ImportEntryRecord, existing: ImportRegistryServer | undefined, machineId: string, values: Map<string, string>): McpImportDecision {
+  if (!existing) return 'new';
+  const effective = effectiveServer(existing.config, existing.override?.config);
+  if (importFingerprint(effective, values) !== importFingerprint(entry, values)) return 'machine-config';
+  const scope = existing.config.machineScope as { allMachines?: boolean; machineIds?: string[] } | undefined;
+  const inScope = (!scope || scope.allMachines === true || scope.machineIds?.includes(machineId) === true) && existing.override?.enabled !== false;
+  const projectIds = Array.isArray(existing.config.projectIds) ? (existing.config.projectIds as string[]) : [];
+  const projectOk = !projectIds.length || (!!entry.projectId && projectIds.includes(entry.projectId));
+  return inScope && projectOk ? 'unchanged' : 'add-machine';
+}
 function redactValues(value: unknown, secrets: string[]): unknown {
   if (typeof value === 'string') return secrets.reduce((text, secret) => (secret ? text.replaceAll(secret, '[REDACTED]') : text), value);
   if (Array.isArray(value)) return value.map(item => redactValues(item, secrets));
@@ -120,6 +251,7 @@ function prepareDraftUrlSecrets(input: unknown): { body: unknown; urlSecrets: Ma
 }
 
 export class McpRegistryService {
+  /** The last hello's capabilities per machine; a live connection is read through caps(). */
   private readonly capabilities = new Map<string, Set<string>>();
   private readonly pendingImports = new Map<string, { userId: string; resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
   private readonly pendingValidationResults = new Map<string, { resolve: (value: Cfg | null) => void; timer?: NodeJS.Timeout }>();
@@ -140,17 +272,20 @@ export class McpRegistryService {
     o.bus.on('agent.hello', (runnerId, userId, hello) => {
       this.capabilities.set(runnerId, new Set(hello.capabilities ?? []));
       if (protocolAtLeast(hello.protocol, MIN)) {
-        void this.syncRunner(runnerId, userId).catch((error: unknown) => this.o.log.warn({ runnerId, errorClass: error instanceof Error ? error.name : 'unknown' }, 'MCP registry sync failed'));
+        void this.syncRunner(runnerId, userId)
+          .catch((error: unknown) => this.o.log.warn({ runnerId, errorClass: error instanceof Error ? error.name : 'unknown' }, 'MCP registry sync failed'))
+          .then(() => this.autoImport(runnerId, userId))
+          .catch((error: unknown) => this.o.log.warn({ runnerId, errorClass: error instanceof Error ? error.name : 'unknown' }, 'MCP auto-import failed'));
       }
     });
     o.bus.on('agent.message', (runnerId, m) => {
       const connection = this.o.agents.get(runnerId);
       if (m.type === 'mcp.registry.validate.result') this.settleValidationResult(runnerId, m.re, m.payload);
-      if (m.type === 'mcp.oauth.token.update' && connection && this.capabilities.get(runnerId)?.has('mcp.oauth.v1'))
+      if (m.type === 'mcp.oauth.token.update' && connection && this.caps(runnerId)?.has('mcp.oauth.v1'))
         void this.storeOAuth(runnerId, connection.userId, m.payload).catch((err: unknown) =>
           this.o.log.warn({ runnerId, errorClass: err instanceof Error ? err.name : 'unknown' }, 'MCP OAuth token update rejected'),
         );
-      if (m.type === 'mcp.oauth.status.update' && connection && this.capabilities.get(runnerId)?.has('mcp.oauth.v1'))
+      if (m.type === 'mcp.oauth.status.update' && connection && this.caps(runnerId)?.has('mcp.oauth.v1'))
         void this.storeOAuthStatus(runnerId, connection.userId, m.payload).catch((err: unknown) =>
           this.o.log.warn({ runnerId, errorClass: err instanceof Error ? err.name : 'unknown' }, 'MCP OAuth status update rejected'),
         );
@@ -302,8 +437,13 @@ export class McpRegistryService {
       .orderBy('updated_at', 'desc')
       .limit(100)
       .execute();
+    const machines = await this.serverMachines(
+      userId,
+      registry.servers.map(server => ({ id: server.id, config: server })),
+    );
     return {
       ...registry,
+      servers: registry.servers.map(server => ({ ...server, machines: machines.get(server.id) ?? [] })),
       drafts: drafts.map(draft => ({
         draftId: draft.id,
         revision: Number(draft.revision),
@@ -327,7 +467,7 @@ export class McpRegistryService {
       names.add(write.name);
     }
     let existingQuery = this.o.db.selectFrom('mcp_secrets').select(['id', 'name']).where('user_id', '=', userId).orderBy('updated_at', 'desc');
-    existingQuery = owner.draftId ? existingQuery.where('draft_id', '=', owner.draftId) : existingQuery.where('server_id', '=', owner.serverId!);
+    existingQuery = owner.draftId ? existingQuery.where('draft_id', '=', owner.draftId) : existingQuery.where('server_id', '=', owner.serverId!).where('machine_id', 'is', null);
     const existingRows = await existingQuery.execute();
     const ownedById = new Map(existingRows.map(row => [row.id, row.name]));
     const ownedByName = new Map<string, { id: string; name: string }>();
@@ -537,7 +677,9 @@ export class McpRegistryService {
     const connection = await this.oauthMachine(userId, serverId, request.machineId, true);
     if (!connection) throw new HttpError(409, 'machine_offline', 'Target machine is offline');
     const flowId = randomUUID();
-    const redirectUri = new URL('/mcp/oauth/callback', this.o.publicUrl).toString();
+    const oauthClientId = typeof server.config.oauthClientId === 'string' ? server.config.oauthClientId : undefined;
+    // A pre-registered client accepts only loopback redirects: the user pastes the address back (completeOAuth).
+    const redirectUri = oauthClientId ? OAUTH_LOOPBACK_REDIRECT_URI : new URL('/mcp/oauth/callback', this.o.publicUrl).toString();
     let result: ReturnType<typeof mcpOAuthStartResultSchema.parse>;
     try {
       result = mcpOAuthStartResultSchema.parse(
@@ -548,11 +690,14 @@ export class McpRegistryService {
           redirectUri,
           serverUrl: String(server.config.url),
           transport: server.config.transport as 'http' | 'sse',
+          ...(oauthClientId ? { oauthClientId } : {}),
         }),
       );
     } catch (error) {
       await this.writeOAuthStatus(userId, serverId, request.machineId, 'failed', null, 'OAuth authorization could not be started');
       await this.audit(userId, 'api', 'oauth.start-failed', serverId);
+      const agentCode = error instanceof CommandError ? error.code : error instanceof Error ? error.name : 'unknown';
+      this.o.log.warn({ serverId, machineId: request.machineId, agentCode }, 'MCP OAuth start failed');
       if (error instanceof CommandError && error.code === 'timeout') throw new HttpError(504, 'timeout', 'OAuth authorization start timed out');
       throw new HttpError(502, 'oauth_start_failed', 'OAuth authorization could not be started');
     }
@@ -592,6 +737,7 @@ export class McpRegistryService {
       serverId,
       machineId: request.machineId,
       state: result.state,
+      redirectUri,
       expiresAt: result.expiresAt,
       callbackForwarded: false,
       timer,
@@ -604,7 +750,27 @@ export class McpRegistryService {
       state: 'pending',
       authorizationUrl: result.authorizationUrl,
       expiresAt: result.expiresAt,
+      callback: oauthClientId ? 'manual' : 'hub',
     });
+  }
+  /** Ends a loopback sign-in: the user pastes the address the provider sent the browser to. */
+  async completeOAuth(userId: string, serverId: string, body: unknown) {
+    const request = parse(mcpRegistryOAuthCompleteRequestSchema, body);
+    let pasted: URL;
+    try {
+      pasted = new URL(request.callbackUrl.trim());
+    } catch {
+      throw new HttpError(400, 'oauth_callback_invalid', 'The pasted text is not a sign-in address');
+    }
+    const flow = this.pendingOAuth.get(pasted.searchParams.get('state') ?? '');
+    if (!flow || flow.userId !== userId || flow.serverId !== serverId || flow.machineId !== request.machineId) {
+      throw new HttpError(404, 'oauth_flow_not_found', 'No sign-in is waiting for this address');
+    }
+    if (`${pasted.origin}${pasted.pathname}` !== flow.redirectUri) throw new HttpError(400, 'oauth_callback_invalid', 'The pasted address is not the sign-in callback');
+    const result = await this.oauthCallback(userId, flow.state, pasted.toString());
+    if (result && !result.ok && result.error === 'OAuth authorization expired') throw new HttpError(410, 'oauth_flow_expired', 'The sign-in has expired');
+    if (!result?.ok) throw new HttpError(502, 'oauth_callback_failed', result?.error ?? 'OAuth callback could not be completed');
+    return mcpRegistryOAuthCompleteResponseSchema.parse({ serverId, machineId: request.machineId, state: 'pending' });
   }
   async oauthCallback(userId: string, state: string | undefined, callbackUrl: string) {
     if (!state) return null;
@@ -651,7 +817,7 @@ export class McpRegistryService {
     await Promise.all(
       allowed.map(async runner => {
         const connection = this.o.agents.get(runner.id);
-        if (connection && this.capabilities.get(runner.id)?.has('mcp.oauth.v1')) {
+        if (connection && this.caps(runner.id)?.has('mcp.oauth.v1')) {
           try {
             await connection.request('mcp.oauth.revoke', { serverId, machineId: runner.id }, 5000);
           } catch {
@@ -684,7 +850,7 @@ export class McpRegistryService {
         if (value.kind === 'secret' && value.secretId) secretIds.add(value.secretId);
       }
     }
-    if (secretIds.size && !this.capabilities.get(request.machineId)?.has('mcp.secrets.encrypted.v1')) {
+    if (secretIds.size && !this.caps(request.machineId)?.has('mcp.secrets.encrypted.v1')) {
       throw new HttpError(409, 'agent_outdated', 'Target machine does not support MCP secret delivery');
     }
     const secretRows = secretIds.size
@@ -801,7 +967,7 @@ export class McpRegistryService {
         .execute(),
       this.o.db
         .selectFrom('runners')
-        .select(['id', 'name', 'online', 'protocol_version', 'state', 'mcp_registry_enabled'])
+        .select(['id', 'name', 'online', 'protocol_version', 'state', 'mcp_import_state', 'mcp_imported_at', 'mcp_import_report'])
         .where('user_id', '=', userId)
         .where('state', '!=', 'pending')
         .orderBy('name')
@@ -839,8 +1005,11 @@ export class McpRegistryService {
         machineName: runner.name,
         online: runner.online,
         protocolVersion: runner.protocol_version ?? '0.0',
-        capabilities: [...(this.capabilities.get(runner.id) ?? [])],
-        registryEnabled: runner.mcp_registry_enabled,
+        capabilities: [...(this.caps(runner.id) ?? [])],
+        registryEnabled: runner.mcp_import_state === 'done',
+        importState: runner.mcp_import_state,
+        importedAt: runner.mcp_imported_at ? new Date(runner.mcp_imported_at).getTime() : null,
+        importReport: (runner.mcp_import_report ?? null) as { imported: string[]; skipped: string[] } | null,
       })),
       gateways: q.map(x => ({
         serverId: x.server_id,
@@ -862,14 +1031,74 @@ export class McpRegistryService {
       })),
     };
   }
-  async setMachineRegistryEnabled(userId: string, machineId: string, body: unknown) {
-    const request = parse(mcpRegistryMachineToggleRequestSchema, body);
-    const machine = await this.o.db.selectFrom('runners').select('id').where('id', '=', machineId).where('user_id', '=', userId).where('state', '!=', 'pending').executeTakeFirst();
-    if (!machine) throw new HttpError(404, 'machine_not_found', 'Machine not found');
-    await this.o.db.updateTable('runners').set({ mcp_registry_enabled: request.enabled }).where('id', '=', machineId).where('user_id', '=', userId).execute();
-    await this.audit(userId, 'api', request.enabled ? 'machine.registry-enable' : 'machine.registry-disable', null);
-    await this.syncRunner(machineId, userId);
-    return mcpRegistryMachineToggleResponseSchema.parse({ machineId, registryEnabled: request.enabled });
+  /** D2: one row per active machine — whether the server reaches it and whether it has its own config there. */
+  private async serverMachines(userId: string, servers: Array<{ id: string; config: Cfg }>) {
+    const [runners, overrides] = await Promise.all([
+      this.o.db.selectFrom('runners').select('id').where('user_id', '=', userId).where('state', '=', 'active').orderBy('name').execute(),
+      this.machineOverrideRows(userId),
+    ]);
+    const byPair = new Map(overrides.map(row => [`${row.server_id}:${row.runner_id}`, row]));
+    const result = new Map<string, Array<{ machineId: string; enabled: boolean; customConfig: boolean }>>();
+    for (const server of servers) {
+      const scope = server.config.machineScope as { allMachines?: boolean; machineIds?: string[] } | undefined;
+      result.set(
+        server.id,
+        runners.map(runner => {
+          const override = byPair.get(`${server.id}:${runner.id}`);
+          const inScope = !scope || scope.allMachines === true || scope.machineIds?.includes(runner.id) === true;
+          return { machineId: runner.id, enabled: inScope && override?.enabled !== false, customConfig: !!override?.config };
+        }),
+      );
+    }
+    return result;
+  }
+  async setMachineOverride(userId: string, serverId: string, machineId: string, body: unknown) {
+    const request = parse(mcpRegistryMachineOverrideRequestSchema, body);
+    const server = await this.o.db.selectFrom('mcp_registry_servers').select(['id', 'config', 'revision']).where('user_id', '=', userId).where('id', '=', serverId).executeTakeFirst();
+    if (!server) {
+      await this.audit(userId, 'api', 'machine.override.forbidden', null, undefined, { serverId, machineId });
+      throw new HttpError(404, 'mcp_server_not_found', 'MCP server not found');
+    }
+    const machine = await this.o.db.selectFrom('runners').select(['user_id', 'state']).where('id', '=', machineId).executeTakeFirst();
+    if (!machine || machine.state === 'pending') throw new HttpError(404, 'machine_not_found', 'Machine not found');
+    if (machine.user_id !== userId) {
+      await this.audit(userId, 'api', 'machine.override.forbidden', serverId, undefined, { machineId });
+      throw new HttpError(403, 'machine_forbidden', 'Machine belongs to another user');
+    }
+    const revision = Number(server.revision);
+    if (revision !== request.revision) throw new HttpError(409, 'revision_conflict', 'Registry revision changed');
+    const scope = (server.config.machineScope ?? { allMachines: true, machineIds: [] }) as { allMachines: boolean; machineIds: string[] };
+    const outside = !scope.allMachines && !scope.machineIds.includes(machineId);
+    const machineScope = request.enabled === true && outside ? { ...scope, machineIds: [...scope.machineIds, machineId] } : scope;
+    await this.o.db.transaction().execute(async trx => {
+      const updated = await trx
+        .updateTable('mcp_registry_servers')
+        .set({ config: JSON.stringify({ ...server.config, machineScope, revision: revision + 1 }), revision: revision + 1, updated_at: new Date() })
+        .where('user_id', '=', userId)
+        .where('id', '=', serverId)
+        .where('revision', '=', String(revision))
+        .returning('id')
+        .executeTakeFirst();
+      if (!updated) throw new HttpError(409, 'revision_conflict', 'Registry revision changed');
+      const current = await trx.selectFrom('mcp_registry_machine_overrides').select(['enabled', 'config']).where('server_id', '=', serverId).where('runner_id', '=', machineId).executeTakeFirst();
+      if (request.resetConfig) await trx.deleteFrom('mcp_secrets').where('user_id', '=', userId).where('server_id', '=', serverId).where('machine_id', '=', machineId).execute();
+      const enabled = request.enabled ?? current?.enabled ?? true;
+      const config = request.resetConfig ? null : (current?.config ?? null);
+      if (enabled && !config) {
+        await trx.deleteFrom('mcp_registry_machine_overrides').where('server_id', '=', serverId).where('runner_id', '=', machineId).execute();
+        return;
+      }
+      await trx
+        .insertInto('mcp_registry_machine_overrides')
+        .values({ user_id: userId, server_id: serverId, runner_id: machineId, enabled, config: config ? JSON.stringify(config) : null })
+        .onConflict(conflict => conflict.columns(['server_id', 'runner_id']).doUpdateSet({ enabled, config: config ? JSON.stringify(config) : null, updated_at: new Date() }))
+        .execute();
+    });
+    await this.bump(userId);
+    await this.audit(userId, 'api', 'machine.override', serverId, undefined, { machineId, enabled: request.enabled ?? null, resetConfig: request.resetConfig === true });
+    await this.syncUser(userId);
+    const machines = await this.serverMachines(userId, [{ id: serverId, config: { ...server.config, machineScope } }]);
+    return mcpRegistryMachineOverrideResponseSchema.parse({ serverId, revision: revision + 1, machines: machines.get(serverId) ?? [] });
   }
   async patch(userId: string, id: string, revision: number, input: unknown) {
     if (!Number.isSafeInteger(revision) || revision < 0) throw new HttpError(400, 'invalid_request', 'revision is required');
@@ -1153,10 +1382,10 @@ export class McpRegistryService {
     if (Number(row.revision) !== b.revision) throw new HttpError(409, 'revision_conflict', 'Draft revision changed');
     const r = await this.o.db.selectFrom('runners').select(['protocol_version', 'user_id', 'name']).where('id', '=', b.machineId).where('user_id', '=', userId).executeTakeFirst();
     if (!r) throw new HttpError(403, 'forbidden', 'Machine access denied');
-    if (!protocolAtLeast(r.protocol_version, MIN) || !this.capabilities.get(b.machineId)?.has('mcp.registry.v1')) {
+    if (!protocolAtLeast(r.protocol_version, MIN) || !this.caps(b.machineId)?.has('mcp.registry.v1')) {
       throw new HttpError(409, 'agent_outdated', 'Agent does not support MCP registry');
     }
-    if (!this.capabilities.get(b.machineId)?.has('mcp.gateway.streamable-http.v1')) {
+    if (!this.caps(b.machineId)?.has('mcp.gateway.streamable-http.v1')) {
       throw new HttpError(409, 'agent_outdated', 'Agent does not support MCP gateway validation');
     }
     if (!this.o.agents.isOnline(b.machineId)) throw new HttpError(409, 'runner_offline', 'Target machine is offline');
@@ -1171,7 +1400,7 @@ export class McpRegistryService {
     for (const secret of (cfg.secrets ?? []) as Array<{ secretId?: string }>) {
       if (typeof secret.secretId === 'string') refs.add(secret.secretId);
     }
-    if (refs.size && !this.capabilities.get(b.machineId)?.has('mcp.secrets.encrypted.v1')) {
+    if (refs.size && !this.caps(b.machineId)?.has('mcp.secrets.encrypted.v1')) {
       throw new HttpError(409, 'agent_outdated', 'Agent does not support MCP secret delivery');
     }
     const secretRows = refs.size
@@ -1318,7 +1547,7 @@ export class McpRegistryService {
           .executeTakeFirst();
         if (!claimed) throw new HttpError(409, 'revision_conflict', 'Draft changed before confirmation');
         await trx.updateTable('mcp_secrets').set({ server_id: serverId, draft_id: null, updated_at: new Date() }).where('user_id', '=', userId).where('draft_id', '=', draftId).execute();
-        let stale = trx.deleteFrom('mcp_secrets').where('user_id', '=', userId).where('server_id', '=', serverId);
+        let stale = trx.deleteFrom('mcp_secrets').where('user_id', '=', userId).where('server_id', '=', serverId).where('machine_id', 'is', null);
         if (refs.length) stale = stale.where('id', 'not in', refs);
         await stale.execute();
       });
@@ -1331,7 +1560,7 @@ export class McpRegistryService {
     await this.audit(userId, draft.session_id ?? 'api', 'server.update-confirm', serverId, draftId);
     await this.syncUser(userId);
     let sessionUpdate: Cfg | undefined;
-    if (draft.session_id && draft.runner_id && this.capabilities.get(draft.runner_id)?.has('mcp.registry.v1')) {
+    if (draft.session_id && draft.runner_id && this.caps(draft.runner_id)?.has('mcp.registry.v1')) {
       const current = await this.o.db.selectFrom('sessions').select(['user_id', 'runner_id']).where('id', '=', draft.session_id).where('user_id', '=', userId).executeTakeFirst();
       if (current?.runner_id === draft.runner_id) {
         await this.o.db
@@ -1434,7 +1663,7 @@ export class McpRegistryService {
     await this.audit(userId, 'api', unchecked ? 'draft.save-unchecked' : 'draft.connect', idServer, id);
     await this.syncUser(userId);
     let sessionUpdate: Cfg | undefined;
-    if (!needsAuth && !unchecked && row.session_id && row.runner_id && this.capabilities.get(row.runner_id)?.has('mcp.registry.v1')) {
+    if (!needsAuth && !unchecked && row.session_id && row.runner_id && this.caps(row.runner_id)?.has('mcp.registry.v1')) {
       const current = await this.o.db.selectFrom('sessions').select(['user_id', 'runner_id']).where('id', '=', row.session_id).where('user_id', '=', userId).executeTakeFirst();
       if (current?.runner_id === row.runner_id) {
         await this.o.db
@@ -1467,28 +1696,54 @@ export class McpRegistryService {
     }
     return { serverId: idServer, state: needsAuth ? 'needs-login' : state, server: safe(config), ...(sessionUpdate ? { sessionUpdate } : {}) };
   }
-  async importPreview(userId: string, machineId: string, projectRoot: string) {
+  /**
+   * Capabilities of the machine: the live connection's are set before welcome, while `agent.hello` reaches this service only after
+   * the status write — a request right after welcome must not see a fresh agent as outdated. Offline — the last hello's.
+   */
+  private caps(runnerId: string): ReadonlySet<string> | undefined {
+    const connection = this.o.agents.get(runnerId);
+    return connection ? new Set(connection.capabilities) : this.capabilities.get(runnerId);
+  }
+  /** D5: scan the machine's local MCP config; the agent reads every bound project root, the hub computes decisions against the registry. */
+  async importPreview(userId: string, machineId: string, projectRoot?: string): Promise<McpImportPreviewResponse> {
     const c = this.o.agents.get(machineId);
     if (!c) throw new HttpError(409, 'runner_offline', 'Target machine is offline');
-    const runner = await this.o.db.selectFrom('runners').select(['user_id', 'protocol_version']).where('id', '=', machineId).where('user_id', '=', userId).executeTakeFirst();
+    const runner = await this.o.db
+      .selectFrom('runners')
+      .select(['user_id', 'protocol_version', 'home_dir', 'default_dir'])
+      .where('id', '=', machineId)
+      .where('user_id', '=', userId)
+      .executeTakeFirst();
     if (!runner) throw new HttpError(403, 'forbidden', 'Machine access denied');
-    if (!protocolAtLeast(runner.protocol_version, MIN) || !this.capabilities.get(machineId)?.has('mcp.registry.v1')) throw new HttpError(409, 'agent_outdated', 'Agent does not support import');
+    const capabilities = this.caps(machineId);
+    if (!protocolAtLeast(runner.protocol_version, MIN) || !capabilities?.has('mcp.registry.v1') || !capabilities.has(MCP_IMPORT_V2_CAPABILITY)) {
+      throw new HttpError(409, 'agent_outdated', 'Agent does not support import');
+    }
     if (this.pendingImports.has(machineId)) throw new HttpError(409, 'import_busy', 'An import scan is already running on this machine');
+    // session-folder D1: a project's folder on this machine is the machine's default folder plus the project's folder.
+    const base = runner.default_dir ?? runner.home_dir;
+    const windows = platformOfHome(runner.home_dir) === 'windows';
+    const projects = base
+      ? await this.o.db.selectFrom('catalog_projects').select(['id', 'folder']).where('user_id', '=', userId).where('archived', '=', false).where('folder', 'is not', null).orderBy('folder').execute()
+      : [];
+    const projectRoots = projects.map(project => ({ projectId: project.id, path: projectDir(base as string, project.folder, windows) }));
+    const root = projectRoot ?? base ?? '~';
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingImports.delete(machineId);
         reject(new HttpError(504, 'timeout', 'Import scan timed out'));
       }, this.o.importTimeoutMs ?? 45_000);
-      this.pendingImports.set(machineId, { userId, resolve, reject, timer });
-      c.send('mcp.import.preview', { machineId, projectRoot }, { id: randomUUID() });
+      this.pendingImports.set(machineId, { userId, resolve: value => resolve(value as McpImportPreviewResponse), reject, timer });
+      c.send('mcp.import.preview', { machineId, projectRoot: root, projectRoots }, { id: randomUUID() });
     });
   }
-  async importCommit(userId: string, body: unknown) {
+  /** D5: apply the selected preview entries in one transaction, deciding each one again against the registry as it changes. */
+  async importCommit(userId: string, body: unknown, actor = 'api'): Promise<McpImportCommitResponse> {
     const b = parse(mcpImportCommitPayload, body);
     if (new Set(b.serverIds).size !== b.serverIds.length) throw new HttpError(400, 'invalid_request', 'Selected serverIds must be unique');
     const found = await this.o.db
       .selectFrom('mcp_registry_imports')
-      .select(['preview', 'state'])
+      .select(['preview', 'state', 'runner_id'])
       .where('id', '=', b.importId)
       .where('user_id', '=', userId)
       .where('expires_at', '>', new Date())
@@ -1496,124 +1751,289 @@ export class McpRegistryService {
     if (!found) throw new HttpError(404, 'import_not_found', 'Import preview not found');
     if (found.preview.revision !== b.revision) throw new HttpError(409, 'revision_conflict', 'Import preview revision changed');
     if (found.state !== 'preview') throw new HttpError(409, 'import_already_committed', 'Import preview was already committed');
-    const previewServers = found.preview.servers as Cfg[];
+    const stored = found.preview as unknown as StoredImportPreview;
+    if (!Array.isArray(stored.entries)) throw new HttpError(409, 'import_outdated', 'Import preview was made by an older hub; scan again');
+    const machineId = found.runner_id;
     const selectedIds = new Set(b.serverIds);
-    const selected = previewServers.filter(server => selectedIds.has(String(server.id)));
+    const selected = stored.entries.filter(entry => selectedIds.has(entry.id));
     if (selected.length !== selectedIds.size) throw new HttpError(400, 'invalid_request', 'One or more selected servers are not in this preview');
-    const drafts = [];
-    for (const server of selected) {
-      const { revision: _revision, secrets, source: _source, ...candidate } = server;
-      const refs = (secrets as Array<{ secretId: string; name: string }> | undefined) ?? [];
-      const ids = refs.map(secret => secret.secretId);
-      const secretRows = ids.length
-        ? await this.o.db.selectFrom('mcp_secrets').select(['id', 'name', 'ciphertext']).where('user_id', '=', userId).where('import_id', '=', b.importId).where('id', 'in', ids).execute()
-        : [];
-      if (secretRows.length !== ids.length) throw new HttpError(400, 'invalid_input', 'Imported secret references are invalid');
-      const namesById = new Map(secretRows.map(secret => [secret.id, secret.name]));
-      const writes = secretRows.map(secret => ({
-        name: secret.name,
-        value: decryptSecret(this.o.key, userId, secret.id, secret.ciphertext),
-      }));
-      for (const bucket of ['env', 'headers']) {
-        const values = (candidate[bucket] ?? {}) as Record<string, Cfg>;
-        for (const [key, rawValue] of Object.entries(values)) {
-          if (rawValue.kind !== 'secret') continue;
-          const secretName = namesById.get(String(rawValue.secretId));
-          if (!secretName) throw new HttpError(400, 'invalid_input', 'Imported config references an unowned secret');
-          values[key] = { kind: 'secret-name', name: secretName };
+    const applied: Array<{ serverId: string; name: string; decision: McpImportDecision }> = [];
+    const created: Array<{ id: string; config: Cfg }> = [];
+    try {
+      await this.o.db.transaction().execute(async trx => {
+        const claimed = await trx
+          .updateTable('mcp_registry_imports')
+          .set({ state: 'committed' })
+          .where('id', '=', b.importId)
+          .where('user_id', '=', userId)
+          .where('state', '=', 'preview')
+          .returning('id')
+          .executeTakeFirst();
+        if (!claimed) throw new HttpError(409, 'import_already_committed', 'Import preview was already committed');
+        const registry = await this.importRegistry(trx, userId, machineId, true);
+        const values = new Map([...registry.values, ...(await this.importSecretValues(trx, userId, b.importId))]);
+        const conflicts = importConflicts(stored.entries, values);
+        for (const entry of selected) {
+          if (conflicts.has(entry.id)) continue;
+          const existing = registry.servers.get(entry.name);
+          const decision = importDecision(entry, existing, machineId, values);
+          if (decision === 'unchanged' || decision === 'conflict') continue;
+          const secretIds = ((entry.secrets ?? []) as SecretRef[]).map(ref => ref.secretId);
+          if (decision === 'new') {
+            const serverId = randomUUID();
+            const config = parse(mcpServerConfigSchema, {
+              ...pickImportConfig(entry),
+              id: serverId,
+              name: entry.name,
+              enabled: true,
+              mode: entry.transport === 'stdio' ? 'machine-shared' : 'remote',
+              machineScope: { allMachines: false, machineIds: [machineId] },
+              projectIds: entry.projectId ? [entry.projectId] : [],
+              secrets: entry.secrets ?? [],
+              revision: 1,
+            }) as Cfg;
+            await trx
+              .insertInto('mcp_registry_servers')
+              .values({ id: serverId, user_id: userId, name: entry.name, config: JSON.stringify(config), enabled: true })
+              .execute();
+            if (secretIds.length) {
+              await trx
+                .updateTable('mcp_secrets')
+                .set({ server_id: serverId, import_id: null, updated_at: new Date() })
+                .where('user_id', '=', userId)
+                .where('import_id', '=', b.importId)
+                .where('id', 'in', secretIds)
+                .execute();
+            }
+            registry.servers.set(entry.name, { id: serverId, config, revision: 1, override: null });
+            created.push({ id: serverId, config });
+            applied.push({ serverId, name: entry.name, decision });
+            continue;
+          }
+          const server = existing!;
+          const scope = (server.config.machineScope ?? { allMachines: true, machineIds: [] }) as { allMachines: boolean; machineIds: string[] };
+          const machineScope = scope.allMachines || scope.machineIds.includes(machineId) ? scope : { ...scope, machineIds: [...scope.machineIds, machineId] };
+          const current = Array.isArray(server.config.projectIds) ? (server.config.projectIds as string[]) : [];
+          let projectIds: string[] = [];
+          if (entry.projectId) projectIds = current.length && !current.includes(entry.projectId) ? [...current, entry.projectId] : current;
+          const revision = server.revision + 1;
+          const config = { ...server.config, machineScope, projectIds, revision };
+          const updated = await trx
+            .updateTable('mcp_registry_servers')
+            .set({ config: JSON.stringify(config), revision, updated_at: new Date() })
+            .where('user_id', '=', userId)
+            .where('id', '=', server.id)
+            .where('revision', '=', String(server.revision))
+            .returning('id')
+            .executeTakeFirst();
+          if (!updated) throw new HttpError(409, 'revision_conflict', 'Registry revision changed');
+          let override = server.override;
+          if (decision === 'add-machine') {
+            if (override && !override.config) {
+              await trx.deleteFrom('mcp_registry_machine_overrides').where('server_id', '=', server.id).where('runner_id', '=', machineId).execute();
+              override = null;
+            } else if (override && !override.enabled) {
+              await trx.updateTable('mcp_registry_machine_overrides').set({ enabled: true, updated_at: new Date() }).where('server_id', '=', server.id).where('runner_id', '=', machineId).execute();
+              override = { ...override, enabled: true };
+            }
+          } else {
+            await trx.deleteFrom('mcp_secrets').where('user_id', '=', userId).where('server_id', '=', server.id).where('machine_id', '=', machineId).execute();
+            if (secretIds.length) {
+              await trx
+                .updateTable('mcp_secrets')
+                .set({ server_id: server.id, machine_id: machineId, import_id: null, updated_at: new Date() })
+                .where('user_id', '=', userId)
+                .where('import_id', '=', b.importId)
+                .where('id', 'in', secretIds)
+                .execute();
+            }
+            const picked = pickImportConfig(entry);
+            const overrideConfig: Cfg = { secrets: entry.secrets ?? [] };
+            for (const field of OVERRIDE_FIELDS) overrideConfig[field] = picked[field] ?? null;
+            const sameTransport = entry.transport === server.config.transport;
+            overrideConfig.mode = sameTransport ? server.config.mode : entry.transport === 'stdio' ? 'machine-shared' : 'remote';
+            await trx
+              .insertInto('mcp_registry_machine_overrides')
+              .values({ user_id: userId, server_id: server.id, runner_id: machineId, enabled: true, config: JSON.stringify(overrideConfig) })
+              .onConflict(conflict => conflict.columns(['server_id', 'runner_id']).doUpdateSet({ enabled: true, config: JSON.stringify(overrideConfig), updated_at: new Date() }))
+              .execute();
+            override = { enabled: true, config: overrideConfig };
+          }
+          registry.servers.set(entry.name, { id: server.id, config, revision, override });
+          applied.push({ serverId: server.id, name: entry.name, decision });
         }
-        if (candidate[bucket] !== undefined) candidate[bucket] = values;
-      }
-      if (typeof candidate.urlSecretId === 'string') {
-        const secretName = namesById.get(candidate.urlSecretId);
-        if (!secretName) throw new HttpError(400, 'invalid_input', 'Imported URL references an unowned secret');
-        candidate.urlSecretName = secretName;
-        delete candidate.urlSecretId;
-      }
-      const d = await this.draft(userId, { server: candidate, secrets: writes });
-      if (ids.length) {
-        await this.o.db.deleteFrom('mcp_secrets').where('user_id', '=', userId).where('import_id', '=', b.importId).where('id', 'in', ids).execute();
-      }
-      drafts.push(d);
+        await trx.deleteFrom('mcp_secrets').where('user_id', '=', userId).where('import_id', '=', b.importId).execute();
+      });
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      if ((error as { code?: string }).code === '23505') throw new HttpError(409, 'name_taken', 'An MCP server with this name already exists');
+      throw error;
     }
-    await this.o.db.updateTable('mcp_registry_imports').set({ state: 'committed' }).where('id', '=', b.importId).where('user_id', '=', userId).execute();
-    await this.audit(userId, 'api', 'import.commit', null);
-    return { imported: drafts.length, drafts };
+    if (applied.length) await this.bump(userId);
+    await this.audit(userId, actor, 'import.commit', null, undefined, { machineId, servers: applied.map(item => ({ name: item.name, decision: item.decision })) });
+    for (const server of created) {
+      if (typeof server.config.oauthClientId !== 'string') continue;
+      await this.writeOAuthStatus(userId, server.id, machineId, 'needs-login', null, null, { registryReady: false });
+    }
+    if (applied.length) await this.syncUser(userId);
+    return mcpImportCommitResponseSchema.parse({ imported: applied.length, servers: applied });
+  }
+  /** D6: first connection of an agent with import v2 on a machine that is not on the registry yet. */
+  private async autoImport(runnerId: string, userId: string) {
+    if (!this.caps(runnerId)?.has(MCP_IMPORT_V2_CAPABILITY)) return;
+    const machine = await this.o.db.selectFrom('runners').select('mcp_import_state').where('id', '=', runnerId).where('user_id', '=', userId).where('state', '=', 'active').executeTakeFirst();
+    if (machine?.mcp_import_state !== 'auto-pending') return;
+    try {
+      const preview = await this.importPreview(userId, runnerId);
+      const serverIds = preview.servers.filter(entry => entry.selected).map(entry => entry.id);
+      const committed = serverIds.length ? await this.importCommit(userId, { importId: preview.importId, revision: preview.revision, serverIds, userConfirmed: true }, runnerId) : null;
+      const importedNames = new Set((committed?.servers ?? []).map(server => server.name));
+      // A server already on the registry for this machine is not a skip: the machine keeps getting it.
+      const skipped = preview.servers.filter(entry => entry.decision !== 'unchanged' && !importedNames.has(entry.name));
+      const report = { imported: [...importedNames], skipped: skipped.map(entry => entry.name) };
+      await this.o.db
+        .updateTable('runners')
+        .set({ mcp_import_state: 'done', mcp_imported_at: new Date(), mcp_import_report: JSON.stringify(report) })
+        .where('id', '=', runnerId)
+        .where('user_id', '=', userId)
+        .execute();
+      await this.audit(userId, runnerId, 'import.auto', null, undefined, report);
+      await this.syncRunner(runnerId, userId);
+    } catch (error) {
+      const code = error instanceof HttpError ? error.code : 'import_failed';
+      this.o.log.warn({ runnerId, code, errorClass: error instanceof Error ? error.name : 'unknown' }, 'MCP auto-import failed');
+      await this.audit(userId, runnerId, 'import.auto.failed', null, undefined, { code });
+    }
+  }
+  /** Registry servers of the user as the machine sees them, plus decrypted values of their shared and machine secrets. */
+  private async importRegistry(db: Db | Transaction<Database>, userId: string, machineId: string, lock = false) {
+    let query = db.selectFrom('mcp_registry_servers').select(['id', 'name', 'config', 'revision']).where('user_id', '=', userId);
+    if (lock) query = query.forUpdate();
+    const rows = await query.execute();
+    const overrides = await db.selectFrom('mcp_registry_machine_overrides').select(['server_id', 'enabled', 'config']).where('user_id', '=', userId).where('runner_id', '=', machineId).execute();
+    const overrideByServer = new Map(overrides.map(row => [row.server_id, { enabled: row.enabled, config: row.config }]));
+    const servers = new Map<string, ImportRegistryServer>();
+    for (const row of rows) servers.set(row.name, { id: row.id, config: row.config, revision: Number(row.revision), override: overrideByServer.get(row.id) ?? null });
+    const secrets = rows.length
+      ? await db
+          .selectFrom('mcp_secrets')
+          .select(['id', 'ciphertext'])
+          .where('user_id', '=', userId)
+          .where(
+            'server_id',
+            'in',
+            rows.map(row => row.id),
+          )
+          .where(eb => eb.or([eb('machine_id', 'is', null), eb('machine_id', '=', machineId)]))
+          .execute()
+      : [];
+    const values = new Map(secrets.map(row => [row.id, decryptSecret(this.o.key, userId, row.id, row.ciphertext)]));
+    return { servers, values };
+  }
+  private async importSecretValues(db: Db | Transaction<Database>, userId: string, importId: string) {
+    const rows = await db.selectFrom('mcp_secrets').select(['id', 'ciphertext']).where('user_id', '=', userId).where('import_id', '=', importId).execute();
+    return new Map(rows.map(row => [row.id, decryptSecret(this.o.key, userId, row.id, row.ciphertext)]));
+  }
+  /** Preview as the user sees it: decisions against the current registry, default selection, masked secrets. */
+  private async importView(userId: string, stored: StoredImportPreview): Promise<McpImportPreviewResponse> {
+    const registry = await this.importRegistry(this.o.db, userId, stored.machineId);
+    const values = new Map([...registry.values, ...(await this.importSecretValues(this.o.db, userId, stored.importId))]);
+    const conflicts = importConflicts(stored.entries, values);
+    const servers = stored.entries.map(entry => {
+      const decision = conflicts.has(entry.id) ? 'conflict' : importDecision(entry, registry.servers.get(entry.name), stored.machineId, values);
+      const warnings = [...(entry.warnings ?? [])];
+      if (conflicts.has(entry.id) && !warnings.includes('project-conflict')) warnings.push('project-conflict');
+      const selectable = decision !== 'unchanged' && decision !== 'conflict';
+      return {
+        id: entry.id,
+        name: entry.name,
+        transport: entry.transport,
+        ...(typeof entry.command === 'string' ? { command: entry.command } : {}),
+        ...(typeof entry.url === 'string' ? { url: entry.url } : {}),
+        source: entry.source,
+        ...(entry.origin ? { origin: entry.origin } : {}),
+        ...(entry.projectId ? { projectId: entry.projectId } : {}),
+        decision,
+        selectable,
+        selected: selectable && !warnings.includes('unbound-path'),
+        warnings,
+        secrets: ((entry.secrets ?? []) as SecretRef[]).map(ref => ({ name: ref.name, masked: true as const })),
+      };
+    });
+    return mcpImportPreviewResponseSchema.parse({
+      importId: stored.importId,
+      machineId: stored.machineId,
+      revision: stored.revision,
+      servers,
+      secretsCaptured: stored.secretsCaptured,
+      warnings: stored.warnings,
+      notices: ['claude-ai-connectors'],
+    });
   }
   private async storeImportPreview(runnerId: string, payload: Cfg) {
     const pending = this.pendingImports.get(runnerId);
     const userId = this.o.agents.get(runnerId)?.userId;
     if (!userId || !pending || pending.userId !== userId) throw new HttpError(403, 'forbidden', 'Import result has no matching owner request');
-    const importId = String(payload.importId);
-    const servers = payload.servers as Cfg[];
-    const secrets = (payload.secretValues ?? []) as Array<{ serverName: string; location: 'env' | 'header' | 'url'; key: string; value: string }>;
-    const safeServers: Cfg[] = servers.map(server => ({ ...server, secrets: [] }));
-    const firstUrlSecret = new Map<string, string>();
-    const initialPreview = { importId, revision: 1, servers: [], secretsCaptured: secrets.length, warnings: payload.warnings ?? [] };
+    const result = parse(mcpImportPreviewResultPayload, payload);
+    const importId = result.importId;
+    const warnings = [...result.warnings];
+    const seenIds = new Set<string>();
+    const entries: ImportEntryRecord[] = result.servers.map(server => {
+      const entryId = seenIds.has(server.id) ? randomUUID() : server.id;
+      seenIds.add(entryId);
+      return { ...server, id: entryId, secrets: [] as SecretRef[], warnings: [...(server.warnings ?? [])] } as ImportEntryRecord;
+    });
+    const agentIds = new Map(result.servers.map((server, index) => [server.id, entries[index]!]));
     await this.o.db
       .insertInto('mcp_registry_imports')
-      .values({ id: importId, user_id: userId, runner_id: runnerId, preview: JSON.stringify(initialPreview), state: 'preview' })
+      .values({ id: importId, user_id: userId, runner_id: runnerId, preview: JSON.stringify({ importId, revision: 1, entries: [] }), state: 'preview' })
       .execute();
-    for (const secret of secrets) {
-      const server = safeServers.find(s => s.name === secret.serverName);
-      if (!server) throw new HttpError(400, 'invalid_import', 'Imported secret does not match a server');
+    const firstUrlSecret = new Set<string>();
+    for (const secret of result.secretValues) {
+      const entry = (secret.entryId ? agentIds.get(secret.entryId) : undefined) ?? entries.find(item => item.name === secret.serverName);
+      if (!entry) throw new HttpError(400, 'invalid_import', 'Imported secret does not match a server');
       const secretId = randomUUID();
       const label = `${secret.location}:${secret.key}`;
       await this.o.db
         .insertInto('mcp_secrets')
-        .values({
-          id: secretId,
-          user_id: userId,
-          import_id: importId,
-          name: label,
-          ciphertext: encryptSecret(this.o.key, userId, secretId, secret.value),
-          server_id: null,
-          draft_id: null,
-        })
+        .values({ id: secretId, user_id: userId, import_id: importId, name: label, ciphertext: encryptSecret(this.o.key, userId, secretId, secret.value), server_id: null, draft_id: null })
         .execute();
       if (secret.location === 'env' || secret.location === 'header') {
         const key = secret.location === 'env' ? 'env' : 'headers';
-        const values = (server[key] ?? {}) as Record<string, unknown>;
-        values[secret.key] = { kind: 'secret', secretId };
-        server[key] = values;
+        entry[key] = { ...((entry[key] ?? {}) as Cfg), [secret.key]: { kind: 'secret', secretId } };
       } else {
-        if (typeof server.url !== 'string') throw new HttpError(400, 'invalid_import', 'URL secret has no matching server URL');
-        const url = new URL(server.url);
+        if (typeof entry.url !== 'string') throw new HttpError(400, 'invalid_import', 'URL secret has no matching server URL');
+        const url = new URL(entry.url);
         if (secret.key === 'username') url.username = URL_SECRET_PLACEHOLDER;
         else if (secret.key === 'password') url.password = URL_SECRET_PLACEHOLDER;
         else url.searchParams.set(secret.key, URL_SECRET_PLACEHOLDER);
-        server.url = url.toString();
-        if (!firstUrlSecret.has(secret.serverName)) {
-          firstUrlSecret.set(secret.serverName, secretId);
-          server.urlSecretId = secretId;
+        entry.url = url.toString();
+        if (!firstUrlSecret.has(entry.id)) {
+          firstUrlSecret.add(entry.id);
+          entry.urlSecretId = secretId;
         }
       }
-      (server.secrets as unknown[]).push({ secretId, name: label, state: 'set' });
+      (entry.secrets as SecretRef[]).push({ secretId, name: label, state: 'set' });
     }
-    for (const server of safeServers) {
-      const id = firstUrlSecret.get(String(server.name));
-      if (id) server.urlSecretId = id;
-    }
-    const preview = {
-      importId,
-      revision: 1,
-      servers: safeServers.map(server => ({
-        ...safe(parse(mcpServerConfigSchema, server) as Cfg),
-        ...(typeof server.source === 'string' ? { source: server.source } : {}),
-      })),
-      secretsCaptured: secrets.length,
-      warnings: payload.warnings ?? [],
-    };
+    const valid = entries.filter(entry => {
+      const dropped = dropEmptySensitiveValues(entry);
+      if (dropped.length) warnings.push(`${entry.name}: empty ${dropped.join(', ')} not imported`.slice(0, 500));
+      if (mcpServerConfigSchema.safeParse(entry).success) return true;
+      warnings.push(`${entry.name}: invalid configuration, skipped`.slice(0, 500));
+      return false;
+    });
+    const stored: StoredImportPreview = { importId, machineId: runnerId, revision: 1, entries: valid, secretsCaptured: result.secretsCaptured, warnings: warnings.slice(0, 100) };
     await this.o.db
       .updateTable('mcp_registry_imports')
-      .set({ preview: JSON.stringify(preview) })
+      .set({ preview: JSON.stringify(stored) })
       .where('id', '=', importId)
       .where('user_id', '=', userId)
       .execute();
+    const view = await this.importView(userId, stored);
     await this.audit(userId, runnerId, 'import.preview', null);
     clearTimeout(pending.timer);
     this.pendingImports.delete(runnerId);
-    pending.resolve(preview);
+    pending.resolve(view);
   }
   private async handleDraftRequest(runnerId: string, payload: unknown) {
     const req = parse(mcpDraftRequestPayload, payload);
@@ -1622,7 +2042,7 @@ export class McpRegistryService {
     const send = (response: unknown) => conn.send('mcp.draft.result', response);
     const fail = (code: 'name_taken' | 'forbidden' | 'validation_failed' | 'timeout' | 'needs_secret' | 'not_found' | 'revision_conflict' | 'invalid_input' | 'unavailable', message: string) =>
       send({ requestId: req.requestId, ok: false, error: { code, message: message.slice(0, 500) } });
-    if (!this.capabilities.get(runnerId)?.has(MCP_REGISTRY_CAPABILITIES[MCP_REGISTRY_CAPABILITIES.length - 1]!)) return fail('unavailable', 'This agent does not support MCP registry tools');
+    if (!this.caps(runnerId)?.has(MCP_REGISTRY_CAPABILITIES[MCP_REGISTRY_CAPABILITIES.length - 1]!)) return fail('unavailable', 'This agent does not support MCP registry tools');
     let owner;
     try {
       owner = await this.o.db.selectFrom('sessions').select(['user_id', 'runner_id']).where('id', '=', req.sessionId).where('user_id', '=', conn.userId).executeTakeFirst();
@@ -1754,10 +2174,10 @@ export class McpRegistryService {
       return fail('unavailable', 'MCP registry request failed');
     }
   }
-  private async audit(userId: string, actor: string, action: string, serverId: string | null, draftId?: string) {
+  private async audit(userId: string, actor: string, action: string, serverId: string | null, draftId?: string, details?: Cfg) {
     await this.o.db
       .insertInto('mcp_registry_audit')
-      .values({ user_id: userId, actor, action, server_id: serverId, draft_id: draftId ?? null })
+      .values({ user_id: userId, actor, action, server_id: serverId, draft_id: draftId ?? null, ...(details ? { details: JSON.stringify(details) } : {}) })
       .execute();
   }
   private async bump(userId: string) {
@@ -1769,20 +2189,60 @@ export class McpRegistryService {
       .executeTakeFirstOrThrow();
     return Number(row.revision);
   }
+  private async machineOverrideRows(userId: string, runnerId?: string): Promise<MachineOverrideRow[]> {
+    let query = this.o.db.selectFrom('mcp_registry_machine_overrides').select(['server_id', 'runner_id', 'enabled', 'config']).where('user_id', '=', userId);
+    if (runnerId) query = query.where('runner_id', '=', runnerId);
+    return query.execute();
+  }
+  /** D2: replace each server by its effective config on the machine; override secrets get their masked state. */
+  private async withMachineConfig(userId: string, runnerId: string, servers: Cfg[], overrides: Map<string, MachineOverrideRow>) {
+    const configured = servers.filter(server => overrides.get(String(server.id))?.config);
+    if (!configured.length) return servers;
+    const stored = await this.o.db
+      .selectFrom('mcp_secrets')
+      .select('id')
+      .where('user_id', '=', userId)
+      .where('machine_id', '=', runnerId)
+      .where(
+        'server_id',
+        'in',
+        configured.map(server => String(server.id)),
+      )
+      .execute();
+    const storedIds = new Set(stored.map(row => row.id));
+    return servers.map(server => {
+      const config = overrides.get(String(server.id))?.config;
+      if (!config) return server;
+      const overrideSecrets = ((config.secrets ?? []) as SecretRef[]).map(ref => ({
+        secretId: ref.secretId,
+        name: ref.name,
+        state: storedIds.has(ref.secretId) ? 'set' : 'needs-secret',
+        masked: true as const,
+      }));
+      return effectiveServer(server, { ...config, secrets: overrideSecrets });
+    });
+  }
   private async syncRunner(runnerId: string, userId: string) {
     const conn = this.o.agents.get(runnerId);
     if (!conn) return;
-    if (!this.capabilities.get(runnerId)?.has('mcp.registry.v1')) return;
-    const machine = await this.o.db.selectFrom('runners').select('mcp_registry_enabled').where('user_id', '=', userId).where('id', '=', runnerId).where('state', '=', 'active').executeTakeFirst();
+    if (!this.caps(runnerId)?.has('mcp.registry.v1')) return;
+    const machine = await this.o.db.selectFrom('runners').select('mcp_import_state').where('user_id', '=', userId).where('id', '=', runnerId).where('state', '=', 'active').executeTakeFirst();
     if (!machine) return;
     const r = await this.list(userId);
-    r.registryEnabled = machine.mcp_registry_enabled;
-    if (!machine.mcp_registry_enabled) r.servers = [];
+    // D1: a machine is on the registry once its local config is imported; before that it gets nothing.
+    r.registryEnabled = machine.mcp_import_state === 'done';
+    if (!r.registryEnabled) r.servers = [];
+    const machineOverrides = new Map((await this.machineOverrideRows(userId, runnerId)).map(row => [row.server_id, row]));
+    // D1: an agent without import v2 cannot limit a server to projects, so it does not get such servers.
+    const projectAware = this.caps(runnerId)?.has(MCP_IMPORT_V2_CAPABILITY) === true;
     r.servers = r.servers.filter((server: Cfg) => {
       if (server.enabled === false) return false;
+      if (machineOverrides.get(String(server.id))?.enabled === false) return false;
+      if (!projectAware && Array.isArray(server.projectIds) && server.projectIds.length) return false;
       const scope = server.machineScope as { allMachines?: boolean; machineIds?: string[] } | undefined;
       return !scope || scope.allMachines === true || scope.machineIds?.includes(runnerId) === true;
     });
+    r.servers = (await this.withMachineConfig(userId, runnerId, r.servers, machineOverrides)) as typeof r.servers;
     const scopedServerIds = (r.servers as Cfg[]).map(server => String(server.id));
     const oauthManagedRows = scopedServerIds.length
       ? await this.o.db.selectFrom('mcp_oauth_statuses').select(['server_id', 'machine_id', 'registry_ready']).where('user_id', '=', userId).where('server_id', 'in', scopedServerIds).execute()
@@ -1813,23 +2273,23 @@ export class McpRegistryService {
     );
     // Credentials never enter snapshots: send them in a separate, target-only WS command.
     for (const server of r.servers as Array<Cfg>) {
-      const scope = server.machineScope as { allMachines?: boolean; machineIds?: string[] } | undefined;
-      if (scope && !scope.allMachines && !scope.machineIds?.includes(runnerId)) continue;
       const ids = ((server.secrets ?? []) as Array<{ secretId: string }>).map(x => x.secretId);
       if (!ids.length) continue;
+      // D2: a secret of a machine override goes to that machine only.
       const rows = await this.o.db
         .selectFrom('mcp_secrets')
         .select(['id', 'name', 'ciphertext'])
         .where('user_id', '=', userId)
         .where('server_id', '=', String(server.id))
         .where('id', 'in', ids)
+        .where(eb => eb.or([eb('machine_id', 'is', null), eb('machine_id', '=', runnerId)]))
         .execute();
-      if (!rows.length || !this.capabilities.get(runnerId)?.has('mcp.secrets.encrypted.v1')) continue;
+      if (!rows.length || !this.caps(runnerId)?.has('mcp.secrets.encrypted.v1')) continue;
       const secrets = rows.map(s => ({ name: s.name, value: decryptSecret(this.o.key, userId, s.id, s.ciphertext) }));
       conn.send('mcp.secrets.deliver', { serverId: server.id, revision: server.revision, machineId: runnerId, secrets }, { id: randomUUID() });
     }
     const oauth =
-      activeServerIds.length && this.capabilities.get(runnerId)?.has('mcp.oauth.v1')
+      activeServerIds.length && this.caps(runnerId)?.has('mcp.oauth.v1')
         ? await this.o.db
             .selectFrom('mcp_oauth_tokens')
             .innerJoin('mcp_registry_servers', 'mcp_registry_servers.id', 'mcp_oauth_tokens.server_id')
@@ -1867,7 +2327,7 @@ export class McpRegistryService {
     if (!requireOnline) return null;
     const connection = this.o.agents.get(machineId);
     if (!connection) throw new HttpError(409, 'machine_offline', 'Target machine is offline');
-    if (!protocolAtLeast(runner.protocol_version, MIN) || !this.capabilities.get(machineId)?.has('mcp.oauth.v1')) {
+    if (!protocolAtLeast(runner.protocol_version, MIN) || !this.caps(machineId)?.has('mcp.oauth.v1')) {
       throw new HttpError(409, 'agent_outdated', 'Target machine does not support MCP OAuth');
     }
     return connection;
@@ -2048,10 +2508,14 @@ export class McpRegistryService {
     ]);
     const scope = server?.config.machineScope as { allMachines?: boolean; machineIds?: string[] } | undefined;
     if (!server || !runner || (scope && !scope.allMachines && !scope.machineIds?.includes(machineId))) return;
-    const secretIds = ((server.config.secrets ?? []) as Array<{ secretId?: string }>).map(secret => secret.secretId).filter((id): id is string => !!id);
-    const secretRows = secretIds.length
-      ? await this.o.db.selectFrom('mcp_secrets').select(['id', 'ciphertext']).where('user_id', '=', userId).where('server_id', '=', serverId).where('id', 'in', secretIds).execute()
-      : [];
+    // Redact every secret this machine may hold for the server, its own override secrets included.
+    const secretRows = await this.o.db
+      .selectFrom('mcp_secrets')
+      .select(['id', 'ciphertext'])
+      .where('user_id', '=', userId)
+      .where('server_id', '=', serverId)
+      .where(eb => eb.or([eb('machine_id', 'is', null), eb('machine_id', '=', machineId)]))
+      .execute();
     const secretValues = secretRows.map(row => decryptSecret(this.o.key, userId, row.id, row.ciphertext));
     const safeError = typeof payload.error === 'string' ? (redactValues(payload.error, secretValues) as string) : null;
     await this.o.db
@@ -2084,8 +2548,12 @@ export class McpRegistryService {
 export function registerMcpRegistryApi(app: FastifyInstance, service: McpRegistryService) {
   app.get('/api/mcp/registry', async req => service.view(req.user!.id));
   app.get('/api/mcp/registry/status', async req => service.status(req.user!.id));
-  app.put('/api/mcp/registry/machines/:machineId', async req => service.setMachineRegistryEnabled(req.user!.id, (req.params as { machineId: string }).machineId, req.body));
+  app.put('/api/mcp/registry/servers/:id/machines/:machineId', async req => {
+    const params = req.params as { id: string; machineId: string };
+    return service.setMachineOverride(req.user!.id, params.id, params.machineId, req.body);
+  });
   app.post('/api/mcp/registry/servers/:id/oauth/start', async (req, reply) => reply.code(202).send(await service.startOAuth(req.user!.id, (req.params as { id: string }).id, req.body)));
+  app.post('/api/mcp/registry/servers/:id/oauth/complete', async req => service.completeOAuth(req.user!.id, (req.params as { id: string }).id, req.body));
   app.post('/api/mcp/registry/servers/:id/oauth/validate', async req => service.validateOAuthServer(req.user!.id, (req.params as { id: string }).id, req.body));
   app.post('/api/mcp/registry/servers/:id/oauth/connect', async req => service.connectOAuthServer(req.user!.id, (req.params as { id: string }).id, req.body));
   app.post('/api/mcp/registry/servers/:id/oauth/revoke', async req => service.revokeOAuth(req.user!.id, (req.params as { id: string }).id, req.body));
@@ -2131,7 +2599,7 @@ export function registerMcpRegistryApi(app: FastifyInstance, service: McpRegistr
   app.post('/api/mcp/registry/drafts/:id/connect', async req => service.connect(req.user!.id, (req.params as { id: string }).id, req.body));
   app.post('/api/mcp/registry/drafts/:id/save-unchecked', async req => service.connect(req.user!.id, (req.params as { id: string }).id, req.body, true));
   app.post('/api/mcp/registry/import/preview', async req => {
-    const b = req.body as { machineId: string; projectRoot: string };
+    const b = parse(mcpImportPreviewRequestSchema, req.body);
     return service.importPreview(req.user!.id, b.machineId, b.projectRoot);
   });
   app.post('/api/mcp/registry/import/commit', async req => service.importCommit(req.user!.id, req.body));

@@ -8,7 +8,7 @@ import { ProjectActions } from './ProjectActions';
 import { mockFetch, resetStore, RUNNERS } from '../../test/factories';
 import { useStore } from '../../store';
 const project = { id: 'p-e', title: 'Stable', colorKey: 'rose' as const, path: '' };
-const item = { id: 'p-e', name: 'Stable', colorKey: 'rose', description: 'Notes', remote: null, archived: false, lastEventAt: null, bindings: [{ runnerId: 'x1', path: 'C:\\work' }] };
+const item = { id: 'p-e', name: 'Stable', colorKey: 'rose', description: 'Notes', remote: null, archived: false, lastEventAt: null, folder: 'work' };
 beforeEach(() => {
   resetStore();
   useStore.setState({ runners: RUNNERS });
@@ -17,11 +17,10 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
-it('edits metadata/color, removes a binding, and preserves the form under the picker', async () => {
+it('edits metadata, color and the project folder relative to the default folder', async () => {
   const calls = mockFetch({
     'GET /api/catalog/projects': () => ({ status: 200, body: [item] }),
     'PATCH /api/catalog/projects/p-e': () => ({ status: 200, body: { ok: true } }),
-    'DELETE /api/catalog/projects/p-e/bindings/x1': () => ({ status: 200, body: { ok: true } }),
     'GET /api/sidebar': () => ({ status: 200, body: { runners: RUNNERS, now: [], projects: [] } }),
   });
   const user = userEvent.setup();
@@ -34,10 +33,17 @@ it('edits metadata/color, removes a binding, and preserves the form under the pi
   await user.clear(within(dialog).getByLabelText('Название'));
   await user.type(within(dialog).getByLabelText('Название'), 'Changed');
   await user.click(within(dialog).getByRole('radio', { name: 'Песочный' }));
-  await user.click(within(dialog).getByRole('button', { name: 'Убрать привязку x1' }));
+  const folder = within(dialog).getByLabelText('Папка проекта');
+  expect(folder).toHaveValue('work');
+  expect(dialog.textContent).toContain('C:\\Users\\alice\\vault\\work');
+  await user.clear(folder);
+  await user.type(folder, '../up');
+  expect(within(dialog).getByRole('alert')).toBeInTheDocument();
+  await user.clear(folder);
+  await user.type(folder, 'projects/stable');
   await user.click(within(dialog).getByRole('button', { name: 'Сохранить' }));
   expect(calls.find(c => c.method === 'PATCH')?.body).toMatchObject({ name: 'Changed', colorKey: 'lime' });
-  expect(calls.find(c => c.method === 'PATCH')?.body).toMatchObject({ bindings: [{ runnerId: 'x1', path: null }] });
+  expect(calls.find(c => c.method === 'PATCH')?.body).toMatchObject({ folder: 'projects/stable' });
 });
 it('cancels deletion without a request and confirms consequences for all sessions', async () => {
   const calls = mockFetch({
@@ -71,7 +77,7 @@ it('changes color directly from the menu in two clicks', async () => {
   expect(calls.find(call => call.method === 'PATCH')?.body).toEqual({ colorKey: 'lime' });
   expect(screen.queryByRole('dialog')).toBeNull();
 });
-it('shows loading until bindings arrive, then focuses the name', async () => {
+it('shows loading until the project arrives, then focuses the name', async () => {
   let finish!: (value: Awaited<ReturnType<typeof api.catalogProjects>>) => void;
   vi.spyOn(api, 'catalogProjects').mockReturnValue(
     new Promise(resolve => {

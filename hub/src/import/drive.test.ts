@@ -63,7 +63,7 @@ describe('import:drive (Postgres)', () => {
 
   beforeAll(async () => {
     t = await createTestDb();
-    const uid = (await t.pool.query<{ id: string }>(`INSERT INTO users (email, role) VALUES ('jonasasx@gmail.com', 'admin') RETURNING id`)).rows[0]!.id;
+    const uid = (await t.pool.query<{ id: string }>(`INSERT INTO users (email, role) VALUES ('alice@example.com', 'admin') RETURNING id`)).rows[0]!.id;
     await t.pool.query(`INSERT INTO runners (id, user_id, name, hostname, home_dir) VALUES ('hp', $1, 'HP', 'HP-Elitebook', 'C:\\Users\\alice')`, [uid]);
     // A session already replicated live: the hub has its first two lines.
     const oLive = { sessionId: live, cwd: VAULT, entrypoint: 'cli' as const };

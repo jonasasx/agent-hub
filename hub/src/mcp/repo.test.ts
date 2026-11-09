@@ -100,13 +100,16 @@ describe('MCP snapshots in Postgres', { timeout: 60_000 }, () => {
   afterAll(async () => t.drop());
 
   it('an older snapshot does not overwrite a newer one; problems are counted on write', async () => {
-    expect(await storeSessionSnapshot(t.db, sid, snap(2000, [srv('a', 'failed'), srv('b', 'needs-auth')]))).toEqual({ problemsChanged: true });
+    expect(await storeSessionSnapshot(t.db, sid, snap(2000, [srv('a', 'failed'), srv('b', 'needs-auth')]))).toEqual({ problemsChanged: true, becameConnected: [] });
     expect(await storeSessionSnapshot(t.db, sid, snap(1000, [srv('a', 'connected')]))).toBeNull();
     let row = (await t.pool.query(`SELECT mcp_servers, mcp_problems, mcp_observed_at FROM sessions WHERE id = $1`, [sid])).rows[0];
     expect(row.mcp_problems).toBe(2);
     expect(row.mcp_servers.map((s: McpServerSnapshot) => s.status)).toEqual(['failed', 'needs-auth']);
-    expect(await storeSessionSnapshot(t.db, sid, snap(3000, [srv('a', 'connected'), srv('b', 'disabled')]))).toEqual({ problemsChanged: true });
-    expect(await storeSessionSnapshot(t.db, sid, { ...snap(4000, [srv('a', 'connected'), srv('b', 'disabled')]), projectRoot: 'C:/Users/alice/vault' })).toEqual({ problemsChanged: false });
+    expect(await storeSessionSnapshot(t.db, sid, snap(3000, [srv('a', 'connected'), srv('b', 'disabled')]))).toEqual({ problemsChanged: true, becameConnected: ['a'] });
+    expect(await storeSessionSnapshot(t.db, sid, { ...snap(4000, [srv('a', 'connected'), srv('b', 'disabled')]), projectRoot: 'C:/Users/alice/vault' })).toEqual({
+      problemsChanged: false,
+      becameConnected: [],
+    });
     expect((await t.pool.query(`SELECT mcp_project_root FROM sessions WHERE id = $1`, [sid])).rows[0].mcp_project_root).toBe('C:/Users/alice/vault');
     row = (await t.pool.query(`SELECT mcp_problems FROM sessions WHERE id = $1`, [sid])).rows[0];
     expect(row.mcp_problems).toBe(0);

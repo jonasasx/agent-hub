@@ -74,6 +74,8 @@ export default {
   'machines.enroll.path1': '1. 名前とシステム',
   'machines.enroll.path2': '2. コマンド',
   'machines.enroll.path3': '3. 接続',
+  'machines.enroll.path4': '4. MCP',
+  'machines.enroll.mcpTitle': 'このマシンの MCP サーバー',
   'machines.enroll.nameLabel': 'マシン名',
   'machines.enroll.nameHint': '後から「設定」→「マシン」で変更できます。',
   'machines.enroll.osLabel': 'システム',
@@ -99,4 +101,9 @@ export default {
   'machines.enroll.macBefore':
     'エージェントは ~/Documents、~/Desktop、~/Downloads を読み取れません。「システム設定」→「プライバシーとセキュリティ」→「フルディスクアクセス」を開き、次を追加してください:',
   'machines.enroll.macAfter': '。これらのフォルダ以外のディレクトリ (たとえば ~/code) は、そのまま動作します。',
+  'machines.defaultDir.label': '既定のフォルダー',
+  'machines.defaultDir.change': '変更…',
+  'machines.defaultDir.hint': 'このマシンのセッションはここで開始します。プロジェクトのフォルダーはここからの相対パスで指定します。',
+  'machines.defaultDir.failed': '既定のフォルダーを変更できませんでした',
+  'machines.menu.defaultDir': '既定のフォルダー…',
 } satisfies Dict;

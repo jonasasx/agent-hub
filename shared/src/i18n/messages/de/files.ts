@@ -2,6 +2,10 @@ import type { Dict } from '../../index.js';
 
 export default {
   'files.action.copyPath': 'Pfad kopieren',
+  'files.action.download': 'Herunterladen',
+  'files.action.downloadFailed': '{name} konnte nicht heruntergeladen werden',
+  'files.action.downloadNamed': '{name} herunterladen',
+  'files.action.downloadOutdated': 'Aktualisieren Sie den Agenten auf {machine}, um Dateien herunterzuladen',
   'files.action.inTree': 'Im Baum',
   'files.action.mention': 'In die Nachricht',
   'files.action.mentionTitle': 'Den Pfad in das Eingabefeld der Sitzung „{title}“ einfügen',

@@ -11,7 +11,7 @@ function store() {
   const s = new DesktopCodeStore(() => t);
   return { s, advance: (ms: number) => (t += ms) };
 }
-const issue = (s: DesktopCodeStore, state = STATE) => s.issue({ userId: 'u1', email: 'jonasasx@gmail.com', challenge: CHALLENGE, state });
+const issue = (s: DesktopCodeStore, state = STATE) => s.issue({ userId: 'u1', email: 'alice@example.com', challenge: CHALLENGE, state });
 
 describe('DesktopCodeStore', () => {
   it('S256 matches the RFC 7636 test vector', () => {
@@ -29,7 +29,7 @@ describe('DesktopCodeStore', () => {
     const { s, advance } = store();
     const code = issue(s);
     advance(59_000);
-    expect(s.redeem(code, VERIFIER, STATE)).toEqual({ userId: 'u1', email: 'jonasasx@gmail.com' });
+    expect(s.redeem(code, VERIFIER, STATE)).toEqual({ userId: 'u1', email: 'alice@example.com' });
   });
 
   it('Код истёк: exchange 61 s after issue → null', () => {

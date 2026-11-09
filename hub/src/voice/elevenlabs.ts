@@ -46,6 +46,35 @@ function detailCodes(body: unknown): string[] {
   return [d.status, d.code].filter((x): x is string => typeof x === 'string');
 }
 
+/**
+ * A signed URL of a conversation with an ElevenLabs agent (change voice-conversation, D1):
+ * GET /v1/convai/conversation/get-signed-url?agent_id=…. Throws ScribeError (`key`, `upstream`, `timeout`).
+ */
+export async function conversationSignedUrl(o: { apiKey: string; apiUrl: string; agentId: string; timeoutMs?: number; fetch?: typeof fetch }): Promise<string> {
+  const f = o.fetch ?? fetch;
+  const timeout = AbortSignal.timeout(o.timeoutMs ?? 10_000);
+  let res: Response;
+  try {
+    res = await f(`${o.apiUrl}/v1/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(o.agentId)}`, {
+      headers: { 'xi-api-key': o.apiKey, accept: 'application/json' },
+      signal: timeout,
+    });
+  } catch (err) {
+    if (timeout.aborted) throw new ScribeError('timeout', 'ElevenLabs did not answer the signed URL request');
+    throw new ScribeError('upstream', `ElevenLabs request failed: ${(err as Error).name}`);
+  }
+  if (res.status === 401 || res.status === 403) throw new ScribeError('key', `ElevenLabs rejected the key (${res.status})`, res.status);
+  if (!res.ok) throw new ScribeError('upstream', `ElevenLabs answered ${res.status}`, res.status);
+  let url: unknown;
+  try {
+    url = ((await res.json()) as { signed_url?: unknown } | null)?.signed_url;
+  } catch {
+    url = undefined;
+  }
+  if (typeof url !== 'string' || !url.startsWith('wss://')) throw new ScribeError('upstream', 'ElevenLabs answer has no signed_url', res.status);
+  return url;
+}
+
 export class ScribeClient {
   private readonly fetch: typeof fetch;
 

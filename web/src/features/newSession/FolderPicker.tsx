@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { relativeFolder } from '@agent-hub/shared';
 import { api } from '../../api/client';
 import { t, useT } from '../../i18n';
 import { useDialog } from '../ui/a11y';
@@ -19,8 +20,11 @@ export function directoryBreadcrumbs(path: string): { label: string; target: str
   return result;
 }
 
-export function FolderPicker({ runnerId, initialPath, onChoose, onClose }: { runnerId: string; initialPath: string; onChoose: (path: string) => void; onClose: () => void }) {
+/** session-folder D7: with `root` the picker does not leave it — breadcrumbs above it are hidden, «Вверх» stops there. */
+export function FolderPicker({ runnerId, initialPath, root, onChoose, onClose }: { runnerId: string; initialPath: string; root?: string; onChoose: (path: string) => void; onClose: () => void }) {
   const tr = useT();
+  const windows = /^[A-Za-z]:/.test(root ?? initialPath);
+  const inside = (target: string) => !root || relativeFolder(root, target, windows) !== null;
   const [listing, setListing] = useState<Listing | null>(null);
   const [path, setPath] = useState(initialPath);
   const [showHidden, setShowHidden] = useState(false);
@@ -28,6 +32,7 @@ export function FolderPicker({ runnerId, initialPath, onChoose, onClose }: { run
   const [busy, setBusy] = useState(false);
   const dialog = useRef<HTMLElement>(null);
   const firstAction = useRef<HTMLButtonElement>(null);
+  const crumbsBox = useRef<HTMLElement>(null);
   useDialog(dialog, onClose, firstAction);
   const load = useCallback(
     async (nextPath?: string, hidden = showHidden) => {
@@ -46,10 +51,16 @@ export function FolderPicker({ runnerId, initialPath, onChoose, onClose }: { run
     [runnerId, showHidden],
   );
   useEffect(() => {
-    void load(initialPath || undefined, false);
+    void load(initialPath || root || undefined, false);
     // The initial browse follows only the selected runner/path; navigation and hidden-toggle refreshes are explicit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialPath, runnerId]);
+  }, [initialPath, root, runnerId]);
+  const crumbs = listing ? directoryBreadcrumbs(listing.path).filter(crumb => inside(crumb.target)) : [];
+  useEffect(() => {
+    // the current folder is the last crumb: a long path scrolls to it
+    const box = crumbsBox.current;
+    if (box) box.scrollLeft = box.scrollWidth;
+  }, [listing]);
   return createPortal(
     <div
       className="scrim"
@@ -66,15 +77,31 @@ export function FolderPicker({ runnerId, initialPath, onChoose, onClose }: { run
           </button>
         </header>
         <div className="modal-body">
-          <nav className="folder-crumbs" aria-label={tr('newSession.picker.path')}>
-            {listing &&
-              directoryBreadcrumbs(listing.path).map(({ label, target }, i) => {
-                return (
-                  <button type="button" key={`${label}-${i}`} onClick={() => void load(target)}>
+          <nav ref={crumbsBox} className="folder-crumbs" aria-label={tr('newSession.picker.path')}>
+            {crumbs.length > 3 && (
+              // the phone: «… › agent-hub › docs» — the hidden middle is one step up from the shown tail
+              <span className="crumb crumb-more">
+                <button type="button" title={crumbs[crumbs.length - 3]!.target} onClick={() => void load(crumbs[crumbs.length - 3]!.target)}>
+                  …
+                </button>
+              </span>
+            )}
+            {crumbs.map(({ label, target }, i) => {
+              const last = i === crumbs.length - 1;
+              const middle = crumbs.length > 3 && i < crumbs.length - 2;
+              return (
+                <span key={`${label}-${i}`} className={`crumb${middle ? ' crumb-mid' : ''}`}>
+                  {i > 0 && (
+                    <span className="crumb-sep" aria-hidden="true">
+                      ›
+                    </span>
+                  )}
+                  <button type="button" className={last ? 'last' : undefined} aria-current={last ? 'location' : undefined} onClick={() => void load(target)}>
                     {label}
                   </button>
-                );
-              })}
+                </span>
+              );
+            })}
           </nav>
           <label className="folder-hidden">
             <input
@@ -107,8 +134,11 @@ export function FolderPicker({ runnerId, initialPath, onChoose, onClose }: { run
             ) : null}
           </div>
           <div className="folder-current">
-            <span title={listing?.path ?? path}>{(listing?.path ?? path) || tr('newSession.picker.home')}</span>
-            <button type="button" className="btn" disabled={!listing?.parent} onClick={() => listing?.parent && void load(listing.parent)}>
+            {/* cut from the left: the tail of the path (the current folder) stays visible */}
+            <span className="folder-path" title={listing?.path ?? path}>
+              <bdi>{(listing?.path ?? path) || tr('newSession.picker.home')}</bdi>
+            </span>
+            <button type="button" className="btn" disabled={!listing?.parent || !inside(listing.parent)} onClick={() => listing?.parent && void load(listing.parent)}>
               {tr('newSession.picker.up')}
             </button>
           </div>
@@ -120,7 +150,7 @@ export function FolderPicker({ runnerId, initialPath, onChoose, onClose }: { run
           <button
             type="button"
             className="btn primary"
-            disabled={!listing || busy}
+            disabled={!listing || busy || !inside(listing.path)}
             onClick={() => {
               onChoose(listing!.path);
               onClose();

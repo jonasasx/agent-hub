@@ -49,7 +49,7 @@ describe('hub subagents (integration)', () => {
       if (!m.id || m.type === 'peers.reply') return;
       got.push({ ...m, runner });
       const ok = (result: unknown) => a.ws.send(JSON.stringify(envelope('cmd.ok', { result }, { re: m.id! })));
-      if (m.type === 'fs.stat') return ok({ exists: true, isDir: true });
+      if (m.type === 'fs.stat') return ok({ exists: !String(m.payload.path).endsWith('missing'), isDir: true });
       if (m.type === 'session.start' || m.type === 'session.resume')
         return ok({ models: m.payload.provider === 'codex' ? [{ value: 'gpt-listed', displayName: 'GPT-Listed' }, ...CODEX_OK.models] : [{ value: 'haiku', displayName: 'Haiku' }] });
       ok({});
@@ -64,8 +64,8 @@ describe('hub subagents (integration)', () => {
     agents.get(runner)!.ws.send(JSON.stringify(envelope('session.result', { sessionId: sid, subtype: 'success', isError: false, durationMs: 1, costUsd: 0, ...extra })));
 
   /** A hub session on `runner` that finished its first turn (waiting, process alive). */
-  async function session(runner: string): Promise<S> {
-    const r = await api('POST', '/api/sessions', { runnerId: runner, cwd: VAULT, model: 'haiku', prompt: 'hi', permissionMode: 'acceptEdits' });
+  async function session(runner: string, projectId?: string): Promise<S> {
+    const r = await api('POST', '/api/sessions', { runnerId: runner, model: 'haiku', prompt: 'hi', permissionMode: 'acceptEdits', ...(projectId ? { projectId } : {}) });
     expect(r.statusCode, r.body).toBe(201);
     const id = (r.json() as SessionView).id;
     const sid = await sidOf(id);
@@ -125,6 +125,8 @@ describe('hub subagents (integration)', () => {
     // signed in, the models not reported yet
     agent('bare', tok.bare!, { protocol: '1.12', os: 'Ubuntu 24.04', homeDir: '/home/ubuntu', providers: [{ id: 'codex', version: '0.166.0', login: 'ok' }] });
     for (const a of agents.values()) await a.next('welcome');
+    // session-folder: the default folder of X1 is its vault, of VM and BARE — the home from hello
+    await t.tdb.pool.query(`UPDATE runners SET default_dir = $1 WHERE id = 'x1'`, [VAULT]);
     P = await session('x1');
     Q = await session('old');
   }, 240_000);
@@ -147,13 +149,16 @@ describe('hub subagents (integration)', () => {
     expect(j).toEqual([{ kind: 'spawn', result: 'resumed', text: 'Проверь README и перечисли разделы' }]);
   });
 
-  it('Codex on another machine with a folder; the title given', async () => {
-    const r = await spawn('x1', P, { task: 'обнови зависимости', provider: 'codex', machine: 'vm', cwd: '/home/ubuntu/agent-hub', model: 'gpt-6.1-sol', title: 'Зависимости' });
+  it('Codex on another machine: the folder of the parent project under the default folder of that machine; a client cwd is ignored', async () => {
+    const project = (await api('POST', '/api/catalog/projects', { name: 'Spawn folder', folder: 'agent-hub' })).json() as { id: string };
+    const R = await session('x1', project.id);
+    expect((await row(R.id)).cwd).toBe(`${VAULT}\\agent-hub`);
+    const r = await spawn('x1', R, { task: 'обнови зависимости', provider: 'codex', machine: 'vm', cwd: '/tmp/elsewhere', model: 'gpt-6.1-sol', title: 'Зависимости' });
     expect(r.ok, JSON.stringify(r)).toBe(true);
     const res = r.result as unknown as Spawned;
     expect(res).toMatchObject({ machine: 'VM', provider: 'codex', cwd: '/home/ubuntu/agent-hub', model: 'gpt-6.1-sol', title: 'Зависимости' });
     const s = await row(res.sessionId);
-    expect(s).toMatchObject({ runner_id: 'vm', provider: 'codex', spawned_by: P.id });
+    expect(s).toMatchObject({ runner_id: 'vm', provider: 'codex', spawned_by: R.id, cwd: '/home/ubuntu/agent-hub' });
     const start = await waitFor(() => got.find(c => c.runner === 'vm' && c.type === 'session.start' && c.payload.sessionId === s.claude_session_id));
     expect(start.payload).toMatchObject({ provider: 'codex', cwd: '/home/ubuntu/agent-hub' });
   });
@@ -162,23 +167,34 @@ describe('hub subagents (integration)', () => {
     // the session of the test above left «gpt-listed» first in the hub's memory; the app-server may list a model the
     // account rejects (prod E2E 2026-11-01: gpt-6.1-sol), the machines' reports are the stable source
     const R = await session('x1'); // its own parent: P's live children are counted by the limit test below
-    const r = await spawn('x1', R, { task: 'проверь', provider: 'codex', machine: 'bare', cwd: '/home/ubuntu' });
+    const r = await spawn('x1', R, { task: 'проверь', provider: 'codex', machine: 'bare' });
     expect(r.ok, JSON.stringify(r)).toBe(true);
     expect((r.result as unknown as Spawned).model).toBe('gpt-6.1-sol');
     expect(await row((r.result as unknown as Spawned).sessionId)).toMatchObject({ runner_id: 'bare', model: 'gpt-6.1-sol' });
   });
 
-  it('another machine without a folder: invalid_request, no session', async () => {
+  it('another machine, a parent without a project: the default folder of that machine', async () => {
+    const R = await session('x1'); // its own parent: P's live children are counted by the limit test below
+    const r = await spawn('x1', R, { task: 'x', machine: 'VM' });
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+    expect(r.result).toMatchObject({ machine: 'VM', cwd: '/home/ubuntu' });
+  });
+
+  it('the project folder missing on the machine: spawn_failed with cwd_not_found, no session', async () => {
+    const project = (await api('POST', '/api/catalog/projects', { name: 'Spawn missing', folder: 'missing' })).json() as { id: string };
+    await t.tdb.pool.query(`UPDATE catalog_projects SET folder = NULL WHERE id = $1`, [project.id]);
+    const R = await session('x1', project.id);
+    await t.tdb.pool.query(`UPDATE catalog_projects SET folder = 'missing' WHERE id = $1`, [project.id]);
     const before = await count();
-    const r = await spawn('x1', P, { task: 'x', machine: 'VM' });
-    expect(r).toMatchObject({ ok: false, code: 'invalid_request' });
-    expect(r.message).toContain('cwd');
+    const r = await spawn('x1', R, { task: 'x', machine: 'VM' });
+    expect(r).toMatchObject({ ok: false, code: 'spawn_failed' });
+    expect(r.message).toContain('cwd_not_found');
     expect(await count()).toBe(before);
   });
 
   it('unknown machine: not_found with the names of the machines', async () => {
     const before = await count();
-    const r = await spawn('x1', P, { task: 'x', machine: 'nope', cwd: '/tmp' });
+    const r = await spawn('x1', P, { task: 'x', machine: 'nope' });
     expect(r).toMatchObject({ ok: false, code: 'not_found' });
     expect(r.message).toMatch(/X1.*VM|VM.*X1/);
     expect(await count()).toBe(before);
@@ -336,7 +352,7 @@ describe('hub subagents (integration)', () => {
     expect(v.spawnedBy).toMatchObject({ id: P.id });
     const sub = (await api('GET', `/api/sessions/${P.id}/subagents`)).json() as SubagentsResponse;
     expect(sub.hubSessions?.map(s => s.id)).toEqual(kids);
-    expect(sub.hubSessions?.find(s => s.provider === 'codex')).toMatchObject({ machine: 'VM' });
+    expect(sub.hubSessions?.find(s => s.provider === 'claude')).toMatchObject({ machine: 'X1' });
     const pv = (await api('GET', `/api/sessions/${P.id}`)).json() as SessionView;
     expect(pv.subagents?.hub?.total).toBe(kids.length);
   });
@@ -359,21 +375,24 @@ describe('hub subagents (integration)', () => {
   });
 
   it('the child belongs to the project of its parent: pinned stays pinned, a parent without a project gives none', async () => {
-    const list = (await api('GET', '/api/projects')).json() as Array<{ id: string; title: string }>;
-    expect(list.length).toBeGreaterThan(0);
-    const proj = list[0]!;
     const R = await session('x1');
     await t.hub.projects.flush();
-    // no project pinned: the child gets exactly what the parent has (the classifier decides later by its paths)
-    const parentNow = await row(R.id);
-    const c0 = await child(R, 'без закрепа');
-    expect(await row(c0.id)).toMatchObject({ project_id: parentNow.project_id, project_source: parentNow.project_id ? 'inherited' : 'none' });
-    // pinned by hand: the child is pinned to the same project, with a label
+    const link = async (id: string) => (await t.tdb.pool.query(`SELECT project_id, source FROM session_projects WHERE session_id = $1`, [id])).rows[0];
+    // no project: the child has no link either (the rules decide later by its own paths)
+    expect(await link(R.id)).toBeUndefined();
+    const c0 = await child(R, 'без проекта');
+    expect(await link(c0.id)).toBeUndefined();
+    // pinned «no project» by hand: the child is pinned the same way
+    expect((await api('PUT', `/api/sessions/${R.id}/project`, { projectId: 'none' })).statusCode).toBe(200);
+    const cn = await child(R, 'закреп без проекта');
+    expect(await row(cn.id)).toMatchObject({ project_id: null, project_source: 'manual', spawned_by: R.id });
+    expect(await link(cn.id)).toBeUndefined();
+    // pinned to a catalog project: the child gets the same manual link
+    const proj = (await api('POST', '/api/catalog/projects', { name: 'spawn-proj' })).json() as { id: string };
     const pin = await api('PUT', `/api/sessions/${R.id}/project`, { projectId: proj.id });
     expect(pin.statusCode, pin.body).toBe(200);
     const c1 = await child(R, 'с закрепом');
-    expect(await row(c1.id)).toMatchObject({ project_id: proj.id, project_source: 'manual', spawned_by: R.id });
-    expect((await t.tdb.pool.query(`SELECT project_id FROM classification_labels WHERE session_id = $1`, [c1.id])).rows[0]?.project_id).toBe(proj.id);
+    expect(await link(c1.id)).toEqual({ project_id: proj.id, source: 'manual' });
     expect(((await api('GET', `/api/sessions/${c1.id}`)).json() as SessionView).project.id).toBe(proj.id);
   });
 

@@ -2,6 +2,7 @@
 // Requirement: Версионированный протокол
 import { z } from 'zod';
 import {
+  MCP_IMPORT_V2_CAPABILITY,
   MCP_REGISTRY_CAPABILITIES,
   mcpGatewayStartPayload,
   mcpGatewayStatusPayload,
@@ -24,7 +25,7 @@ import {
   mcpSecretDeliveryPayload,
   mcpRegistrySessionUpdateAckPayload,
 } from './mcpRegistry.js';
-import { fsListPayload, fsReadPayload } from './files.js';
+import { fsListPayload, fsReadChunkPayload, fsReadPayload } from './files.js';
 
 /**
  * 1.1 (M3a): repl.files, side files. 1.2 (M3b): attachments, attachments.fetch, fs.read_image, fs.stat size/mtime.
@@ -46,19 +47,28 @@ import { fsListPayload, fsReadPayload } from './files.js';
  * negotiated fs.list-dirs (projects-catalog D).
  * 1.14 (change `tool-windows-file-explorer`, design D1): negotiated fs.browse, commands fs.list and fs.read (read-only file explorer).
  * 1.15 (change `catalog-db-session-context`, design D2): the user's project catalogue `projectCatalog` in session.start/resume.
+ * 1.16 (change `file-download`, design D1): negotiated fs.download, command fs.read_chunk (a file read in pieces for download).
+ * 1.17 (change `mcp-hub-only`, design D8): negotiated mcp.import.v2 — import from Codex, Claude plugins and all projects
+ * (`projectRoots` in mcp.import.preview), `projectIds` honoured by the agent, static `oauthClientId`.
  * Minor versions talk to each other (D3); images need 1.2 on the agent, subscriptions 1.4, self-update 1.5, limits 1.6,
  * MCP management 1.7, MCP sign-out 1.8, session peers 1.9, providers other than Claude 1.10, negotiated fs.list-dirs 1.13, fs.browse 1.14,
- * the project catalogue in the session context 1.15.
+ * the project catalogue in the session context 1.15, file download 1.16.
  */
-export const PROTOCOL_VERSION = '1.15';
+export const PROTOCOL_VERSION = '1.17';
+/** The first protocol version whose agents declare `mcp.import.v2` and filter servers by `projectIds` (mcp-hub-only D8). */
+export const MCP_IMPORT_V2_PROTOCOL = '1.17';
 /** The first protocol version whose agents answer fs.list / fs.read and declare the capability `fs.browse` (tool-windows-file-explorer D1). */
 export const FILES_PROTOCOL = '1.14';
 /** The first protocol version whose agents take `projectCatalog` in session.start/resume (catalog-db-session-context D2). */
 export const PROJECT_CATALOG_PROTOCOL = '1.15';
+/** The first protocol version whose agents answer fs.read_chunk and declare the capability `fs.download` (file-download D7). */
+export const DOWNLOAD_PROTOCOL = '1.16';
 /** First protocol version with the centralized MCP registry and gateway contracts. */
 export const MCP_REGISTRY_PROTOCOL = '1.13';
-export const AGENT_CAPABILITIES = [...MCP_REGISTRY_CAPABILITIES, 'fs.list-dirs', 'fs.browse'] as const;
-export const HUB_CAPABILITIES = [...MCP_REGISTRY_CAPABILITIES, 'fs.list-dirs', 'fs.browse'] as const;
+/** The agent takes provider.credentials.sync and removes the Codex homes of retired subscriptions (provider-parity R3). */
+export const CODEX_HOMES_SYNC_CAPABILITY = 'codex.homes.sync' as const;
+export const AGENT_CAPABILITIES = [...MCP_REGISTRY_CAPABILITIES, 'fs.list-dirs', 'fs.browse', 'fs.download', MCP_IMPORT_V2_CAPABILITY, CODEX_HOMES_SYNC_CAPABILITY] as const;
+export const HUB_CAPABILITIES = [...MCP_REGISTRY_CAPABILITIES, 'fs.list-dirs', 'fs.browse', 'fs.download', CODEX_HOMES_SYNC_CAPABILITY] as const;
 /** The first protocol version whose agents give sessions `session_spawn` and send `resultText` (hub-subagents D2). */
 export const SPAWN_PROTOCOL = '1.12';
 /** The first protocol version whose agents take Codex subscriptions (provider-parity D1): `provider` in a subscription cred, provider.credential.update. */
@@ -474,6 +484,7 @@ export const peersRequestPayload = z.discriminatedUnion('op', [
     task: z.string(),
     provider: z.enum(PROVIDERS).optional(),
     machine: z.string().max(200).optional(),
+    /** session-folder D3: ignored — the hub picks the folder; agents before 0.7.1 may still send it. */
     cwd: z.string().max(1000).optional(),
     model: z.string().max(200).optional(),
     title: z.string().max(200).optional(),
@@ -746,6 +757,15 @@ export const providerLoginDonePayload = z.object({
 });
 /** 1.11 agent → hub: Codex refreshed the tokens of a subscription; the hub stores the new auth.json (provider-parity D4). */
 export const providerCredentialUpdatePayload = z.object({ subscriptionId: z.guid(), credential: codexCredentialSchema });
+/**
+ * Capability codex.homes.sync, hub → agent (provider-parity R3): the Codex homes that may stay on the machine. Every
+ * subscription home not in `keep` is removed; of the ones in `forget` (credential replaced) only the auth.json.
+ */
+export const providerCredentialsSyncPayload = z.object({
+  provider: z.literal('codex'),
+  keep: z.array(z.guid()).max(1000),
+  forget: z.array(z.guid()).max(1000).optional(),
+});
 
 export const fileRestorePayload = z.object({
   sessionId,
@@ -891,6 +911,7 @@ export const hubMessageSchema = z.discriminatedUnion('type', [
   command('fs.list-dirs', fsListDirsPayload),
   command('fs.list', fsListPayload),
   command('fs.read', fsReadPayload),
+  command('fs.read_chunk', fsReadChunkPayload),
   command('fs.read_image', fsReadImagePayload),
   command('attachments.fetch', attachmentsFetchPayload),
   command('handoff.generate', handoffGeneratePayload),
@@ -918,6 +939,7 @@ export const hubMessageSchema = z.discriminatedUnion('type', [
   command('provider.login.start', providerLoginStartPayload),
   command('provider.login.cancel', providerLoginCancelPayload),
   command('provider.logout', providerLogoutPayload),
+  command('provider.credentials.sync', providerCredentialsSyncPayload),
 ]);
 export type HubMessage = z.infer<typeof hubMessageSchema>;
 export type HubMessageType = HubMessage['type'];

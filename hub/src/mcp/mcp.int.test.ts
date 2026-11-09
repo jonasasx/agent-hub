@@ -311,6 +311,23 @@ describe('MCP management (integration)', () => {
     expect(got.slice(before).some(c => c.type === 'mcp.auth.start')).toBe(false);
   });
 
+  it('a server that comes up after a failed action: the old lastError is dropped; a connected one keeps it', async () => {
+    const W = await session();
+    agentSend(agents.get('hp')!, 'mcp.status', { sessionId: W.sid, snapshot: snap([srv('nt', 'failed', { transport: 'http' }), srv('ok', 'connected')]) });
+    await waitFor(async () => (await view(W.id)).servers.length === 2);
+    answer('mcp.action', { error: { code: 'mcp_action_failed', message: 'boom' } });
+    await api('POST', `/api/sessions/${W.id}/mcp/actions`, { server: 'nt', action: 'reconnect' });
+    await waitFor(async () => (await view(W.id)).servers.find(x => x.name === 'nt')!.lastError === 'boom');
+    answer('mcp.action', { error: { code: 'mcp_action_failed', message: 'still' } });
+    await api('POST', `/api/sessions/${W.id}/mcp/actions`, { server: 'ok', action: 'disable' });
+    await waitFor(async () => (await view(W.id)).servers.find(x => x.name === 'ok')!.lastError === 'still');
+    agentSend(agents.get('hp')!, 'mcp.status', { sessionId: W.sid, snapshot: snap([srv('nt', 'connected', { transport: 'http' }), srv('ok', 'connected')]) });
+    await waitFor(async () => (await view(W.id)).servers.find(x => x.name === 'nt')!.status === 'connected');
+    const v = await view(W.id);
+    expect(v.servers.find(x => x.name === 'nt')!.lastError).toBeUndefined();
+    expect(v.servers.find(x => x.name === 'ok')!.lastError).toBe('still');
+  });
+
   it('the process exits: rows of servers without an action in flight are dropped from the memory', async () => {
     const W = await session();
     agentSend(agents.get('hp')!, 'mcp.status', { sessionId: W.sid, snapshot: snap([srv('z', 'connected')]) });

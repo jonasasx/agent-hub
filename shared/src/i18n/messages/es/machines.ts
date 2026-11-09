@@ -74,6 +74,8 @@ export default {
   'machines.enroll.path1': '1. Nombre y sistema',
   'machines.enroll.path2': '2. Comando',
   'machines.enroll.path3': '3. Conexión',
+  'machines.enroll.path4': '4. MCP',
+  'machines.enroll.mcpTitle': 'Servidores MCP de esta máquina',
   'machines.enroll.nameLabel': 'Nombre de la máquina',
   'machines.enroll.nameHint': 'Puedes cambiarlo después en Ajustes → Máquinas.',
   'machines.enroll.osLabel': 'Sistema',
@@ -97,4 +99,9 @@ export default {
   'machines.enroll.macTitle': 'Sin acceso a las carpetas protegidas de macOS.',
   'machines.enroll.macBefore': 'El agente no puede leer ~/Documents, ~/Desktop ni ~/Downloads. Abre Ajustes del Sistema → Privacidad y seguridad → Acceso total al disco y añade',
   'machines.enroll.macAfter': '. Los directorios fuera de estas carpetas (por ejemplo, ~/code) funcionan tal cual.',
+  'machines.defaultDir.label': 'Carpeta predeterminada',
+  'machines.defaultDir.change': 'Cambiar…',
+  'machines.defaultDir.hint': 'Las sesiones de esta máquina empiezan aquí; la carpeta del proyecto se indica respecto a ella.',
+  'machines.defaultDir.failed': 'No se pudo cambiar la carpeta predeterminada',
+  'machines.menu.defaultDir': 'Carpeta predeterminada…',
 } satisfies Dict;

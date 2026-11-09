@@ -2,6 +2,10 @@ import type { Dict } from '../../index.js';
 
 export default {
   'files.action.copyPath': 'パスをコピー',
+  'files.action.download': 'ダウンロード',
+  'files.action.downloadFailed': '{name} をダウンロードできませんでした',
+  'files.action.downloadNamed': '{name} をダウンロード',
+  'files.action.downloadOutdated': 'ファイルをダウンロードするには {machine} のエージェントを更新してください',
   'files.action.inTree': 'ツリーで表示',
   'files.action.mention': 'メッセージへ',
   'files.action.mentionTitle': 'セッション「{title}」の入力欄にパスを挿入',

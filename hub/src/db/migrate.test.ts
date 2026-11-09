@@ -97,6 +97,15 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
       '041_project_management',
       '042_project_suggestions',
       '043_user_locale',
+      '044_background_early_end',
+      '045_push_subscriptions',
+      '046_push_subscription_locale',
+      '047_single_provider',
+      '048_id_token_at_rest',
+      '049_session_folder',
+      '050_mcp_hub_only',
+      '051_background_owner',
+      '052_codex_subscription_logins',
     ]);
     const second = await migrate(t.pool);
     expect(second).toEqual([]);
@@ -109,6 +118,7 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
       'blobs',
       'catalog_projects',
       'classification_labels',
+      'codex_subscription_logins',
       'enroll_codes',
       'events',
       'handoff_drafts',
@@ -121,6 +131,7 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
       'mcp_registry_audit',
       'mcp_registry_drafts',
       'mcp_registry_imports',
+      'mcp_registry_machine_overrides',
       'mcp_registry_meta',
       'mcp_registry_overrides',
       'mcp_registry_servers',
@@ -134,6 +145,7 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
       'project_classifier_usage',
       'project_suggestions',
       'projects',
+      'push_subscriptions',
       'runners',
       'schema_migrations',
       'security_events',
@@ -193,11 +205,99 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
     }
   });
 
+  it('049_session_folder: default folders from vault_root or home, project folders from bindings inside them; down and up', async () => {
+    const fixture = await createTestDb();
+    try {
+      const q = (text: string, values: unknown[] = []) => fixture.pool.query(text, values);
+      const down = await readFile(`${MIGRATIONS_DIR}/049_session_folder.down.sql`, 'utf8');
+      const up = await readFile(`${MIGRATIONS_DIR}/049_session_folder.up.sql`, 'utf8');
+      await q(down);
+      const uid = (await q(`INSERT INTO users(email) VALUES ('f-migration@test.local') RETURNING id`)).rows[0].id;
+      await q(
+        `INSERT INTO runners(id,user_id,name,home_dir,vault_root,last_seen_at) VALUES
+           ('f-win',$1,'Win','C:\\Users\\f','C:\\Users\\f\\vault',now()),
+           ('f-vm',$1,'VM','/home/f','/home/f/vault',now() - interval '1 day'),
+           ('f-bare',$1,'Bare','/home/b',NULL,NULL)`,
+        [uid],
+      );
+      const project = async (name: string) => (await q(`INSERT INTO catalog_projects(user_id,name) VALUES ($1,$2) RETURNING id`, [uid, name])).rows[0].id as string;
+      const [dns, root, outside, mixed] = [await project('DNS'), await project('Root'), await project('Outside'), await project('Mixed')];
+      await project('None');
+      await q(
+        `INSERT INTO project_bindings(user_id,project_id,runner_id,path) VALUES
+           ($1,$2,'f-win','c:\\users\\f\\Vault\\10-work\\repos\\dns\\'),
+           ($1,$2,'f-vm','/home/f/vault/10-work/repos/dns'),
+           ($1,$3,'f-vm','/home/f/vault'),
+           ($1,$4,'f-vm','/home/f/vaultx/other'),
+           ($1,$5,'f-win','D:\\code\\mixed'),
+           ($1,$5,'f-bare','/home/b/code/mixed')`,
+        [uid, dns, root, outside, mixed],
+      );
+      await q(up);
+      const dirs = await q(`SELECT id, default_dir FROM runners WHERE user_id=$1 ORDER BY id`, [uid]);
+      expect(dirs.rows).toEqual([
+        { id: 'f-bare', default_dir: '/home/b' },
+        { id: 'f-vm', default_dir: '/home/f/vault' },
+        { id: 'f-win', default_dir: 'C:\\Users\\f\\vault' },
+      ]);
+      const folders = await q(`SELECT name, folder FROM catalog_projects WHERE user_id=$1 ORDER BY name`, [uid]);
+      expect(folders.rows).toEqual([
+        { name: 'DNS', folder: '10-work/repos/dns' },
+        { name: 'Mixed', folder: 'code/mixed' },
+        { name: 'None', folder: null },
+        { name: 'Outside', folder: null },
+        { name: 'Root', folder: null },
+      ]);
+      expect((await q(`SELECT count(*)::int AS n FROM project_bindings WHERE user_id=$1`, [uid])).rows[0].n).toBe(6);
+      await q(down);
+      const columns = await q(`SELECT column_name FROM information_schema.columns WHERE table_name IN ('runners','catalog_projects') AND column_name IN ('default_dir','folder')`);
+      expect(columns.rowCount).toBe(0);
+      await q(up);
+      expect((await q(`SELECT folder FROM catalog_projects WHERE id=$1`, [dns])).rows[0].folder).toBe('10-work/repos/dns');
+    } finally {
+      await fixture.drop();
+    }
+  });
+
+  it('050_mcp_hub_only turns the registry toggle into the import state and rolls back to it', async () => {
+    const fixture = await createTestDb();
+    try {
+      const q = (text: string, values: unknown[] = []) => fixture.pool.query(text, values);
+      const down = await readFile(`${MIGRATIONS_DIR}/050_mcp_hub_only.down.sql`, 'utf8');
+      const up = await readFile(`${MIGRATIONS_DIR}/050_mcp_hub_only.up.sql`, 'utf8');
+      await q(down);
+      const uid = (await q(`INSERT INTO users(email) VALUES ('m050@test.local') RETURNING id`)).rows[0].id;
+      await q(`INSERT INTO runners(id, user_id, name, mcp_registry_enabled) VALUES ('vm', $1, 'VM', true), ('x1', $1, 'X1', false)`, [uid]);
+      await q(up);
+      const states = await q(`SELECT id, mcp_import_state, mcp_imported_at IS NOT NULL AS imported FROM runners ORDER BY id`);
+      expect(states.rows).toEqual([
+        { id: 'vm', mcp_import_state: 'done', imported: true },
+        { id: 'x1', mcp_import_state: 'auto-pending', imported: false },
+      ]);
+      await q(`INSERT INTO runners(id, user_id, name) VALUES ('new', $1, 'New')`, [uid]);
+      expect((await q(`SELECT mcp_import_state FROM runners WHERE id = 'new'`)).rows[0].mcp_import_state).toBe('done');
+      const toggle = await q(`SELECT 1 FROM information_schema.columns WHERE table_name = 'runners' AND column_name = 'mcp_registry_enabled'`);
+      expect(toggle.rowCount).toBe(0);
+      await q(down);
+      const back = await q(`SELECT id, mcp_registry_enabled FROM runners ORDER BY id`);
+      expect(back.rows).toEqual([
+        { id: 'new', mcp_registry_enabled: true },
+        { id: 'vm', mcp_registry_enabled: true },
+        { id: 'x1', mcp_registry_enabled: false },
+      ]);
+      expect((await q(`SELECT 1 FROM information_schema.tables WHERE table_name = 'mcp_registry_machine_overrides'`)).rowCount).toBe(0);
+      await q(up);
+    } finally {
+      await fixture.drop();
+    }
+  });
+
   it('037-040 MCP registry migrations can be rolled down and up', async () => {
     const t37 = await createTestDb({ migrated: true });
     try {
       const before = await t37.pool.query(`SELECT 1 FROM information_schema.tables WHERE table_name='mcp_registry_servers'`);
       expect(before.rowCount).toBe(1);
+      await t37.pool.query(await readFile(`${MIGRATIONS_DIR}/050_mcp_hub_only.down.sql`, 'utf8'));
       await t37.pool.query(await readFile(`${MIGRATIONS_DIR}/040_mcp_registry_server_drafts.down.sql`, 'utf8'));
       await t37.pool.query(await readFile(`${MIGRATIONS_DIR}/039_mcp_registry_machine_toggle.down.sql`, 'utf8'));
       await t37.pool.query(await readFile(`${MIGRATIONS_DIR}/038_mcp_oauth_status.down.sql`, 'utf8'));
@@ -313,6 +413,15 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
         '041_project_management',
         '042_project_suggestions',
         '043_user_locale',
+        '044_background_early_end',
+        '045_push_subscriptions',
+        '046_push_subscription_locale',
+        '047_single_provider',
+        '048_id_token_at_rest',
+        '049_session_folder',
+        '050_mcp_hub_only',
+        '051_background_owner',
+        '052_codex_subscription_logins',
       ]);
       expect((await q(`SELECT count(*)::int AS n FROM events`)).rows[0].n).toBe(3);
       expect((await q(`SELECT rel_key, runner_id, claude_session_id, acked_line::int AS l FROM transcript_files`)).rows[0]).toEqual({
@@ -382,6 +491,15 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
         '041_project_management',
         '042_project_suggestions',
         '043_user_locale',
+        '044_background_early_end',
+        '045_push_subscriptions',
+        '046_push_subscription_locale',
+        '047_single_provider',
+        '048_id_token_at_rest',
+        '049_session_folder',
+        '050_mcp_hub_only',
+        '051_background_owner',
+        '052_codex_subscription_logins',
       ]);
       expect((await q(`SELECT git_remote FROM sessions ORDER BY git_remote`)).rows.map(r => r.git_remote)).toEqual([
         'git@git.example.com:a/b.git',
@@ -446,12 +564,36 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
       const uid = (await q(`INSERT INTO users (email) VALUES ('n@x.y') RETURNING id`)).rows[0].id as string;
       const sub = (name: string, provider: string) =>
         q(`INSERT INTO subscriptions (user_id, name, provider, token_enc, token_hint, position) VALUES ($1, $2, $3, decode('00', 'hex'), 'abcd', 0)`, [uid, name, provider]);
-      await sub('jonasasx', 'claude');
-      await sub('jonasasx', 'codex');
-      await expect(sub('JONASASX', 'codex')).rejects.toThrow(/subscriptions_active_name/);
-      await expect(sub('Jonasasx', 'claude')).rejects.toThrow(/subscriptions_active_name/);
+      await sub('alice', 'claude');
+      await sub('alice', 'codex');
+      await expect(sub('ALICE', 'codex')).rejects.toThrow(/subscriptions_active_name/);
+      await expect(sub('Alice', 'claude')).rejects.toThrow(/subscriptions_active_name/);
     } finally {
       await t7.drop();
+    }
+  });
+
+  it('032/033 down refuse on data they would break (provider-parity R7), roll back without it', async () => {
+    const t8 = await createTestDb({ migrated: true });
+    const q = (s: string, p: unknown[] = []) => t8.pool.query(s, p);
+    try {
+      const down032 = await readFile(`${MIGRATIONS_DIR}/032_subscription_provider.down.sql`, 'utf8');
+      const down033 = await readFile(`${MIGRATIONS_DIR}/033_subscription_name_per_provider.down.sql`, 'utf8');
+      const uid = (await q(`INSERT INTO users (email) VALUES ('r7@x.y') RETURNING id`)).rows[0].id as string;
+      const sub = (name: string, provider: string) =>
+        q(`INSERT INTO subscriptions (user_id, name, provider, token_enc, token_hint, position) VALUES ($1, $2, $3, decode('00', 'hex'), 'abcd', 0) RETURNING id`, [uid, name, provider]);
+      await sub('main', 'claude');
+      const codex = (await sub('main', 'codex')).rows[0].id as string;
+      await expect(q(down033)).rejects.toThrow(/033 down is not supported/);
+      await q(`UPDATE subscriptions SET name = 'codex main' WHERE id = $1`, [codex]);
+      await q(down033);
+      await expect(q(down032)).rejects.toThrow(/032 down is not supported/);
+      expect((await q(`SELECT count(*)::int AS n FROM subscriptions WHERE provider = 'codex'`)).rows[0].n).toBe(1);
+      await q(`DELETE FROM subscriptions WHERE id = $1`, [codex]);
+      await q(down032);
+      expect((await q(`SELECT 1 FROM information_schema.columns WHERE table_name = 'subscriptions' AND column_name = 'provider'`)).rowCount).toBe(0);
+    } finally {
+      await t8.drop();
     }
   });
 
@@ -462,7 +604,8 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
       await migrate(t6.pool);
       const down = await readFile(`${MIGRATIONS_DIR}/022_subscriptions.down.sql`, 'utf8');
       const up = await readFile(`${MIGRATIONS_DIR}/022_subscriptions.up.sql`, 'utf8');
-      // 033, 032 and 026 depend on subscriptions: rolled back first, as a real rollback would
+      // 052, 033, 032 and 026 depend on subscriptions: rolled back first, as a real rollback would
+      await q(await readFile(`${MIGRATIONS_DIR}/052_codex_subscription_logins.down.sql`, 'utf8'));
       await q(await readFile(`${MIGRATIONS_DIR}/033_subscription_name_per_provider.down.sql`, 'utf8'));
       await q(await readFile(`${MIGRATIONS_DIR}/032_subscription_provider.down.sql`, 'utf8'));
       await q(await readFile(`${MIGRATIONS_DIR}/026_subscription_limits.down.sql`, 'utf8'));
@@ -549,7 +692,7 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
       await migrate(t6.pool);
       // A production-like copy before 023: down, then data of the single-user era, then up again.
       await q(await readFile(`${MIGRATIONS_DIR}/023_multi_user.down.sql`, 'utf8'));
-      const ivan = (await q(`INSERT INTO users (email) VALUES ('jonasasx@gmail.com') RETURNING id`)).rows[0].id;
+      const ivan = (await q(`INSERT INTO users (email) VALUES ('alice@example.com') RETURNING id`)).rows[0].id;
       await q(`INSERT INTO runners (id, user_id, name, hostname) VALUES ('hp', $1, 'HP', 'HP-Elitebook'), ('vm', $1, 'VM', 'ip-10-0-0-3')`, [ivan]);
       await q(`DELETE FROM schema_migrations WHERE version = '023_multi_user'`);
       expect(await migrate(t6.pool)).toEqual(['023_multi_user']);
@@ -624,7 +767,7 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
     try {
       await migrate(t8.pool);
       const withMcp = await schema();
-      const of027 = (r: Record<string, unknown>) => String(r.column_name).startsWith('mcp_') && r.column_name !== 'mcp_project_root' && r.column_name !== 'mcp_registry_enabled';
+      const of027 = (r: Record<string, unknown>) => String(r.column_name).startsWith('mcp_') && r.column_name !== 'mcp_project_root' && !String(r.column_name).startsWith('mcp_import');
       const added = withMcp.filter(of027);
       expect(added.map(r => `${r.table_name}.${r.column_name}:${r.data_type}`)).toEqual([
         'runners.mcp_observed_at:timestamp with time zone',

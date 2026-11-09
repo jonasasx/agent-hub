@@ -7,7 +7,6 @@
 
 import { t } from '../../i18n';
 
-export const TAB_LIMIT = 8;
 export const PANE_LIMIT = 4;
 export const RATIO_MIN = 0.2;
 export const RATIO_MAX = 0.8;
@@ -155,6 +154,23 @@ export function focusPane(ws: Workspace, pid: PaneId): Workspace {
 }
 
 /**
+ * The pane a file opened from `pid` goes to: another pane, so the chat with the link stays on screen — the one that
+ * already shows a file, otherwise the next one in the layout. With a single pane — `pid` itself.
+ */
+export function paneBeside(ws: Snapshot, pid: PaneId): PaneId {
+  const order = leaves(ws.layout);
+  const others = order.filter(p => p !== pid);
+  if (!others.length) return pid;
+  const withFile = others.find(p => {
+    const active = ws.panes[p]?.active;
+    return !!active && isFileTab(active);
+  });
+  if (withFile) return withFile;
+  const at = order.indexOf(pid);
+  return order[(at + 1) % order.length] ?? others[0]!;
+}
+
+/**
  * Opens a session from the left panel: active in the pane where it is already open, otherwise inserted right of the
  * active tab of the focused pane.
  */
@@ -171,53 +187,6 @@ export function openSession(ws: Workspace, sid: SessionId): Workspace {
   f.tabs.splice(at + 1, 0, sid);
   f.active = sid;
   return w;
-}
-
-const activeIn = (s: Snapshot | null | undefined) => Object.values(s?.panes ?? {}).flatMap(p => (p.active ? [p.active] : []));
-
-/**
- * Tab to remove when the window has more than TAB_LIMIT tabs: the one opened longest ago in this window that is not
- * `keep` and not active in any pane — of the layout after opening, of the layout before opening (`before`; a tab the
- * new one displaced in its pane was on screen a moment ago) and of the layout remembered by «Одно окно» (`saved`).
- * `openedAt` — epoch ms of the last opening in this window (missing = never).
- * Requirement (file-explorer): Файловые вкладки — `pinned` is the set of pinned file tabs: a preview file tab (a file
- * tab that is not in it) goes first, a pinned file tab is evicted only like a session tab, by age. Without `pinned`
- * every file tab counts as pinned.
- */
-export function evictionCandidate(
-  ws: Snapshot & { saved?: Snapshot | null },
-  keep: SessionId,
-  openedAt: Record<SessionId, number>,
-  before?: Snapshot | null,
-  pinned?: ReadonlySet<string>,
-): SessionId | null {
-  const tabs = allTabs(ws);
-  if (tabs.length <= TAB_LIMIT) return null;
-  const kept = new Set([...activeIn(ws), ...activeIn(ws.saved), ...activeIn(before)]);
-  const candidates = tabs.filter(id => id !== keep && !kept.has(id));
-  const isPreview = (id: string) => !!pinned && isFileTab(id) && !pinned.has(id);
-  candidates.sort((a, b) => {
-    const byKind = Number(isPreview(b)) - Number(isPreview(a));
-    return byKind || (openedAt[a] ?? 0) - (openedAt[b] ?? 0);
-  });
-  return candidates[0] ?? null;
-}
-
-/**
- * Applies the 8-tab limit of the window after `keep` was opened. `full` — nobody can be evicted (all other tabs are
- * active in panes): the caller takes the new tab back and tells the user.
- */
-export function enforceLimit(
-  ws: Workspace,
-  keep: SessionId,
-  openedAt: Record<SessionId, number>,
-  before?: Snapshot | null,
-  pinned?: ReadonlySet<string>,
-): { ws: Workspace; evicted: SessionId | null; full: boolean } {
-  if (allTabs(ws).length <= TAB_LIMIT) return { ws, evicted: null, full: false };
-  const victim = evictionCandidate(ws, keep, openedAt, before, pinned);
-  if (!victim) return { ws, evicted: null, full: true };
-  return { ws: closeTab(ws, victim), evicted: victim, full: false };
 }
 
 /** Moves a tab into a pane before `beforeSid` (null — to the end) and makes it active there. */

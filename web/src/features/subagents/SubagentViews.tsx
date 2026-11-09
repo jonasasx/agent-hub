@@ -82,37 +82,44 @@ export function SubagentsButton({ s, compact }: { s: SessionView; compact?: bool
   ]
     .filter(Boolean)
     .join(' · ');
+  // the phone's info line and a narrow pane: «24 · 1» fits next to the project; the full words are the accessible name
+  const short = (
+    <>
+      <span className="sr-only">{parts} </span>
+      <svg className="sub-ico" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+        <circle cx="4" cy="3.5" r="1.8" />
+        <circle cx="12" cy="8" r="1.8" />
+        <circle cx="4" cy="12.5" r="1.8" />
+        <path d="M5.8 3.5h1.7a2 2 0 0 1 2 2v.5M5.8 12.5h1.7a2 2 0 0 0 2-2V10" />
+      </svg>
+      {total + bgTotal}
+      {running > 0 && (
+        <span className="sub-running">
+          {' · '}
+          {running}
+          <span className="sr-only"> {runWord(running)}</span>
+        </span>
+      )}
+    </>
+  );
   return (
     <>
       <button type="button" className={`btn sub-btn${compact ? ' compact' : ''}`} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(!open)}>
         {compact ? (
-          // the phone's info line: «24 · 1» fits next to the project; the full words are the accessible name
-          <>
-            <span className="sr-only">{parts} </span>
-            <svg className="sub-ico" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-              <circle cx="4" cy="3.5" r="1.8" />
-              <circle cx="12" cy="8" r="1.8" />
-              <circle cx="4" cy="12.5" r="1.8" />
-              <path d="M5.8 3.5h1.7a2 2 0 0 1 2 2v.5M5.8 12.5h1.7a2 2 0 0 0 2-2V10" />
-            </svg>
-            {total + bgTotal}
-            {running > 0 && (
-              <span className="sub-running">
-                {' · '}
-                {running}
-                <span className="sr-only"> {runWord(running)}</span>
-              </span>
-            )}
-          </>
+          short
         ) : (
+          // a wide header shows the words, a narrow pane the short form (CSS by the pane width)
           <>
-            {parts}
-            {running > 0 && (
-              <span className="sub-running">
-                {' '}
-                · {running} {runWord(running)}
-              </span>
-            )}
+            <span className="sub-full">
+              {parts}
+              {running > 0 && (
+                <span className="sub-running">
+                  {' '}
+                  · {running} {runWord(running)}
+                </span>
+              )}
+            </span>
+            <span className="sub-short">{short}</span>
           </>
         )}
       </button>
@@ -254,7 +261,7 @@ function HubChildRow({ h, onOpen }: { h: HubSubagentView; onOpen: () => void }) 
       {status === 'working' && alive ? (
         <span className="g-work" role="img" aria-label={label} title={label} />
       ) : (
-        <span className={`sub-dot ${status === 'waiting' ? 'idle' : status === 'permission' ? 'interrupted' : 'stopped'}`} role="img" aria-label={label} title={label} />
+        <span className={`sub-dot ${status === 'waiting' ? 'waiting' : status === 'permission' ? 'interrupted' : 'stopped'}`} role="img" aria-label={label} title={label} />
       )}
       <span className="sub-main">
         <span className="sub-title">

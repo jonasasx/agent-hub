@@ -16,6 +16,8 @@ import {
   limitsProbeResultSchema,
   PROTOCOL_VERSION,
   FILES_PROTOCOL,
+  DOWNLOAD_PROTOCOL,
+  FS_CHUNK_MAX,
   AGENT_CAPABILITIES,
   HUB_CAPABILITIES,
   SUBSCRIPTIONS_PROTOCOL,
@@ -142,6 +144,7 @@ const validHub: Array<[string, unknown, { id?: string }?]> = [
   ['fs.list-dirs', { path: 'C:\\Users', showHidden: false }, { id: 'c10b' }],
   ['fs.list', { path: '/home/a', root: '/home/a', showHidden: false }, { id: 'c10c' }],
   ['fs.read', { path: '/home/a/x.md', root: '/home/a' }, { id: 'c10d' }],
+  ['fs.read_chunk', { path: '/home/a/x.mp4', root: '/home/a', offset: 0, length: 4194304 }, { id: 'c10e' }],
   ['handoff.generate', { transcript: 't', model: 'sonnet', systemPrompt: 's' }, { id: 'c11' }],
   ['agent.update', { version: '0.2.0', sha256: SHA, url: '/agent/agent-0.2.0.tgz' }],
   ['limits.probe', { subscription: { id: '3a7c1e2d-5b4f-4a6e-9c8d-7e6f5a4b3c2d', token: 'sk-ant-oat01-' + 'Ab9_-'.repeat(16) }, model: 'haiku' }, { id: 'c14' }],
@@ -195,6 +198,7 @@ const validHub: Array<[string, unknown, { id?: string }?]> = [
   ['provider.login.start', { provider: 'codex' }, { id: 'c21' }],
   ['provider.login.cancel', { provider: 'codex', loginId: 'l1' }, { id: 'c22' }],
   ['provider.logout', { provider: 'codex' }, { id: 'c23' }],
+  ['provider.credentials.sync', { provider: 'codex', keep: ['6f1c7c2e-3b0a-4c55-9b7d-2f0d2a6f1b11'], forget: [] }, { id: 'c23b' }],
 ];
 
 describe('protocol version', () => {
@@ -214,8 +218,18 @@ describe('protocol version', () => {
     expect(isCompatibleProtocol('1.13')).toBe(true);
     expect(parseHubMessage(JSON.stringify(envelope('fs.read', { path: '/a', root: '' }, { id: 'bad' }))).ok).toBe(false);
   });
+  it('negotiates fs.download in 1.16 with fs.read_chunk bounded by FS_CHUNK_MAX', () => {
+    expect(DOWNLOAD_PROTOCOL).toBe('1.16');
+    expect(AGENT_CAPABILITIES).toContain('fs.download');
+    expect(HUB_CAPABILITIES).toContain('fs.download');
+    const chunk = { path: '/a/b.mp4', root: '/a', offset: FS_CHUNK_MAX, length: FS_CHUNK_MAX };
+    expect(parseHubMessage(JSON.stringify(envelope('fs.read_chunk', chunk, { id: 'c1' }))).ok).toBe(true);
+    expect(parseHubMessage(JSON.stringify(envelope('fs.read_chunk', { ...chunk, length: 0 }, { id: 'c2' }))).ok).toBe(true);
+    expect(parseHubMessage(JSON.stringify(envelope('fs.read_chunk', { ...chunk, length: FS_CHUNK_MAX + 1 }, { id: 'c3' }))).ok).toBe(false);
+    expect(parseHubMessage(JSON.stringify(envelope('fs.read_chunk', { ...chunk, offset: -1 }, { id: 'c4' }))).ok).toBe(false);
+  });
   it('is 1.15 with close codes 4401/4409/4426; subscriptions need 1.4, agent.update 1.5, limits 1.6, MCP 1.7, MCP sign-out 1.8, Codex subscriptions 1.11', () => {
-    expect(PROTOCOL_VERSION).toBe('1.15');
+    expect(PROTOCOL_VERSION).toBe('1.17');
     expect(isCompatibleProtocol('1.11')).toBe(true); // project launch adds only optional HTTP fields; agent commands remain 1.12-compatible
     expect(MCP_PROTOCOL).toBe('1.7');
     expect(MCP_AUTH_CONTROLS_PROTOCOL).toBe('1.8');
@@ -405,7 +419,7 @@ describe('1.4: subscriptions', () => {
   });
 
   it('1.15: an optional project catalogue on session start and resume, at most 200 entries', () => {
-    const entry = { id: SID, name: 'Agent Hub', description: null, remote: 'gitlab.com/jonasasx/agent-hub', path: 'C:\\code\\agent-hub', current: true };
+    const entry = { id: SID, name: 'Agent Hub', description: null, remote: 'git.example.com/alice/agent-hub', path: 'C:\\code\\agent-hub', current: true };
     expect(hub('session.start', { ...start, projectCatalog: [entry] }).ok).toBe(true);
     expect(hub('session.resume', { ...resume, projectCatalog: [] }).ok).toBe(true);
     expect(hub('session.start', { ...start, projectCatalog: [{ ...entry, current: undefined }] }).ok).toBe(false);

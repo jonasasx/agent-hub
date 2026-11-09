@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { uiClientMessageSchema } from '@agent-hub/shared';
 import { ALLOWED_EMAIL, PUBLIC_URL, autoReply, connectFakeAgent, connectUi, startTestHub, waitFor, type FakeAgent, type TestHub } from '../test/harness.js';
 import { issueRunnerToken } from '../runners/repo.js';
+import { endpointHash } from '../push/repo.js';
 
 const SECRET_TITLE = 'Секретная сессия Ивана';
 const SECRET_WORD = 'барокамерасекрет';
@@ -23,6 +24,8 @@ const SUB_TOKEN = 'sk-ant-oat01-' + 'Iv4nTok'.repeat(12) + 'QwZx';
 const K_SUB_NAME = 'Подписка Бориса секрет';
 const K_SUB_TOKEN = 'sk-ant-oat01-' + 'KsEnTok'.repeat(12) + 'PlMn';
 const TOKEN_KEY = Buffer.alloc(32, 9).toString('base64');
+const PUSH_ENDPOINT = 'https://push.example.com/send/ivan-isolation-endpoint';
+const K_PUSH_ENDPOINT = 'https://push.example.com/send/bob-isolation-endpoint';
 
 type Objects = {
   session: string;
@@ -36,6 +39,9 @@ type Objects = {
   word: string;
   sub: string;
   registryServer: string;
+  pushId: string;
+  pushHash: string;
+  pushEndpoint: string;
 };
 
 describe('isolation of users (integration)', () => {
@@ -52,9 +58,18 @@ describe('isolation of users (integration)', () => {
   const B = { sha: K_SHA, word: K_WORD, runner: K_RUNNER, registryServer: randomUUID() } as Objects;
 
   beforeAll(async () => {
-    // subscriptions and dictation on: their routes answer as in production (no 503)
+    // subscriptions, dictation and the voice conversation on: their routes answer as in production (no 503)
     t = await startTestHub({
-      env: { SUBSCRIPTION_TOKEN_KEY: TOKEN_KEY, ELEVENLABS_API_KEY: 'sk_test' },
+      env: {
+        SUBSCRIPTION_TOKEN_KEY: TOKEN_KEY,
+        ELEVENLABS_API_KEY: 'sk_test',
+        VAPID_PUBLIC_KEY: 'pub',
+        VAPID_PRIVATE_KEY: 'priv',
+        VAPID_SUBJECT: 'mailto:ops@example.com',
+        VOICE_AGENT_ID: 'agent_test',
+        VOICE_LLM_KEY: 'v'.repeat(40),
+      },
+      push: { sender: { send: async () => ({ ok: true as const }) } },
       voice: { fetch: (() => Promise.reject(new Error('no ElevenLabs in this test'))) as typeof fetch },
     });
     ivan = await t.login();
@@ -106,6 +121,15 @@ describe('isolation of users (integration)', () => {
     await q(`INSERT INTO uploads (sha256, user_id) VALUES ($1, $2)`, [SHA, ivanId]);
     await q(`INSERT INTO ui_layouts (user_id, device_class, layout, opened_at) VALUES ($1, 'desktop', $2, '{}')`, [ivanId, JSON.stringify({ seq: 1, focus: A.session })]);
     await q(`INSERT INTO security_events (user_id, kind, runner_id) VALUES ($1, 'runner_connected', 'hp')`, [ivanId]);
+    A.pushEndpoint = PUSH_ENDPOINT;
+    A.pushHash = endpointHash(PUSH_ENDPOINT);
+    A.pushId = (
+      await q(`INSERT INTO push_subscriptions (user_id, endpoint, endpoint_hash, p256dh, auth, device_label) VALUES ($1, $2, $3, 'p256dh-ivan', 'auth-ivan', 'Chrome · Windows') RETURNING id`, [
+        ivanId,
+        PUSH_ENDPOINT,
+        A.pushHash,
+      ])
+    ).rows[0].id;
     A.sub = await addSubscription(ivan, SUB_NAME, SUB_TOKEN);
     await subscriptionData(ivanId, A.session, 'hp', A.sub, 777001);
 
@@ -158,6 +182,15 @@ describe('isolation of users (integration)', () => {
     await q(`INSERT INTO uploads (sha256, user_id) VALUES ($1, $2)`, [K_SHA, bobId]);
     await q(`INSERT INTO ui_layouts (user_id, device_class, layout, opened_at) VALUES ($1, 'desktop', $2, '{}')`, [bobId, JSON.stringify({ seq: 1, focus: B.session })]);
     await q(`INSERT INTO security_events (user_id, kind, runner_id) VALUES ($1, 'runner_connected', $2)`, [bobId, K_RUNNER]);
+    B.pushEndpoint = K_PUSH_ENDPOINT;
+    B.pushHash = endpointHash(K_PUSH_ENDPOINT);
+    B.pushId = (
+      await q(`INSERT INTO push_subscriptions (user_id, endpoint, endpoint_hash, p256dh, auth, device_label) VALUES ($1, $2, $3, 'p256dh-bob', 'auth-bob', 'Firefox · Linux') RETURNING id`, [
+        bobId,
+        K_PUSH_ENDPOINT,
+        B.pushHash,
+      ])
+    ).rows[0].id;
     B.sub = await addSubscription(bob, K_SUB_NAME, K_SUB_TOKEN);
     await subscriptionData(bobId, B.session, K_RUNNER, B.sub, 888001);
     // Her machine online: a command of the administrator that reached it would be seen here.
@@ -201,9 +234,49 @@ describe('isolation of users (integration)', () => {
   }
 
   /** Values of the first user that must never reach the second. */
-  const secrets = () => [A.session, A.project, A.catalogProject, A.draft, A.subagent, A.request, A.sub, SUB_NAME, SUB_TOKEN, '777001', SECRET_TITLE, SECRET_WORD, 'HP Ивана', ALLOWED_EMAIL];
+  const secrets = () => [
+    A.session,
+    A.project,
+    A.catalogProject,
+    A.draft,
+    A.subagent,
+    A.request,
+    A.sub,
+    SUB_NAME,
+    SUB_TOKEN,
+    '777001',
+    SECRET_TITLE,
+    SECRET_WORD,
+    'HP Ивана',
+    ALLOWED_EMAIL,
+    A.pushId,
+    A.pushHash,
+    A.pushEndpoint,
+    'p256dh-ivan',
+    'auth-ivan',
+  ];
   /** Values of the user that the administrator never gets (her e-mail and name he sees on «Пользователи»). */
-  const kSecrets = () => [B.session, B.project, B.catalogProject, B.draft, B.subagent, B.request, B.sub, K_SUB_NAME, K_SUB_TOKEN, '888001', K_TITLE, K_WORD, K_RUNNER, K_RUNNER_NAME];
+  const kSecrets = () => [
+    B.session,
+    B.project,
+    B.catalogProject,
+    B.draft,
+    B.subagent,
+    B.request,
+    B.sub,
+    K_SUB_NAME,
+    K_SUB_TOKEN,
+    '888001',
+    K_TITLE,
+    K_WORD,
+    K_RUNNER,
+    K_RUNNER_NAME,
+    B.pushId,
+    B.pushHash,
+    B.pushEndpoint,
+    'p256dh-bob',
+    'auth-bob',
+  ];
 
   type Case = { url: string; body?: unknown; list?: true };
   /** Every route: the request aimed at the objects `o` of another user (`victim` — his id). */
@@ -217,6 +290,7 @@ describe('isolation of users (integration)', () => {
     'GET /auth/callback': { url: '/auth/callback' },
     'POST /auth/logout': { url: '/auth/logout', list: true },
     'GET /auth/disabled': { url: '/auth/disabled', list: true },
+    'GET /auth/provider-logout': { url: '/auth/provider-logout', list: true },
     'GET /invite/:code': { url: `/invite/${'x'.repeat(43)}` },
     'POST /api/auth/logout-all': { url: '/api/auth/logout-all', list: true },
     'GET /auth/desktop/start': { url: '/auth/desktop/start' },
@@ -288,6 +362,7 @@ describe('isolation of users (integration)', () => {
     'GET /api/runners/:runnerId/directories': { url: `/api/runners/${o.runner}/directories` },
     'GET /api/runners/:runnerId/fs/list': { url: `/api/runners/${o.runner}/fs/list` },
     'GET /api/runners/:runnerId/fs/file': { url: `/api/runners/${o.runner}/fs/file?path=${encodeURIComponent('/home/ubuntu/notes.md')}` },
+    'GET /api/runners/:runnerId/fs/download': { url: `/api/runners/${o.runner}/fs/download?path=${encodeURIComponent('/home/ubuntu/notes.md')}` },
     'PATCH /api/runners/:id': { url: `/api/runners/${o.runner}`, body: { name: 'x' } },
     'POST /api/runners/:id/enroll-code': { url: `/api/runners/${o.runner}/enroll-code`, body: {} },
     'POST /api/runners/:id/disable': { url: `/api/runners/${o.runner}/disable`, body: {} },
@@ -306,8 +381,17 @@ describe('isolation of users (integration)', () => {
     'POST /api/subscriptions/:id/limits/refresh': { url: `/api/subscriptions/${o.sub}/limits/refresh`, body: {} },
     'POST /api/sessions/:id/subscription': { url: `/api/sessions/${o.session}/subscription`, body: { subscriptionId: o.sub } },
     'POST /api/voice/transcribe': { url: '/api/voice/transcribe', body: 'not audio' },
+    // voice-conversation: a link for another user's session → 404, no ElevenLabs request; the Custom LLM answers only to its key
+    'GET /api/voice/talk': { url: `/api/voice/talk?session=${o.session}` },
+    'POST /voice-llm/v1/chat/completions': { url: '/voice-llm/v1/chat/completions', body: { messages: [{ role: 'user', content: 'x' }] } },
     // session-peers: the journal of another user's session → 404
     'GET /api/peers/messages': { url: `/api/peers/messages?session=${o.session}` },
+    // web-push-notifications: the devices are the user's own; another user's id or hash → 404 / nothing deleted, no test push sent
+    'GET /api/push/subscriptions': { url: '/api/push/subscriptions', list: true },
+    'POST /api/push/subscriptions': { url: '/api/push/subscriptions', body: { endpoint: 'https://push.example.com/send/own-walk', keys: { p256dh: 'own-p256dh', auth: 'own-auth' } }, list: true },
+    'DELETE /api/push/subscriptions/:id': { url: `/api/push/subscriptions/${o.pushId}` },
+    'DELETE /api/push/subscriptions': { url: `/api/push/subscriptions?endpointHash=${o.pushHash}`, list: true },
+    'POST /api/push/test': { url: '/api/push/test', body: { endpointHash: o.pushHash } },
     // mcp-management (Права на MCP): the other user's session and machine → 404, nothing sent to the agent
     'GET /api/sessions/:id/mcp': { url: `/api/sessions/${o.session}/mcp` },
     'POST /api/sessions/:id/mcp/refresh': { url: `/api/sessions/${o.session}/mcp/refresh`, body: {} },
@@ -320,8 +404,12 @@ describe('isolation of users (integration)', () => {
     // mcp-registry: owner-scoped registry, draft workflow and import.
     'GET /api/mcp/registry': { url: '/api/mcp/registry', list: true },
     'GET /api/mcp/registry/status': { url: '/api/mcp/registry/status', list: true },
-    'PUT /api/mcp/registry/machines/:machineId': { url: `/api/mcp/registry/machines/${o.runner}`, body: { enabled: false } },
+    'PUT /api/mcp/registry/servers/:id/machines/:machineId': { url: `/api/mcp/registry/servers/${o.sub}/machines/${o.runner}`, body: { revision: 1, enabled: false } },
     'POST /api/mcp/registry/servers/:id/oauth/start': { url: `/api/mcp/registry/servers/${o.registryServer}/oauth/start`, body: { machineId: randomUUID() } },
+    'POST /api/mcp/registry/servers/:id/oauth/complete': {
+      url: `/api/mcp/registry/servers/${o.registryServer}/oauth/complete`,
+      body: { machineId: randomUUID(), callbackUrl: 'http://localhost:45129/callback?code=a&state=b' },
+    },
     'POST /api/mcp/registry/servers/:id/oauth/validate': { url: `/api/mcp/registry/servers/${o.registryServer}/oauth/validate`, body: { machineId: randomUUID() } },
     'POST /api/mcp/registry/servers/:id/oauth/connect': { url: `/api/mcp/registry/servers/${o.registryServer}/oauth/connect`, body: { machineId: randomUUID() } },
     'POST /api/mcp/registry/servers/:id/oauth/revoke': { url: `/api/mcp/registry/servers/${o.registryServer}/oauth/revoke`, body: { machineId: randomUUID() } },
@@ -396,6 +484,8 @@ describe('isolation of users (integration)', () => {
     expect((await t.tdb.pool.query(`SELECT state FROM runners WHERE id = 'hp'`)).rows[0].state).toBe('active');
     expect((await t.tdb.pool.query(`SELECT status FROM users WHERE id = $1`, [ivanId])).rows[0].status).toBe('active');
     await expectSubscriptionIntact(ivanId, A.sub, SUB_NAME, SUB_TOKEN, 1);
+    // web-push-notifications: the walk of the other user deleted nothing and rebound nothing
+    expect((await t.tdb.pool.query(`SELECT user_id FROM push_subscriptions WHERE id = $1`, [A.pushId])).rows[0]).toEqual({ user_id: ivanId });
   });
 
   it("Прямой запрос чужой сессии: the administrator walks the same ROUTES against the user's objects → 404, no data of hers", async () => {
@@ -416,6 +506,7 @@ describe('isolation of users (integration)', () => {
     expect((await t.tdb.pool.query(`SELECT status FROM users WHERE id = $1`, [bobId])).rows[0].status).toBe('active');
     // hers and the one of her own walk («Своя …»)
     await expectSubscriptionIntact(bobId, B.sub, K_SUB_NAME, K_SUB_TOKEN, 2);
+    expect((await t.tdb.pool.query(`SELECT user_id FROM push_subscriptions WHERE id = $1`, [B.pushId])).rows[0]).toEqual({ user_id: bobId });
   });
 
   it("the administrator's check is not vacuous: Bob herself reads her session and finds her word", async () => {

@@ -13,11 +13,8 @@ import {
   createSessionRequestSchema,
   createUserProjectSchema,
   patchUserProjectSchema,
-  bindUserProjectSchema,
   userProjectListQuerySchema,
   userProjectParamsSchema,
-  userProjectBindingParamsSchema,
-  userProjectResolveQuerySchema,
   forkRequestSchema,
   handoffDraftRequestSchema,
   patchSessionRequestSchema,
@@ -96,10 +93,8 @@ export function registerApi(
       const message = err.i18n ? tr(req.locale).text(err.i18n.key, err.i18n.params) : err.message;
       return reply.code(err.status).send({ ...err.details, error: err.code, message });
     }
-    if ((err as { code?: string; constraint?: string }).code === '23505' && /^(catalog_projects_active_name|project_bindings_)/.test((err as { constraint?: string }).constraint ?? '')) {
-      const nameTaken = (err as { constraint?: string }).constraint === 'catalog_projects_active_name';
-      const key = nameTaken ? 'hub.api.nameConflict' : 'hub.api.bindingConflict';
-      return reply.code(409).send({ error: nameTaken ? 'name_conflict' : 'binding_conflict', message: tr(req.locale).text(key) });
+    if ((err as { code?: string; constraint?: string }).code === '23505' && (err as { constraint?: string }).constraint === 'catalog_projects_active_name') {
+      return reply.code(409).send({ error: 'name_conflict', message: tr(req.locale).text('hub.api.nameConflict') });
     }
     const e = err as { statusCode?: number; message?: string };
     if (e.statusCode === 413) return reply.code(413).send({ error: 'too_large', message: tr(req.locale).text('hub.api.bodyTooLarge') });
@@ -111,7 +106,8 @@ export function registerApi(
   const visible = (cron: '0' | '1' | undefined) => (cron === '1' ? sql<boolean>`true` : sql<boolean>`s.source <> 'cron'`);
   // hub-subagents D10: a spawned session lives under its parent («Субагенты»), not in the lists of the sidebar
   const notSpawned = sql<boolean>`s.spawned_by IS NULL`;
-  const visibleProject = sql<string | null>`CASE WHEN EXISTS (SELECT 1 FROM hidden_project_groups h WHERE h.user_id=s.user_id AND h.project_id=s.project_id) THEN NULL ELSE s.project_id END`;
+  // single-project-classifier: a session without a catalog link is «Без проекта»
+  const noCatalogLink = sql<boolean>`NOT EXISTS (SELECT 1 FROM session_projects sp WHERE sp.user_id = s.user_id AND sp.session_id = s.id)`;
   const recency = sql`COALESCE(s.last_event_at, s.created_at)`;
 
   app.get('/api/runners/:runnerId/directories', async req => {
@@ -189,7 +185,6 @@ export function registerApi(
     const activityByProject = new Map(activity.map(a => [a.project_id, a.last ? new Date(a.last).toISOString() : null]));
     if (sort === 'name') projects.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
     else projects.sort((a, b) => (activityByProject.get(b.id) ?? '').localeCompare(activityByProject.get(a.id) ?? '') || a.name.localeCompare(b.name));
-    const bindings = await db.selectFrom('project_bindings').select(['project_id', 'runner_id', 'path']).where('user_id', '=', userId).execute();
     return projects.map(p => ({
       id: p.id,
       name: p.name,
@@ -199,15 +194,12 @@ export function registerApi(
       remote: p.remote,
       archived: p.archived,
       lastEventAt: activityByProject.get(p.id) ?? p.last_event_at?.toISOString() ?? null,
-      bindings: bindings.filter(b => b.project_id === p.id).map(b => ({ runnerId: b.runner_id, path: b.path })),
+      folder: p.folder,
     }));
   });
   app.post('/api/catalog/projects', async (req, reply): Promise<UserProjectView> => {
     const b = parse(createUserProjectSchema, req.body);
     const userId = req.user!.id;
-    if (!!b.runnerId !== !!b.path) throw new HttpError(400, 'invalid_request', { key: 'hub.api.runnerPathTogether' });
-    if (b.runnerId && !(await db.selectFrom('runners').select('id').where('id', '=', b.runnerId).where('user_id', '=', userId).where('state', '=', 'active').executeTakeFirst()))
-      throw new HttpError(404, 'runner_not_found', { key: 'hub.sessions.runnerNotFound' });
     const p = await db.transaction().execute(async tx => {
       await sql`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`.execute(tx);
       const used = await tx.selectFrom('catalog_projects').select('color_key').where('user_id', '=', userId).where('archived', '=', false).execute();
@@ -226,10 +218,10 @@ export function registerApi(
             ),
           description: b.description ?? '',
           remote: b.remote ?? null,
+          folder: b.folder ?? null,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
-      if (b.runnerId && b.path) await tx.insertInto('project_bindings').values({ user_id: userId, project_id: created.id, runner_id: b.runnerId, path: b.path }).execute();
       return created;
     });
     sessions.projects?.catalogChanged(userId);
@@ -242,13 +234,13 @@ export function registerApi(
       remote: p.remote,
       archived: p.archived,
       lastEventAt: null,
-      bindings: b.runnerId && b.path ? [{ runnerId: b.runnerId, path: b.path }] : [],
+      folder: p.folder,
     };
   });
   app.patch('/api/catalog/projects/:id', async (req): Promise<{ ok: true }> => {
     const b = parse(patchUserProjectSchema, req.body);
     const { id } = parse(userProjectParamsSchema, req.params);
-    const { colorKey, bindings, ...metadata } = b;
+    const { colorKey, ...metadata } = b;
     const userId = req.user!.id;
     await db.transaction().execute(async tx => {
       const own = await tx.selectFrom('catalog_projects').select('id').where('id', '=', id).where('user_id', '=', userId).forUpdate().executeTakeFirst();
@@ -259,45 +251,9 @@ export function registerApi(
         .where('id', '=', id)
         .where('user_id', '=', userId)
         .execute();
-      for (const binding of bindings ?? []) {
-        const runner = await tx.selectFrom('runners').select(['id', 'state']).where('id', '=', binding.runnerId).where('user_id', '=', userId).forKeyShare().executeTakeFirst();
-        if (!runner || (binding.path !== null && runner.state !== 'active')) throw new HttpError(404, 'not_found', { key: 'hub.sessions.runnerNotFound' });
-        if (binding.path === null) await tx.deleteFrom('project_bindings').where('user_id', '=', userId).where('project_id', '=', id).where('runner_id', '=', binding.runnerId).execute();
-        else
-          await tx
-            .insertInto('project_bindings')
-            .values({ user_id: userId, project_id: id, runner_id: binding.runnerId, path: binding.path })
-            .onConflict(oc => oc.columns(['user_id', 'project_id', 'runner_id']).doUpdateSet({ path: binding.path! }))
-            .execute();
-      }
     });
     sessions.projectsChanged(userId);
-    if (metadata.name) sessions.projects?.catalogChanged(userId);
-    return { ok: true };
-  });
-  app.put('/api/catalog/projects/:id/bindings/:runnerId', async (req): Promise<{ ok: true }> => {
-    const b = parse(bindUserProjectSchema, req.body);
-    const { id, runnerId } = parse(userProjectBindingParamsSchema, req.params);
-    const userId = req.user!.id;
-    await db.transaction().execute(async tx => {
-      const project = await tx.selectFrom('catalog_projects').select('id').where('id', '=', id).where('user_id', '=', userId).forUpdate().executeTakeFirst();
-      const runner = await tx.selectFrom('runners').select('id').where('id', '=', runnerId).where('user_id', '=', userId).where('state', '=', 'active').forKeyShare().executeTakeFirst();
-      if (!project || !runner) throw new HttpError(404, 'not_found', { key: 'hub.api.projectOrRunnerNotFound' });
-      await tx
-        .insertInto('project_bindings')
-        .values({ user_id: userId, project_id: id, runner_id: runnerId, path: b.path })
-        .onConflict(oc => oc.columns(['user_id', 'project_id', 'runner_id']).doUpdateSet({ path: b.path }))
-        .execute();
-    });
-    return { ok: true };
-  });
-  app.delete('/api/catalog/projects/:id/bindings/:runnerId', async req => {
-    const { id, runnerId } = parse(userProjectBindingParamsSchema, req.params);
-    const userId = req.user!.id;
-    const project = await db.selectFrom('catalog_projects').select('id').where('id', '=', id).where('user_id', '=', userId).executeTakeFirst();
-    const runner = await db.selectFrom('runners').select('id').where('id', '=', runnerId).where('user_id', '=', userId).executeTakeFirst();
-    if (!project || !runner) throw new HttpError(404, 'not_found', { key: 'hub.api.projectOrRunnerNotFound' });
-    await db.deleteFrom('project_bindings').where('user_id', '=', userId).where('project_id', '=', id).where('runner_id', '=', runnerId).execute();
+    if (metadata.name || metadata.folder !== undefined) sessions.projects?.catalogChanged(userId);
     return { ok: true };
   });
   app.delete('/api/catalog/projects/:id', async req => {
@@ -354,19 +310,6 @@ export function registerApi(
   app.put('/api/projects/:id/hidden', req => setHidden(req, true));
   app.delete('/api/projects/:id/hidden', req => setHidden(req, false));
   app.delete('/api/projects/:id/group', req => setHidden(req, true));
-  app.get('/api/catalog/projects/:id/resolve', async (req): Promise<{ status: 'resolved' | 'needs_binding' | 'unavailable'; path?: string }> => {
-    const { id } = parse(userProjectParamsSchema, req.params);
-    const { runnerId } = parse(userProjectResolveQuerySchema, req.query);
-    const userId = req.user!.id;
-    const own = await db.selectFrom('catalog_projects').select('id').where('id', '=', id).where('user_id', '=', userId).executeTakeFirst();
-    if (!own) throw new HttpError(404, 'not_found', { key: 'hub.api.projectNotFound' });
-    const runner = runnerId
-      ? await db.selectFrom('runners').select(['id', 'online']).where('id', '=', runnerId).where('user_id', '=', userId).where('state', '=', 'active').executeTakeFirst()
-      : undefined;
-    if (!runner) return { status: 'unavailable' };
-    const binding = await db.selectFrom('project_bindings').select('path').where('user_id', '=', userId).where('project_id', '=', id).where('runner_id', '=', runner.id).executeTakeFirst();
-    return binding && runner.online ? { status: 'resolved', path: binding.path } : { status: binding ? 'unavailable' : 'needs_binding' };
-  });
   app.get('/api/catalog/projects/:id/sessions', async (req): Promise<ProjectSessionsResponse> => {
     const userId = req.user!.id;
     const { id } = parse(userProjectParamsSchema, req.params);
@@ -429,11 +372,10 @@ export function registerApi(
       .orderBy(recency, 'desc')
       .limit(100)
       .execute();
-    // Projects with visible sessions (D9, M4): by the last activity, «Без проекта» last; five freshest sessions each.
-    const groups = await db
+    // «Без проекта» (single-project-classifier): the visible sessions without a catalog link, five freshest; last in the list.
+    const unlinked = await db
       .selectFrom('sessions as s')
       .select([
-        visibleProject.as('project_id'),
         sql<string>`count(*)`.as('total'),
         sql<string>`count(*) FILTER (WHERE s.status IN ('working', 'waiting', 'permission', 'sleeping'))`.as('live'),
         sql<Date | null>`max(${recency})`.as('last'),
@@ -441,36 +383,22 @@ export function registerApi(
       .where('s.user_id', '=', userId)
       .where(visible(q.cron))
       .where(notSpawned)
-      .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM session_projects sp WHERE sp.user_id = s.user_id AND sp.session_id = s.id)`)
-      .groupBy(visibleProject)
-      .execute();
-    const ranked = await sql<{ id: string }>`
-      SELECT id FROM (
-        SELECT s.id, row_number() OVER (PARTITION BY ${visibleProject} ORDER BY ${recency} DESC) AS n
-          FROM sessions s WHERE s.user_id = ${userId} AND ${visible(q.cron)} AND ${notSpawned}
-            AND NOT EXISTS (SELECT 1 FROM session_projects sp WHERE sp.user_id = s.user_id AND sp.session_id = s.id)
-      ) x WHERE x.n <= 5`.execute(db);
-    const topRows = ranked.rows.length
-      ? await selectSessions(db)
-          .select(visibleProject.as('visible_project_id'))
-          .where(
-            's.id',
-            'in',
-            ranked.rows.map(r => r.id),
-          )
-          .orderBy(recency, 'desc')
-          .execute()
+      .where(noCatalogLink)
+      .executeTakeFirstOrThrow();
+    const unlinkedTop = Number(unlinked.total)
+      ? await selectSessions(db).where('s.user_id', '=', userId).where(visible(q.cron)).where(notSpawned).where(noCatalogLink).orderBy(recency, 'desc').limit(5).execute()
       : [];
-    const views = topRows.map(r => ({ projectId: r.visible_project_id, view: sessions.view(r) }));
-    const projects = groups
-      .map(g => ({
-        project: projectRef(sessions.projects?.catalog, g.project_id),
-        live: Number(g.live),
-        total: Number(g.total),
-        lastActivityAt: g.last ? new Date(g.last).toISOString() : null,
-        sessions: views.filter(v => v.projectId === g.project_id).map(v => v.view),
-      }))
-      .sort((a, b) => (a.project.id === null ? 1 : 0) - (b.project.id === null ? 1 : 0) || (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''));
+    const projects: SidebarResponse['projects'] = Number(unlinked.total)
+      ? [
+          {
+            project: projectRef(sessions.projects?.catalog, null),
+            live: Number(unlinked.live),
+            total: Number(unlinked.total),
+            lastActivityAt: unlinked.last ? new Date(unlinked.last).toISOString() : null,
+            sessions: unlinkedTop.map(r => sessions.view(r)),
+          },
+        ]
+      : [];
     // Every active catalog project is a group, an empty one too (a project created by hand shows at once, fresh ones first).
     const catalogGroups = (
       await sql<{ id: string; name: string; color_key: string; total: string; live: string; last: Date | null }>`
@@ -521,9 +449,8 @@ export function registerApi(
   app.get('/api/projects/:id/sessions', async (req): Promise<ProjectSessionsResponse> => {
     const userId = req.user!.id;
     const { id } = req.params as { id: string };
-    const own = id === 'none' ? null : sessions.projects?.catalog.row(id);
     const q = parse(pageQuery, req.query);
-    if (id !== 'none' && (!own || !sessions.projects?.catalog.list(userId).some(p => p.id === id))) {
+    if (id !== 'none') {
       const catalogOwn = await db.selectFrom('catalog_projects').select('id').where('id', '=', id).where('user_id', '=', userId).executeTakeFirst();
       if (!catalogOwn) throw new HttpError(404, 'not_found', { key: 'hub.api.projectNotFound' });
       const ids = await db
@@ -561,14 +488,11 @@ export function registerApi(
         : [];
       return { sessions: rows.map(r => sessions.view(r)), total: Number(total.n) };
     }
-    const noCatalogLink = sql<boolean>`NOT EXISTS (SELECT 1 FROM session_projects sp WHERE sp.user_id=s.user_id AND sp.session_id=s.id)`;
-    const inProject = id === 'none' ? sql<boolean>`${visibleProject} IS NULL` : sql<boolean>`${visibleProject} = ${id}`;
     const rows = await selectSessions(db)
       .where('s.user_id', '=', userId)
       .where(visible(q.cron))
       .where(notSpawned)
       .where(noCatalogLink)
-      .where(inProject)
       .orderBy(recency, 'desc')
       .offset(q.offset)
       .limit(q.limit)
@@ -579,36 +503,21 @@ export function registerApi(
       .where('s.user_id', '=', userId)
       .where(visible(q.cron))
       .where(notSpawned)
-      .where(inProject)
       .where(noCatalogLink)
       .executeTakeFirstOrThrow();
     return { sessions: rows.map(r => sessions.view(r)), total: Number(c.n) };
   });
 
-  /** The catalogue for «Перенести в…» (D10): areas, systems, projects, clones, «Vault», «Знания», then «Без проекта». */
+  /** «Перенести в…» (single-project-classifier): the active catalog projects, then «Без проекта». */
   app.get('/api/projects', async (req): Promise<ProjectListItem[]> => {
-    const list = sessions.projects?.catalog.list(req.user!.id) ?? [];
     const curated = await db.selectFrom('catalog_projects').select(['id', 'name']).where('user_id', '=', req.user!.id).where('archived', '=', false).orderBy('name').execute();
-    const order = { area: 0, system: 1, project: 2, repo: 3, builtin: 4 } as const;
     return [
       ...curated.map((p): ProjectListItem => ({ id: p.id, kind: 'project', title: p.name, path: '', areaPath: null, colorKey: 'none', archived: false })),
-      ...list
-        .map((p): ProjectListItem => {
-          const ref = projectRef(sessions.projects?.catalog, p.id);
-          return { id: p.id, kind: p.kind, title: p.title, path: ref.path, areaPath: p.areaPath, colorKey: p.colorKey, archived: p.archived };
-        })
-        .sort(
-          (a, b) =>
-            (a.kind === 'builtin' ? 1 : 0) - (b.kind === 'builtin' ? 1 : 0) ||
-            (a.areaPath ?? '~').localeCompare(b.areaPath ?? '~') ||
-            order[a.kind as keyof typeof order] - order[b.kind as keyof typeof order] ||
-            a.title.localeCompare(b.title),
-        ),
       { id: 'none', kind: 'none', title: render({ key: 'hub.api.noProject' }, 'en'), i18n: { key: 'hub.api.noProject' }, path: '', areaPath: null, colorKey: 'none', archived: false },
     ];
   });
 
-  /** Move = pin (D10): `project_source = manual`, a classification label, toast `project_pinned`. */
+  /** Move (D10): a catalog project — a manual link; «Без проекта» — the pin without a project, toast `project_pinned`. */
   app.put('/api/sessions/:id/project', async (req): Promise<SessionView> => {
     const userId = req.user!.id;
     const { id } = req.params as { id: string };
@@ -629,8 +538,9 @@ export function registerApi(
       });
       return sessions.upsert(s.id);
     }
-    if (projectId && !sessions.projects?.catalog.list(userId).some(p => p.id === projectId)) throw new HttpError(422, 'unknown_project', { key: 'hub.api.unknownProject' });
-    return pin(userId, s.id, projectId);
+    // A legacy path-group id is not a project any more (single-project-classifier).
+    if (projectId) throw new HttpError(422, 'unknown_project', { key: 'hub.api.unknownProject' });
+    return pinNoProject(userId, s.id);
   });
 
   /** «Закрепить» the current project (also «Без проекта»). */
@@ -642,10 +552,10 @@ export function registerApi(
       await db.updateTable('session_projects').set({ source: 'manual', reason_code: 'selected' }).where('user_id', '=', userId).where('session_id', '=', s.id).execute();
       return sessions.upsert(s.id);
     }
-    return pin(userId, s.id, s.project_id);
+    return pinNoProject(userId, s.id);
   });
 
-  /** «Открепить»: the classifier decides again (no hysteresis), the label is removed. */
+  /** «Открепить»: the catalog detection decides again, the label is removed. */
   app.delete('/api/sessions/:id/pin', async (req): Promise<SessionView> => {
     const userId = req.user!.id;
     const s = await sessions.get(userId, (req.params as { id: string }).id);
@@ -659,16 +569,22 @@ export function registerApi(
     return sessions.upsert(s.id);
   });
 
-  async function pin(userId: string, sessionId: string, projectId: string | null): Promise<SessionView> {
+  /** «Без проекта» pinned: the catalog link removed, the detection does not touch the session (`project_source = manual`). */
+  async function pinNoProject(userId: string, sessionId: string): Promise<SessionView> {
     const write = () =>
       db.transaction().execute(async tx => {
         await tx.selectFrom('sessions').select('id').where('id', '=', sessionId).where('user_id', '=', userId).forUpdate().executeTakeFirst();
         await tx.deleteFrom('session_projects').where('user_id', '=', userId).where('session_id', '=', sessionId).execute();
-        await tx.updateTable('sessions').set({ project_id: projectId, project_source: 'manual', secondary_project_id: null, project_evidence: null }).where('id', '=', sessionId).execute();
+        await tx
+          .updateTable('sessions')
+          .set({ project_id: null, project_source: 'manual', secondary_project_id: null, project_evidence: null })
+          .where('id', '=', sessionId)
+          .where('user_id', '=', userId)
+          .execute();
         await tx
           .insertInto('classification_labels')
-          .values({ session_id: sessionId, project_id: projectId, user_id: userId })
-          .onConflict(oc => oc.column('session_id').doUpdateSet({ project_id: projectId, created_at: sql`now()` }))
+          .values({ session_id: sessionId, project_id: null, user_id: userId })
+          .onConflict(oc => oc.column('session_id').doUpdateSet({ project_id: null, created_at: sql`now()` }))
           .execute();
       });
     // In the queue of the session's project decisions (a recompute running now does not overwrite the pin).
@@ -722,19 +638,7 @@ export function registerApi(
   app.post('/api/sessions', async (req, reply) => {
     const b = parse(createSessionRequestSchema, req.body);
     const userId = req.user!.id;
-    if (b.projectId) {
-      const binding = await db
-        .selectFrom('project_bindings as b')
-        .innerJoin('catalog_projects as p', 'p.id', 'b.project_id')
-        .select(['b.path'])
-        .where('b.user_id', '=', userId)
-        .where('b.project_id', '=', b.projectId)
-        .where('b.runner_id', '=', b.runnerId)
-        .where('p.archived', '=', false)
-        .executeTakeFirst();
-      if (!binding) throw new HttpError(422, 'needs_binding', { key: 'hub.api.needsBinding' });
-      b.cwd = binding.path;
-    }
+    // session-folder D3: the hub resolves the folder from the machine's default folder and the project's folder
     const session = await sessions.create(userId, { ...b, ...(b.projectId ? { catalogProjectId: b.projectId } : {}) });
     try {
       await db

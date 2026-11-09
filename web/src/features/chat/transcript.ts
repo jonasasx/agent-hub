@@ -8,7 +8,7 @@
  * and so does a big output Claude Code saved to tool-results (its copy on the hub, `sideFiles`).
  */
 import type { HubEvent, PermissionView, SideFileRef, SubscriptionNote, TranscriptLine } from '../../api/types';
-import { parsePeerMessage, type I18nText } from '@agent-hub/shared';
+import { parsePeerMessage, parseVoiceTurn, type I18nText } from '@agent-hub/shared';
 import { t as tr, hubText } from '../../i18n';
 import { imageOfBlock, type ImageRef } from '../images/format';
 import { answeredText, askKind } from './AskCards';
@@ -36,7 +36,7 @@ export interface SideFile extends SideFileRef {
 export type Undelivered = NonNullable<Extract<HubEvent, { kind: 'note' }>['undelivered']>;
 
 export type ChatItem =
-  | { kind: 'user'; id: string; text: string; images: ImageRef[]; uuid?: string }
+  | { kind: 'user'; id: string; text: string; images: ImageRef[]; uuid?: string; voice?: true }
   /** A message from a teammate or another agent (change `subagents` S6, S9): «Сообщение от <from>». */
   /** `session`: a message of another hub session (change `session-peers` D8), not of a teammate of this one. */
   | { kind: 'peer'; id: string; from: string; text: string; session?: PeerSessionRef }
@@ -268,6 +268,9 @@ function userText(content: string): ChatItem | null {
       session: { id: e.from, title: e.title || tr('chat.tr.session'), machine: e.machine, ...(e.inReplyTo ? { inReplyTo: e.inReplyTo } : {}), ...(e.kind ? { kind: e.kind } : {}) },
     };
   }
+  // change `voice-conversation` D6: an utterance of a voice conversation — its text and the «голосом» mark, no rules
+  const voice = parseVoiceTurn(t);
+  if (voice) return { kind: 'user', id: '', text: voice.text, images: [], voice: true };
   // change `subagents` S9: a teammate's message to the lead is not the user's message
   const mate = TEAMMATE.exec(t);
   if (mate) return { kind: 'peer', id: '', from: mate[1]!, text: mate[2]!.trim() };
@@ -472,6 +475,7 @@ export function buildChat(events: HubEvent[]): ChatItem[] {
       if (!Array.isArray(c)) continue;
       // one user message: its texts and its images (pasted in the terminal, attached in the hub) together
       const texts: string[] = [];
+      let voice = false;
       const images: ImageRef[] = [];
       c.forEach((b: Block, n: number) => {
         const id = `${ev.id}:${n}`;
@@ -490,15 +494,17 @@ export function buildChat(events: HubEvent[]): ChatItem[] {
           if (INTERRUPTED.test(text)) pushInterrupted(id);
           else {
             const it = userText(text);
-            if (it?.kind === 'user') texts.push(it.text);
-            else push(it, id);
+            if (it?.kind === 'user') {
+              texts.push(it.text);
+              if (it.voice) voice = true;
+            } else push(it, id);
           }
         } else {
           const img = imageOfBlock(b);
           if (img) images.push(img);
         }
       });
-      if (texts.length || images.length) push({ kind: 'user', id: '', text: texts.join('\n\n'), images, ...(uuid ? { uuid } : {}) }, `${ev.id}:u`);
+      if (texts.length || images.length) push({ kind: 'user', id: '', text: texts.join('\n\n'), images, ...(uuid ? { uuid } : {}), ...(voice ? { voice: true as const } : {}) }, `${ev.id}:u`);
       continue;
     }
     if (line.type === 'assistant') {

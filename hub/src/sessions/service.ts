@@ -9,6 +9,7 @@ import { EXTERNAL_ACTIVE_MS } from '../replication/ingest.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import type { I18nText } from '@agent-hub/shared';
+import type { PushObserver } from '../push/service.js';
 import { render } from '../i18n.js';
 import { failText, jsonNote, tx } from '../texts.js';
 import { sql } from 'kysely';
@@ -21,6 +22,7 @@ import type {
   PatchSessionRequest,
   PayloadOf,
   PermissionDecision,
+  QuestionView,
   SessionStatus,
   SessionView,
   StatResponse,
@@ -37,6 +39,7 @@ import {
   badPathMessage,
   pathFitsPlatform,
   platformOfHome,
+  projectDir,
   providerLoginStartResultSchema,
   type CopyUnavailableReason,
   type ExtraProvider,
@@ -115,14 +118,8 @@ export function assertProviderReady(runner: Pick<RunnerRow, 'name' | 'providers'
   if (!underSubscription && p.login !== 'ok') throw new HttpError(422, 'provider_login_required', { key: 'hub.sessions.providerNoSubscription', params: { label } });
 }
 
-/** The key of a model list: the runner, and the provider when it is not Claude. */
-export function modelsKey(runnerId: string, provider: Provider): string {
-  return provider === 'claude' ? runnerId : `${runnerId}:${provider}`;
-}
-export function providerOfModelsKey(key: string): Provider {
-  const i = key.lastIndexOf(':');
-  return i < 0 ? 'claude' : (key.slice(i + 1) as Provider);
-}
+/** provider-parity R6: a Codex sign-in for a subscription is forgotten after this time (the agent cancels it after the same). */
+export const CODEX_LOGIN_TTL_MS = 20 * 60_000;
 
 /** A copy or handoff of a bypassPermissions session onto a root machine gets acceptEdits; the chat says so. */
 export const ROOT_MODE_NOTE: I18nText = { key: 'hub.sessions.rootModeNote' };
@@ -134,6 +131,8 @@ export function inheritMode(mode: string, runner: Pick<RunnerRow, 'runs_as_root'
 
 /** The stderr of Claude Code started with bypassPermissions under root (an agent without hello.root). */
 const ROOT_BYPASS_STDERR = /cannot be used with root\/sudo privileges/;
+/** push-voice-fixes D3: a late «hidden» comes within seconds; older turns read on a visible tab are forgotten. */
+const READ_ON_VISIBLE_KEEP_MS = 60_000;
 export const ROOT_BYPASS_NOTE: I18nText = { key: 'hub.sessions.rootBypassNote' };
 
 /** A raw process error as a note: the root refusal becomes advice, anything else is kept. */
@@ -149,21 +148,19 @@ export function copyUnavailable(s: Pick<SessionRow, 'source' | 'read_only_reason
   return null;
 }
 
-/**
- * The project of a fork (D14 «Проект форка»): a pinned project stays pinned (the user's decision), any other project
- * of the source is inherited until the classifier finds a leader of the fork's own.
- */
-export function forkProject(src: Pick<SessionRow, 'project_id' | 'project_source'>): { project_id: string | null; project_source: 'manual' | 'inherited' | 'none' } {
-  if (src.project_source === 'manual') return { project_id: src.project_id, project_source: 'manual' };
-  if (src.project_id) return { project_id: src.project_id, project_source: 'inherited' };
-  return { project_id: null, project_source: 'none' };
-}
-
 export const DEFAULT_MODELS: ModelOption[] = [
   { value: 'opus', displayName: 'Opus' },
   { value: 'sonnet', displayName: 'Sonnet' },
   { value: 'haiku', displayName: 'Haiku' },
 ];
+
+/** voice-conversation D3: what the Custom LLM bridge hears of a session's turn (hub session ids). */
+export type TurnEvent =
+  | { kind: 'partial'; sessionId: string; messageId: string; blockIndex: number; textDelta: string }
+  | { kind: 'result'; sessionId: string }
+  /** `questions` — an AskUserQuestion request (D4.7): the bridge reads it out and answers it with the next utterance. */
+  | { kind: 'permission'; sessionId: string; requestId: string; questions?: QuestionView[] }
+  | { kind: 'exited'; sessionId: string };
 
 export interface SessionServiceOptions {
   db: Db;
@@ -196,6 +193,8 @@ export interface SessionServiceOptions {
   subscriptions?: SubscriptionService;
   /** Wait for cmd.ok of session.stop when switching a subscription (P6: 30 s). */
   switchStopTimeoutMs?: number;
+  /** web-push-notifications D2: sees every upsert of a session; absent — no push. */
+  push?: PushObserver;
 }
 
 /** The last user message of a session, repeated by «Продолжить под другой подпиской» and the auto switch (P6). */
@@ -264,7 +263,8 @@ export function titleFromPrompt(prompt: string): string {
 
 export class SessionService {
   readonly defaults: TimeoutDefaults;
-  private readonly models = new Map<string, ModelOption[]>();
+  /** The models a session start reported, per runner and provider (provider-parity R8, R9: never mixed across users). */
+  private readonly models = new Map<string, Map<Provider, ModelOption[]>>();
   /** Hub session id → the mode the user is setting (PATCH), until the agent confirms set_mode. */
   private readonly modeByUser = new Map<string, string>();
 
@@ -280,12 +280,12 @@ export class SessionService {
   private readonly deliveryTimers = new Set<NodeJS.Timeout>();
   /** Sessions whose turn the user interrupted: the error result that follows gets no «ошибка» note. */
   private readonly interrupted = new Set<string>();
-  /** provider-parity D3: sign-ins started for the registry, by loginId (lost on a hub restart — the sign-in is then repeated). */
-  private readonly pendingSubscriptionLogins = new Map<string, { userId: string; name?: string; subscriptionId?: string }>();
   /** claude-subscriptions P6: the last user message per hub session (lost on a hub restart — then no repeat). */
   private readonly lastMessage = new Map<string, LastMessage>();
   /** claude-subscriptions P7: subscriptions that hit the limit in the current turn of a session (auto switch chain). */
   private readonly triedInTurn = new Map<string, Set<string>>();
+  /** push-voice-fixes D3: turns that ended while the session was shown; a late «hidden» may make them unread again. */
+  private readonly readOnVisible = new Map<string, { userId: string; at: number }>();
   /** `<userId>:<title>` of copies being made (the fork runs on the agent, the row comes after): change `subagents` S10.4. */
   private readonly copyTitles = new Set<string>();
   /**
@@ -430,16 +430,15 @@ export class SessionService {
 
   /**
    * Models for the dropdown: from the agents' supportedModels(), default list until a session ran. agent-providers:
-   * another provider: the lists of its sessions and of the machines' reports (runners.providers[].models).
+   * another provider: the lists of its sessions and of the machines' reports (runners.providers[].models). Only the
+   * user's own machines count (provider-parity R8).
    */
-  async listModels(userId?: string, provider: Provider = 'claude'): Promise<ModelOption[]> {
+  async listModels(userId: string, provider: Provider = 'claude'): Promise<ModelOption[]> {
+    const rows = await this.o.db.selectFrom('runners').select(['id', 'providers']).where('user_id', '=', userId).execute();
     const seen = new Map<string, ModelOption>();
-    for (const [key, list] of this.models) if (providerOfModelsKey(key) === provider) for (const m of list) if (!seen.has(m.value)) seen.set(m.value, m);
+    for (const r of rows) for (const m of this.models.get(r.id)?.get(provider) ?? []) if (!seen.has(m.value)) seen.set(m.value, m);
     if (provider === 'claude') return seen.size > 0 ? [...seen.values()] : DEFAULT_MODELS;
-    if (userId) {
-      const rows = await this.o.db.selectFrom('runners').select('providers').where('user_id', '=', userId).execute();
-      for (const r of rows) for (const p of r.providers ?? []) if (p.id === provider) for (const m of p.models ?? []) if (!seen.has(m.value)) seen.set(m.value, m);
-    }
+    for (const r of rows) for (const p of r.providers ?? []) if (p.id === provider) for (const m of p.models ?? []) if (!seen.has(m.value)) seen.set(m.value, m);
     return [...seen.values()];
   }
 
@@ -500,11 +499,21 @@ export class SessionService {
       const r = await conn.request('provider.login.start', { provider: 'codex', forSubscription: true }, 90_000);
       const parsed = providerLoginStartResultSchema.safeParse(r);
       if (!parsed.success) throw new HttpError(502, 'agent_bad_reply', { key: 'hub.sessions.agentNoLoginCode' });
-      this.pendingSubscriptionLogins.set(parsed.data.loginId, {
-        userId,
-        ...(b.name !== undefined ? { name: b.name } : {}),
-        ...(b.subscriptionId !== undefined ? { subscriptionId: b.subscriptionId } : {}),
-      });
+      // provider-parity R5, R6: the pending sign-in survives a hub restart and expires; expired ones go on every start
+      const now = this.now();
+      await this.o.db.deleteFrom('codex_subscription_logins').where('expires_at', '<=', now).execute();
+      await this.o.db
+        .insertInto('codex_subscription_logins')
+        .values({
+          login_id: parsed.data.loginId,
+          user_id: userId,
+          runner_id: runner.id,
+          name: b.name ?? null,
+          subscription_id: b.subscriptionId ?? null,
+          expires_at: new Date(now.getTime() + CODEX_LOGIN_TTL_MS),
+        })
+        .onConflict(oc => oc.column('login_id').doNothing())
+        .execute();
       return parsed.data;
     } catch (err) {
       if (err instanceof HttpError) throw err;
@@ -512,22 +521,36 @@ export class SessionService {
     }
   }
 
-  /** The end of a sign-in for a subscription: the credential is stored, the client is told with the subscription id. */
+  /**
+   * The end of a sign-in for a subscription: the credential is stored, the client is told with the subscription id.
+   * provider-parity R5, R10: the pending row is taken exactly once, only by the machine it was started on and before
+   * it expires; a credential without one creates nothing (dropped, never logged).
+   */
   private async onSubscriptionLoginDone(
+    runnerId: string,
     runnerUserId: string,
     p: PayloadOf<AgentMessage, 'provider.login.done'>,
   ): Promise<{ ok: boolean; error?: string; errorI18n?: I18nText; subscriptionId?: string }> {
-    const pending = this.pendingSubscriptionLogins.get(p.loginId);
-    if (!pending) return { ok: p.ok, ...(p.error ? { error: p.error } : {}) };
-    this.pendingSubscriptionLogins.delete(p.loginId);
+    const pending = await this.o.db
+      .deleteFrom('codex_subscription_logins')
+      .where('login_id', '=', p.loginId)
+      .where('runner_id', '=', runnerId)
+      .where('expires_at', '>', this.now())
+      .returning(['user_id', 'name', 'subscription_id'])
+      .executeTakeFirst();
+    if (!pending) {
+      if (!p.credential) return { ok: p.ok, ...(p.error ? { error: p.error } : {}) };
+      this.o.log.warn({ runnerId }, 'codex sign-in result without a pending sign-in dropped');
+      return { ok: false, ...failText({ key: 'hub.sessions.loginExpired' }) };
+    }
     const subs = this.o.subscriptions;
-    if (!p.ok || !p.credential || !subs || pending.userId !== runnerUserId) return p.error ? { ok: false, error: p.error } : { ok: false, ...failText({ key: 'hub.sessions.loginIncomplete' }) };
+    if (!p.ok || !p.credential || !subs || pending.user_id !== runnerUserId) return p.error ? { ok: false, error: p.error } : { ok: false, ...failText({ key: 'hub.sessions.loginIncomplete' }) };
     try {
-      if (pending.subscriptionId) {
-        await subs.replaceToken(pending.userId, pending.subscriptionId, p.credential);
-        return { ok: true, subscriptionId: pending.subscriptionId };
+      if (pending.subscription_id) {
+        await subs.replaceToken(pending.user_id, pending.subscription_id, p.credential);
+        return { ok: true, subscriptionId: pending.subscription_id };
       }
-      const v = await subs.createCodex(pending.userId, pending.name ?? 'Codex', p.credential);
+      const v = await subs.createCodex(pending.user_id, pending.name ?? 'Codex', p.credential);
       return { ok: true, subscriptionId: v.id };
     } catch (err) {
       this.o.log.warn({ err: (err as Error).message }, 'codex subscription sign-in could not be stored');
@@ -578,12 +601,32 @@ export class SessionService {
     return this.fsStat(conn, path, runner);
   }
 
-  /** POST /api/sessions. Requirement: Запуск сессии из UI */
+  /**
+   * session-folder D3 «Рабочая папка сессии»: the default folder of the machine plus the folder of the session's project.
+   * The project — the one chosen in the form, else the catalog link of the handoff source or the spawn parent. A chosen
+   * project that is missing or archived is 404; an inherited archived one does not count.
+   */
+  private async resolveCwd(userId: string, runner: RunnerRow, explicitProjectId: string | undefined, source: SessionRow | undefined): Promise<string> {
+    let projectId = explicitProjectId;
+    if (!projectId && source) {
+      const link = await this.o.db.selectFrom('session_projects').select('project_id').where('user_id', '=', userId).where('session_id', '=', source.id).executeTakeFirst();
+      projectId = link?.project_id;
+    }
+    const project = projectId
+      ? await this.o.db.selectFrom('catalog_projects').select('folder').where('user_id', '=', userId).where('id', '=', projectId).where('archived', '=', false).executeTakeFirst()
+      : undefined;
+    if (explicitProjectId && !project) throw new HttpError(404, 'project_not_found', { key: 'hub.api.projectNotFound' });
+    const base = runner.default_dir ?? runner.home_dir;
+    if (!base) throw new HttpError(422, 'cwd_not_found', { key: 'hub.sessions.cwdNotFound', params: { name: runner.name } });
+    return projectDir(base, project?.folder ?? null, platformOfHome(runner.home_dir) === 'windows');
+  }
+
+  /** POST /api/sessions. Requirement: Запуск сессии из UI; without `cwd` the hub resolves the folder (session-folder D3). */
   async create(
     userId: string,
     b: {
       runnerId: string;
-      cwd: string;
+      cwd?: string | undefined;
       permissionMode: UiPermissionMode;
       model: string;
       prompt: string;
@@ -596,8 +639,11 @@ export class SessionService {
     spawn?: { parentId: string; task: string; title?: string | undefined },
   ): Promise<SessionView> {
     const provider: Provider = b.provider ?? 'claude';
-    this.checkPath(await this.ownedRunner(userId, b.runnerId), b.cwd);
+    // hub-subagents D9: a spawned session belongs to the project of its parent, as a fork does
+    const parent = spawn ? await getSession(this.o.db, spawn.parentId) : undefined;
     const { runner, conn } = await this.onlineRunner(userId, b.runnerId);
+    const cwd = b.cwd ?? (await this.resolveCwd(userId, runner, b.catalogProjectId, fork?.source ?? parent));
+    this.checkPath(runner, cwd);
     assertModeAllowed(runner, b.permissionMode);
     // agent-providers D3: another provider must be installed and signed in on the machine
     // claude-subscriptions P6: the chosen subscription (checked: 422 subscription_unavailable, 409 token_unreadable)
@@ -606,12 +652,10 @@ export class SessionService {
     const cred = await this.credFor(userId, runner, b.subscriptionId, provider);
     assertProviderReady(runner, provider, !!cred);
     const attachments = await this.attachments(userId, runner, b.attachments);
-    const st = await this.fsStat(conn, b.cwd, runner);
+    const st = await this.fsStat(conn, cwd, runner);
     if (!st.exists || !st.isDir) throw new HttpError(422, 'cwd_not_found', { key: 'hub.sessions.cwdNotFound', params: { name: runner.name } });
     // D19: the images are on the machine before the session exists; a failure is 502 and nothing is created.
     await this.prefetch(conn, runner, attachments);
-    // hub-subagents D9: a spawned session belongs to the project of its parent, as a fork does
-    const parent = spawn ? await getSession(this.o.db, spawn.parentId) : undefined;
     const id = randomUUID();
     const now = this.now();
     const sessionValues: Insertable<Database['sessions']> = {
@@ -619,7 +663,7 @@ export class SessionService {
       user_id: userId,
       runner_id: runner.id,
       claude_session_id: id,
-      cwd: b.cwd,
+      cwd,
       provider,
       source: 'hub',
       origin_source: 'hub',
@@ -635,9 +679,8 @@ export class SessionService {
       last_input_at: now,
       created_at: now,
       ...(cred ? { subscription_id: cred.id, subscription_token_at: cred.tokenUpdatedAt } : {}),
-      // handoff (D14): the fork mark and the project of the source
+      // handoff (D14): the fork mark; the project of the source follows in inheritProject
       ...(fork ? this.forkFields(fork.source, 'handoff') : {}),
-      ...(parent ? forkProject(parent) : {}),
       // hub-subagents D3: the link to the parent and the report the first turn owes it
       ...(spawn ? { spawned_by: spawn.parentId, report_to_session_id: spawn.parentId, report_since: now } : {}),
     };
@@ -647,8 +690,8 @@ export class SessionService {
         await tx.insertInto('session_projects').values({ user_id: userId, session_id: id, project_id: b.catalogProjectId, source: 'explicit', confidence: null }).execute();
       }
     });
-    if (fork) await this.pinIfManual(userId, id, fork.source);
-    if (parent) await this.pinIfManual(userId, id, parent);
+    if (fork) await this.inheritProject(userId, id, fork.source);
+    if (parent) await this.inheritProject(userId, id, parent);
     // an explicit choice in the form is the last choice; the default one stays as it is
     if (cred && b.subscriptionId) await this.o.subscriptions!.setLastChoice(userId, cred.id);
     this.rememberMessage(id, b.prompt, b.attachments);
@@ -657,7 +700,7 @@ export class SessionService {
     const projectCatalog = await this.projectCatalogFor(userId, runner, id);
     this.launch(conn, id, 'session.start', {
       sessionId: id,
-      cwd: b.cwd,
+      cwd,
       ...(b.catalogProjectId && protocolAtLeast(runner.protocol_version, '1.13') ? { projectId: b.catalogProjectId } : {}),
       ...(projectCatalog ? { projectCatalog } : {}),
       permissionMode: b.permissionMode,
@@ -682,20 +725,44 @@ export class SessionService {
     return loadProjectCatalog(this.o.db, userId, runner.id, link?.project_id ?? null);
   }
 
-  /** fork_of, fork_mode and the inherited project of a fork row. */
+  /** fork_of and fork_mode of a fork row; no legacy project (single-project-classifier). */
   private forkFields(src: SessionRow, mode: 'copy' | 'handoff') {
-    const p = forkProject(src);
-    return { fork_of: src.id, fork_mode: mode, project_id: p.project_id, project_source: p.project_source, project_evidence: null, secondary_project_id: null };
+    return { fork_of: src.id, fork_mode: mode, project_id: null, project_source: 'none' as const, project_evidence: null, secondary_project_id: null };
   }
 
-  /** A pinned project of the source is pinned in the fork too (the label of «Перенести в…», D10). */
-  private async pinIfManual(userId: string, forkId: string, src: SessionRow): Promise<void> {
+  /**
+   * The project of a fork or a spawned session (D14 «Проект форка», hub-subagents D9, single-project-classifier D5): the
+   * catalog link of the source with its source and reason; an explicit choice in the form stays. A source pinned to
+   * «Без проекта» pins the fork too (the label of «Перенести в…», D10).
+   */
+  private async inheritProject(userId: string, forkId: string, src: SessionRow): Promise<void> {
+    const link = await this.o.db
+      .selectFrom('session_projects')
+      .select(['project_id', 'source', 'confidence', 'reason_code'])
+      .where('user_id', '=', userId)
+      .where('session_id', '=', src.id)
+      .executeTakeFirst();
+    if (link) {
+      await this.o.db
+        .insertInto('session_projects')
+        // an auto link of the parent is not a rule of the copy: re-evaluation must not drop it as stale
+        .values({ user_id: userId, session_id: forkId, ...link, ...(link.source === 'auto' ? { reason_code: 'inherited' } : {}) })
+        .onConflict(oc => oc.columns(['user_id', 'session_id']).doNothing())
+        .execute();
+      return;
+    }
     if (src.project_source !== 'manual') return;
-    await this.o.db
-      .insertInto('classification_labels')
-      .values({ session_id: forkId, project_id: src.project_id, user_id: userId })
-      .onConflict(oc => oc.column('session_id').doUpdateSet({ project_id: src.project_id }))
-      .execute();
+    // a project chosen in the form is the user's later choice
+    const own = await this.o.db.selectFrom('session_projects').select('project_id').where('user_id', '=', userId).where('session_id', '=', forkId).executeTakeFirst();
+    if (own) return;
+    await this.o.db.transaction().execute(async tx => {
+      await tx.updateTable('sessions').set({ project_source: 'manual' }).where('id', '=', forkId).execute();
+      await tx
+        .insertInto('classification_labels')
+        .values({ session_id: forkId, project_id: null, user_id: userId })
+        .onConflict(oc => oc.column('session_id').doUpdateSet({ project_id: null }))
+        .execute();
+    });
   }
 
   /**
@@ -764,7 +831,7 @@ export class SessionService {
       .onConflict(oc => oc.columns(['runner_id', 'claude_session_id']).doUpdateSet(values))
       .returning('id')
       .executeTakeFirstOrThrow();
-    await this.pinIfManual(userId, row.id, s);
+    await this.inheritProject(userId, row.id, s);
     if (inherited.downgraded) await this.emitEvents({ id: row.id, user_id: userId }, [await addNote(this.o.db, row.id, 'mode', ROOT_MODE_NOTE)]);
     return this.upsert(row.id);
   }
@@ -796,8 +863,8 @@ export class SessionService {
   }
 
   /**
-   * POST /api/sessions/:id/fork {mode:'handoff'} (D14 «Handoff» p. 4): a new session on the chosen runner and
-   * directory (checked like POST /api/sessions) with the prompt as its first message; the source may be offline.
+   * POST /api/sessions/:id/fork {mode:'handoff'} (D14 «Handoff» p. 4): a new session on the chosen runner, in the folder
+   * of the source's project there (session-folder D3), with the prompt as its first message; the source may be offline.
    * Requirement (session-fork): Handoff.
    */
   async forkHandoff(
@@ -806,7 +873,6 @@ export class SessionService {
     b: {
       prompt: string;
       runnerId: string;
-      cwd: string;
       permissionMode?: UiPermissionMode | undefined;
       model?: string | undefined;
       subscriptionId?: string | null | undefined;
@@ -824,7 +890,7 @@ export class SessionService {
     const inherited = b.permissionMode === undefined ? inheritMode(own, await this.ownedRunner(userId, b.runnerId)) : { mode: b.permissionMode, downgraded: false };
     const view = await this.create(
       userId,
-      { runnerId: b.runnerId, cwd: b.cwd, permissionMode: inherited.mode as UiPermissionMode, model, prompt: b.prompt, subscriptionId: b.subscriptionId, provider },
+      { runnerId: b.runnerId, permissionMode: inherited.mode as UiPermissionMode, model, prompt: b.prompt, subscriptionId: b.subscriptionId, provider },
       { source: s },
     );
     if (inherited.downgraded) await this.emitEvents({ id: view.id, user_id: userId }, [await addNote(this.o.db, view.id, 'mode', ROOT_MODE_NOTE)]);
@@ -1084,8 +1150,9 @@ export class SessionService {
         return this.onState(runnerId, m.payload);
       case 'session.partial': {
         const s = await findSessionByClaudeId(this.o.db, runnerId, m.payload.sessionId);
-        if (s)
-          this.o.ui.sendToSubscribers(s.user_id, s.id, { type: 'session.partial', sessionId: s.id, messageId: m.payload.messageId, blockIndex: m.payload.blockIndex, textDelta: m.payload.textDelta });
+        if (!s) return;
+        this.o.ui.sendToSubscribers(s.user_id, s.id, { type: 'session.partial', sessionId: s.id, messageId: m.payload.messageId, blockIndex: m.payload.blockIndex, textDelta: m.payload.textDelta });
+        this.turnListener?.({ kind: 'partial', sessionId: s.id, messageId: m.payload.messageId, blockIndex: m.payload.blockIndex, textDelta: m.payload.textDelta });
         return;
       }
       case 'session.result':
@@ -1105,7 +1172,7 @@ export class SessionService {
       case 'provider.login.done': {
         const runner = await getRunner(this.o.db, runnerId);
         if (runner) {
-          const r = await this.onSubscriptionLoginDone(runner.user_id, m.payload);
+          const r = await this.onSubscriptionLoginDone(runnerId, runner.user_id, m.payload);
           this.o.ui.broadcast(runner.user_id, {
             type: 'provider.login',
             runnerId,
@@ -1166,6 +1233,9 @@ export class SessionService {
       .execute();
     // After «Прервать» the SDK may end the turn with an error result: that is the interrupt, not a failure.
     const wasInterrupted = this.interrupted.delete(s.id);
+    this.o.push?.rememberResult(s.id, p.resultText);
+    if (unread) this.readOnVisible.delete(s.id);
+    else this.rememberReadOnVisible(s.id, s.user_id);
     // claude-subscriptions P2/P10: every finished turn, under the subscription of the process (the column changes on a
     // switch only after the old process has stopped, so its last results are queued before that)
     const u = p.usage;
@@ -1198,12 +1268,19 @@ export class SessionService {
       if (wasInterrupted) await this.o.db.updateTable('sessions').set({ report_to_session_id: null, report_since: null, report_queued: 0 }).where('id', '=', s.id).execute();
       else this.turnReporter?.(s, p);
     }
+    this.turnListener?.({ kind: 'result', sessionId: s.id });
   }
 
   /** hub-subagents D5: PeersService sends the report (registered there, so the services do not import each other). */
   private turnReporter?: (s: SessionBase, p: PayloadOf<AgentMessage, 'session.result'>) => void;
   setTurnReporter(fn: (s: SessionBase, p: PayloadOf<AgentMessage, 'session.result'>) => void): void {
     this.turnReporter = fn;
+  }
+
+  /** voice-conversation D3: the Custom LLM bridge follows the turn of a session (one listener, registered by the bridge). */
+  private turnListener?: (e: TurnEvent) => void;
+  onTurnEvent(fn: (e: TurnEvent) => void): void {
+    this.turnListener = fn;
   }
 
   /**
@@ -1259,6 +1336,7 @@ export class SessionService {
       const i18n: I18nText = resetsAt ? { key: 'hub.sessions.subLimitReset', params: { name: sub.name, time: hhmm(resetsAt) } } : { key: 'hub.sessions.subLimit', params: { name: sub.name } };
       const note = { kind: 'limit' as const, subscriptionId: sub.id, ...(resetsAt ? { resetsAt: resetsAt.toISOString() } : {}), alternatives };
       await this.emitEvents(s, [await addNote(this.o.db, s.id, 'subscription_limit', jsonNote(i18n, { subscription: note }))]);
+      this.o.push?.rememberFailure(s.id, { kind: 'limit', name: sub.name, ...(resetsAt ? { time: hhmm(resetsAt) } : {}) });
       return false;
     }
     if (f.kind === 'auth_rejected') {
@@ -1267,6 +1345,9 @@ export class SessionService {
         const alternatives = await this.alternativesAfter(s, sub.id);
         const i18n: I18nText = { key: s.provider === 'codex' ? 'hub.sessions.subAuthCodex' : 'hub.sessions.subAuthClaude', params: { name: sub.name } };
         await this.emitEvents(s, [await addNote(this.o.db, s.id, 'subscription_auth', jsonNote(i18n, { subscription: { kind: 'auth', subscriptionId: sub.id, alternatives } }))]);
+        this.o.push?.rememberFailure(s.id, { kind: 'auth', name: sub.name, codex: s.provider === 'codex' });
+        // the end of the turn is seen (and pushed with the reason) before the session is put to sleep
+        await this.upsert(s.id);
       } else {
         await this.emitEvents(s, [await addNote(this.o.db, s.id, 'error', { key: 'hub.sessions.subTokenReplaced', params: { name: sub.name } })]);
       }
@@ -1443,6 +1524,7 @@ export class SessionService {
       await this.o.db.updateTable('sessions').set({ report_queued: 0 }).where('id', '=', s.id).execute();
       this.turnReporter?.(s, { isError: true, subtype: 'exited', errorText: p.errorText || 'the process ended before the turn finished' } as PayloadOf<AgentMessage, 'session.result'>);
     }
+    this.turnListener?.({ kind: 'exited', sessionId: s.id });
   }
 
   private async onPermissionRequest(runnerId: string, p: PayloadOf<AgentMessage, 'permission.request'>): Promise<void> {
@@ -1472,6 +1554,8 @@ export class SessionService {
     if (ev.kind === 'permission') this.o.ui.sendToSubscribers(s.user_id, s.id, { type: 'permission.request', sessionId: s.id, request: ev.request });
     this.o.ui.sendToSubscribers(s.user_id, s.id, { type: 'session.events', sessionId: s.id, events: [ev] });
     await this.upsert(s.id);
+    const questions = permissionKind(p.toolName) === 'question' ? questionsOf(p.input) : [];
+    this.turnListener?.({ kind: 'permission', sessionId: s.id, requestId: row.request_id, ...(questions.length ? { questions } : {}) });
   }
 
   /**
@@ -1736,8 +1820,43 @@ export class SessionService {
   async markRead(userId: string, ids: string[]): Promise<void> {
     const valid = ids.filter(i => /^[0-9a-f-]{36}$/i.test(i));
     if (!valid.length) return;
+    // shown again: the answer is seen, a later «hidden» does not bring it back
+    for (const id of valid) this.readOnVisible.delete(id);
     const rows = await this.o.db.updateTable('sessions').set({ unread: false }).where('user_id', '=', userId).where('id', 'in', valid).where('unread', '=', true).returning('id').execute();
     for (const r of rows) await this.upsert(r.id);
+  }
+
+  private rememberReadOnVisible(sessionId: string, userId: string): void {
+    const at = this.now().getTime();
+    for (const [id, r] of this.readOnVisible) if (at - r.at > READ_ON_VISIBLE_KEEP_MS) this.readOnVisible.delete(id);
+    this.readOnVisible.set(sessionId, { userId, at });
+  }
+
+  /**
+   * push-voice-fixes D3/D4: a client reported late that it got hidden. A turn that ended after the moment of hiding was
+   * marked read only because the hub still thought the tab visible: it becomes unread and the push of its end goes out;
+   * a push of a permission request skipped for the same reason goes out too.
+   */
+  async onHidden(userId: string, ids: string[], lateMs: number): Promise<void> {
+    const hiddenAt = this.now().getTime() - lateMs;
+    for (const id of ids) {
+      if (this.o.ui.isActiveVisible(userId, id)) continue;
+      const read = this.readOnVisible.get(id);
+      if (read && read.userId === userId && read.at > hiddenAt) {
+        this.readOnVisible.delete(id);
+        const rows = await this.o.db
+          .updateTable('sessions')
+          .set({ unread: true })
+          .where('id', '=', id)
+          .where('user_id', '=', userId)
+          .where('status', '=', 'waiting')
+          .where('unread', '=', false)
+          .returning('id')
+          .execute();
+        if (rows.length) await this.upsert(id);
+      }
+      if (this.o.push?.reopen(id, userId, lateMs)) await this.upsert(id);
+    }
   }
 
   // ---------- helpers ----------
@@ -2090,10 +2209,12 @@ export class SessionService {
         onLaunch?.();
         const models = (result as { models?: Array<{ value?: unknown; displayName?: unknown }> } | undefined)?.models;
         if (Array.isArray(models) && models.length) {
-          this.models.set(
-            modelsKey(conn.runnerId, (payload as { provider?: Provider }).provider ?? 'claude'),
+          const byProvider = this.models.get(conn.runnerId) ?? new Map<Provider, ModelOption[]>();
+          byProvider.set(
+            (payload as { provider?: Provider }).provider ?? 'claude',
             models.filter(m => typeof m.value === 'string').map(m => ({ value: String(m.value), displayName: String(m.displayName ?? m.value) })),
           );
+          this.models.set(conn.runnerId, byProvider);
         }
       },
       (err: unknown) => {
@@ -2166,6 +2287,11 @@ export class SessionService {
     if (!r) throw new HttpError(404, 'not_found');
     const view = this.view(r);
     this.o.ui.broadcast(r.user_id, { type: 'session.upsert', session: view, activeVisible: this.o.ui.isActiveVisible(r.user_id, id) });
+    try {
+      this.o.push?.observe(r, view);
+    } catch (err) {
+      this.o.log.warn({ err: (err as Error).message, sessionId: id }, 'push: observe failed');
+    }
     // a child hub session changed: its parent counts it as a working child (loader, sleep), so the parent is re-sent too
     if (r.spawned_by) {
       const p = await getSession(this.o.db, r.spawned_by);

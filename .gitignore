@@ -10,3 +10,6 @@ pgdata/
 e2e/test-results/
 e2e/playwright-report/
 .tmp/
+
+# Keycloak secrets (deploy/keycloak, see keycloak.env.example)
+keycloak.env

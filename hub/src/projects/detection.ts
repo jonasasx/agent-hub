@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { sql } from 'kysely';
-import { allocateProjectColor, type ProjectSuggestionAnswer } from '@agent-hub/shared';
+import { allocateProjectColor, platformOfHome, projectDir, type ProjectSuggestionAnswer } from '@agent-hub/shared';
 import type { Config } from '../config.js';
 import type { Db } from '../db/db.js';
 import { normalizeRemote } from './catalog.js';
@@ -65,14 +65,17 @@ export class CatalogDetection {
     if (link && link.source !== 'auto') return;
     const candidates = await db
       .selectFrom('catalog_projects')
-      .select(['id', 'name', 'description', 'remote', 'updated_at'])
+      .select(['id', 'name', 'description', 'remote', 'folder', 'updated_at'])
       .where('user_id', '=', s.user_id)
       .where('archived', '=', false)
       .orderBy(sql`last_event_at DESC NULLS LAST`)
       .orderBy('id')
       .execute();
     if (!candidates.length) return;
-    const bindings = await db.selectFrom('project_bindings').select(['project_id', 'path']).where('user_id', '=', s.user_id).where('runner_id', '=', s.runner_id).execute();
+    // session-folder D5: a project's path on the session's machine is its folder under the machine's default folder.
+    const runner = await db.selectFrom('runners').select(['home_dir', 'default_dir']).where('id', '=', s.runner_id).executeTakeFirst();
+    const base = runner?.default_dir ?? runner?.home_dir ?? null;
+    const windows = platformOfHome(runner?.home_dir) === 'windows';
     // Read only main-transcript user lines and structured edit calls; never tool results/file contents.
     const messages = await db
       .selectFrom('events as e')
@@ -107,7 +110,7 @@ export class CatalogDetection {
       )
       .filter(Boolean);
     const match = deterministicProject(
-      candidates.map(c => ({ ...c, paths: bindings.filter(b => b.project_id === c.id).map(b => b.path) })),
+      candidates.map(c => ({ ...c, paths: base && c.folder ? [projectDir(base, c.folder, windows)] : [] })),
       s.cwd,
       s.git_remote,
       edits,
@@ -271,7 +274,6 @@ export class CatalogDetection {
       .selectFrom('sessions as s')
       .select('s.id')
       .where('s.user_id', '=', userId)
-      .where('s.project_id', 'is', null)
       .where('s.project_source', '<>', 'manual')
       .where(sql<boolean>`NOT EXISTS(SELECT 1 FROM session_projects sp WHERE sp.user_id=s.user_id AND sp.session_id=s.id)`)
       .orderBy('s.created_at', 'desc')

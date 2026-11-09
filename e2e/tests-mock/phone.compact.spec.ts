@@ -36,15 +36,16 @@ for (const [title, kind] of [
   });
 }
 
-test('composer in one row: clip, field, send icon ≥ 40 px; the field grows up to five lines; model, mode, sleep timeout behind «⋯»', async ({ page }) => {
+test('capsule composer: the field on the full width, clip and send icon ≥ 40 px in the row under it; the field grows up to five lines; model, mode, sleep timeout behind «⋯»', async ({ page }) => {
   await open(page, 'GUI-прототип Agent Hub');
   const box = page.getByRole('textbox', { name: 'Сообщение' });
   const send = page.getByRole('button', { name: 'Отправить' });
   const clip = page.getByRole('button', { name: 'Прикрепить изображение' });
   const [b, s, c] = [(await box.boundingBox())!, (await send.boundingBox())!, (await clip.boundingBox())!];
-  expect(Math.abs(b.y + b.height - (s.y + s.height))).toBeLessThanOrEqual(2);
-  expect(c.x).toBeLessThan(b.x);
-  expect(s.x).toBeGreaterThan(b.x + b.width - 1);
+  expect(b.width).toBeGreaterThanOrEqual(300);
+  expect(Math.abs(c.y + c.height / 2 - (s.y + s.height / 2))).toBeLessThanOrEqual(2);
+  expect(c.y).toBeGreaterThanOrEqual(b.y + b.height - 4);
+  expect(c.x).toBeLessThan(s.x);
   expect(Math.min(s.width, s.height, c.width, c.height)).toBeGreaterThanOrEqual(40);
   await expect(page.locator('.composer .pill.bypass')).toBeVisible();
   await box.fill('1\n2\n3\n4\n5\n6\n7\n8');

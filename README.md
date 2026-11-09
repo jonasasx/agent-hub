@@ -58,7 +58,7 @@ Agent Hub is a small self-hosted server plus a lightweight agent on each machine
 
 ### Work from anywhere
 - **Installable PWA** for phone and tablet, plus a Windows desktop app with tray and notifications.
-- **Push notifications** when an agent finishes or needs permission — approve tool calls from your phone.
+- **Web Push notifications** when a session waits for you — a question from the agent, a permission request or a finished turn: "<session> is waiting for a reply" with the machine and the question; a tap opens that session. Turn them on in **Settings → Notifications** on each device (on iPhone — iOS 16.4+ and only from the PWA added to the Home Screen). No push while the session is open in a visible tab; repeats are collapsed.
 - **Voice input** for prompts (ElevenLabs Scribe).
 
 ### Subscriptions and limits
@@ -106,6 +106,8 @@ docker compose --env-file .env -f deploy/compose.selfhost.yml up -d --build
 The hub listens on `127.0.0.1:8080`. Point your reverse proxy at it (WebSocket upgrade on `/ws/*` must pass through), open `PUBLIC_URL`, sign in with an email from `OIDC_ALLOWED_EMAILS`, then open **Machines → Connect a machine** and run the one-liner on each computer.
 
 Every option is documented inline in [`.env.example`](.env.example).
+
+Web Push is optional: generate a VAPID pair with `npx web-push generate-vapid-keys` and set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` (a secret, like the other keys in `.env`) and `VAPID_SUBJECT` (`mailto:` or `https:`). Without them the Notifications page says push is not configured on the server.
 
 ### Development
 

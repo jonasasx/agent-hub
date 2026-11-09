@@ -88,4 +88,12 @@ describe('SubscriptionsWindow ring', () => {
     expect(within(row).getByText('0%')).toBeInTheDocument();
     expect(row.querySelector('.tw-rs')?.textContent).toBe('');
   });
+
+  it('only a weekly window: the ring by 7 дн, one row when expanded, no 5 ч row (limits-stale-windows)', async () => {
+    show([win({ type: 'seven_day', utilization: 34, resetsAt: at(3000) })]);
+    expect(screen.getByRole('img', { name: /^7 дн — 34%, сброс / })).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { expanded: false })[0]!);
+    expect(screen.getByText('7 дн')).toBeInTheDocument();
+    expect(screen.queryByText('5 ч')).toBeNull();
+  });
 });

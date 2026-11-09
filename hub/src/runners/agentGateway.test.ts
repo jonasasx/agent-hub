@@ -38,7 +38,7 @@ describe('/ws/agent (integration)', () => {
     // A 1.0 agent (M2) and the 1.5 hub talk: minor versions do not break the connection; the hub records 1.0.
     const a = connectFakeAgent(t.wsBase, hpToken, { protocol: '1.0' });
     const welcome = await a.next('welcome');
-    expect(welcome.payload).toEqual({ runnerId: 'hp', protocol: '1.15', cursors: [] });
+    expect(welcome.payload).toEqual({ runnerId: 'hp', protocol: '1.17', cursors: [] });
     const r = await waitFor(async () => {
       const row = await getRunner(t.tdb.db, 'hp');
       return row?.online ? row : null;
@@ -61,11 +61,11 @@ describe('/ws/agent (integration)', () => {
   // Change multi-user, task 4.3: tokens of a disabled runner and of a disabled user's runner are refused.
   it('the token of a disabled runner and of a runner of a disabled user → 4401; enabling the user lets it in again', async () => {
     const token = await t.addRunner('dis', 'DIS');
-    await t.tdb.pool.query(`UPDATE users SET status = 'disabled' WHERE email = 'jonasasx@gmail.com'`);
+    await t.tdb.pool.query(`UPDATE users SET status = 'disabled' WHERE email = 'alice@example.com'`);
     try {
       expect((await connectFakeAgent(t.wsBase, token).closed).code).toBe(4401);
     } finally {
-      await t.tdb.pool.query(`UPDATE users SET status = 'active' WHERE email = 'jonasasx@gmail.com'`);
+      await t.tdb.pool.query(`UPDATE users SET status = 'active' WHERE email = 'alice@example.com'`);
     }
     const ok = connectFakeAgent(t.wsBase, token, { hostname: 'dis-host' });
     await ok.next('welcome');

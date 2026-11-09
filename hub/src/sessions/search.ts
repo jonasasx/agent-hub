@@ -1,5 +1,5 @@
-// Ctrl+K (design D6 «Поиск», task 3.9): title and project (trigram + tsvector over the title; the project by its title,
-// slug and path in the catalogue, M4) and the text of messages (events.tsv, websearch_to_tsquery russian ∪ english), grouped by session,
+// Ctrl+K (design D6 «Поиск», task 3.9): title and project (trigram + tsvector over the title; the project by the name
+// of the linked catalog project, single-project-classifier) and the text of messages (events.tsv, websearch_to_tsquery russian ∪ english), grouped by session,
 // ranked by match kind, ts_rank and freshness; the snippet is ts_headline of the best event of each session.
 // Requirement: Быстрый поиск Ctrl+K.
 import { sql } from 'kysely';
@@ -53,10 +53,11 @@ export async function searchSessions(db: Db, o: { userId: string; q: string; lim
                   OR (to_tsvector('russian', COALESCE(s.title, '')) || to_tsvector('english', COALESCE(s.title, ''))) @@ tq.q
                 THEN 'title' ELSE 'project' END AS match
       FROM sessions s
-      LEFT JOIN projects p ON p.id = s.project_id
+      LEFT JOIN session_projects sp ON sp.user_id = s.user_id AND sp.session_id = s.id
+      LEFT JOIN catalog_projects cp ON cp.id = sp.project_id
       CROSS JOIN tq
      WHERE s.user_id = ${o.userId} AND ${visible}
-       AND (s.title ILIKE ${like} OR p.title ILIKE ${like} OR p.path ILIKE ${like} OR p.slug ILIKE ${like}
+       AND (s.title ILIKE ${like} OR cp.name ILIKE ${like}
             OR (to_tsvector('russian', COALESCE(s.title, '')) || to_tsvector('english', COALESCE(s.title, ''))) @@ tq.q)
      ORDER BY (s.title ILIKE ${like}) DESC, ${recency} DESC
      LIMIT ${o.limit}`.execute(db);

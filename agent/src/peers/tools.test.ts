@@ -86,7 +86,7 @@ describe('agent-hub tools', () => {
   });
 
   // hub-subagents D1: session_spawn only with a hub ≥1.12, not read-only, the caller is the closure session
-  it('session_spawn: only with the spawn option; passes only the given fields', async () => {
+  it('session_spawn: only with the spawn option; passes only the given fields, never a folder (session-folder D3)', async () => {
     expect(Object.keys(setup().tools)).not.toContain('session_spawn');
     const { tools, requests, run } = setup(() => ({ sessionId: OTHER }), { spawn: true });
     expect(Object.keys(tools).sort()).toEqual(['session_get', 'session_send', 'session_spawn', 'sessions_list']);
@@ -95,7 +95,7 @@ describe('agent-hub tools', () => {
     expect(JSON.parse(r.content[0]!.text)).toEqual({ sessionId: OTHER });
     await run('session_spawn', { task: 'ещё' });
     expect(requests).toEqual([
-      { op: 'spawn', sessionId: SID, task: 'проверь логи', provider: 'codex', machine: 'vm', cwd: '/home/ubuntu/vault' },
+      { op: 'spawn', sessionId: SID, task: 'проверь логи', provider: 'codex', machine: 'vm' },
       { op: 'spawn', sessionId: SID, task: 'ещё' },
     ]);
   });

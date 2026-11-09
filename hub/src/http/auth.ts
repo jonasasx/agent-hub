@@ -2,19 +2,47 @@
 // Change multi-user: Вход по приглашению (Google or Keycloak), Закрыто по умолчанию, Защита браузерных запросов,
 // Лимиты запросов, Журнал безопасности и выход везде.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { DEFAULT_LOCALE, type Locale, type LoginProvider, type LogoutAllResponse } from '@agent-hub/shared';
-import type { Config } from '../config.js';
+import { DEFAULT_LOCALE, type Locale, type LoginProvider, type LogoutAllResponse, type LogoutResponse } from '@agent-hub/shared';
+import type { Config, IdpHint } from '../config.js';
 import type { Db } from '../db/db.js';
 import type { OidcChecks, OidcClient } from '../auth/oidc.js';
 import { SESSION_COOKIE, SESSION_TTL_MS, createSession, deleteSession, deleteUserSessions, findSession, findSessionUser, upsertUser, type AuthUser } from '../auth/sessions.js';
-import { chooseProviderPage, disabledPage, inviteExpiredPage, inviteInvalidPage, inviteMismatchPage, inviteOnlyPage, invitePage, loginErrorPage, providerLabel } from './pages.js';
+import {
+  accountMismatchPage,
+  chooseProviderPage,
+  disabledPage,
+  inviteExpiredPage,
+  inviteInvalidPage,
+  inviteMismatchPage,
+  inviteOnlyPage,
+  invitePage,
+  singleInviteMismatchPage,
+  loginErrorPage,
+  providerLabel,
+  signInPage,
+  PROVIDER_LOGOUT_HREF,
+  SWITCH_ACCOUNT_HREF,
+} from './pages.js';
 import { hashSecret } from '../auth/secrets.js';
-import { admit, findInvite, inviteStatus, logSecurity, type Admission } from '../users/repo.js';
+import { idTokenKey, openDeniedIdToken, sealDeniedIdToken } from '../auth/idToken.js';
+import { admit, admitSingle, findInvite, inviteStatus, logSecurity, type Admission, type SingleAdmission, type TwoProvider } from '../users/repo.js';
 import type { HubLimits } from './limits.js';
 import { requestLocale, tr } from '../i18n.js';
 
+interface LoginQuery {
+  return?: string;
+  prompt?: string;
+  provider?: string;
+  invite?: string;
+  /** keycloak-auth D5: id of OIDC_IDP_HINTS, goes to the provider as kc_idp_hint. */
+  hint?: string;
+}
+
 const OIDC_COOKIE = 'ah_oidc';
 const OIDC_COOKIE_TTL_S = 600;
+/** idtoken-at-rest-denied-logout D3: the encrypted id_token of a refused single-provider login, for /auth/provider-logout. */
+export const DENIED_COOKIE = 'ah_denied';
+const DENIED_COOKIE_TTL_S = 600;
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -27,20 +55,57 @@ declare module 'fastify' {
 interface OidcCookie extends OidcChecks {
   /** Path to return to after login. */
   r: string;
-  /** Provider of this login (absent in cookies of the single-provider hub: Google). */
+  /** Provider of this login (absent in cookies of the old Google-only hub: Google); `oidc` — the OIDC_ISSUER provider. */
   p?: LoginProvider;
   /** Invite code of /invite/<code>. */
   i?: string;
 }
 
-/** OIDC clients by provider; Keycloak is absent when not configured. */
+/** OIDC clients by provider; Keycloak is absent when not configured. In single-provider mode `google` is the OIDC_ISSUER client. */
 export interface OidcProviders {
   google: OidcClient;
   keycloak?: OidcClient | undefined;
 }
 
-export function enabledProviders(p: OidcProviders): LoginProvider[] {
+export function enabledProviders(p: OidcProviders): TwoProvider[] {
   return p.keycloak ? ['google', 'keycloak'] : ['google'];
+}
+
+/** keycloak-auth D5: the hints (kc_idp_hint) offered on the public address of this request. */
+export function hintsFor(req: FastifyRequest, config: Config): IdpHint[] {
+  const origin = new URL(requestPublicUrl(req, config)).origin;
+  return config.idpHints.filter(h => h.origins.length === 0 || h.origins.includes(origin));
+}
+
+/** The name of the single provider in error texts: OIDC_PROVIDER_LABEL, else «OIDC». */
+export function singleProviderLabel(config: Config): string {
+  return config.OIDC_PROVIDER_LABEL ?? 'OIDC';
+}
+
+/** keycloak-auth D6: the page of a refused single-provider login; `mismatch` there means another account with this address. */
+/** idtoken-at-rest-denied-logout D3: the button of every page leads to /auth/provider-logout. */
+export function singleDeniedPage(locale: Locale, reason: Extract<SingleAdmission, { ok: false }>['reason'], email: string | null): { code: number; body: string } {
+  if (reason === 'disabled') return { code: 403, body: disabledPage(locale, PROVIDER_LOGOUT_HREF) };
+  if (reason === 'mismatch') return { code: 403, body: accountMismatchPage(locale, email, PROVIDER_LOGOUT_HREF) };
+  return { code: 403, body: inviteOnlyPage(locale, email, PROVIDER_LOGOUT_HREF) };
+}
+
+/**
+ * idtoken-at-rest-denied-logout D3: keeps the id_token of a refused single-provider login (browser or desktop) for
+ * 10 minutes in a signed cookie, encrypted with the hub's key; without a key or a token there is nothing to keep.
+ */
+export function rememberDeniedLogin(reply: FastifyReply, key: Buffer | null, idToken: string | null | undefined): void {
+  if (!key || !idToken) return;
+  const value = sealDeniedIdToken(key, idToken);
+  if (!value) return;
+  reply.setCookie(DENIED_COOKIE, value, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    path: '/auth',
+    maxAge: DENIED_COOKIE_TTL_S,
+    signed: true,
+  });
 }
 
 /**
@@ -83,7 +148,7 @@ export function requestPublicUrl(req: FastifyRequest, config: Config): string {
 }
 
 /** Providers offered on the public address of this request. */
-export function providersFor(req: FastifyRequest, config: Config, oidc: OidcProviders): LoginProvider[] {
+export function providersFor(req: FastifyRequest, config: Config, oidc: OidcProviders): TwoProvider[] {
   const providers = enabledProviders(oidc);
   if (config.keycloakOrigins.length === 0 || config.keycloakOrigins.includes(new URL(requestPublicUrl(req, config)).origin)) {
     return providers;
@@ -101,14 +166,14 @@ export async function authenticate(db: Db, req: FastifyRequest): Promise<AuthUse
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 /** GET routes that give out machine data: a cross-site request is refused even though GET is safe (Sec-Fetch-Site, Origin). */
-const FETCH_GUARDED_GETS = new Set(['/api/runners/:runnerId/directories', '/api/runners/:runnerId/fs/list', '/api/runners/:runnerId/fs/file']);
+const FETCH_GUARDED_GETS = new Set(['/api/runners/:runnerId/directories', '/api/runners/:runnerId/fs/list', '/api/runners/:runnerId/fs/file', '/api/runners/:runnerId/fs/download']);
 
 /**
  * Requirement: Защита браузерных запросов — paths called without a browser (installer, agent) and authenticated by an
  * enrollment code or a runner token; every other mutating request needs the hub's Origin.
  */
 export function originExempt(path: string): boolean {
-  return path === '/enroll' || path.startsWith('/agent-api/');
+  return path === '/enroll' || path.startsWith('/agent-api/') || path.startsWith('/voice-llm/');
 }
 
 /**
@@ -121,6 +186,7 @@ export const PUBLIC_ROUTES = new Set([
   '/auth/callback',
   '/auth/logout',
   '/auth/disabled',
+  '/auth/provider-logout',
   '/auth/dev-login',
   '/auth/desktop/start',
   '/auth/desktop/callback',
@@ -138,6 +204,8 @@ export const PUBLIC_ROUTES = new Set([
   '/agent-api/blobs/:token',
   // mcp-management M8: the handler checks the browser session itself (redirect to the login and back, not JSON 401)
   '/mcp/oauth/callback',
+  // voice-conversation D1: called by ElevenLabs, the handler checks the Bearer key and the conversation token
+  '/voice-llm/v1/chat/completions',
 ]);
 
 export function isPublicRoute(route: string): boolean {
@@ -174,11 +242,14 @@ export function registerAuth(
   },
 ): void {
   const { config, db, oidc, limits } = deps;
+  /** idtoken-at-rest-denied-logout D1: the key of the id tokens kept by the hub (SUBSCRIPTION_TOKEN_KEY). */
+  const idKey = idTokenKey(config.SUBSCRIPTION_TOKEN_KEY);
   /** Deletes the browser session and closes its live sockets. */
-  const endSession = async (token: string | undefined) => {
-    if (!token) return;
-    await deleteSession(db, token);
+  const endSession = async (token: string | undefined): Promise<string | null> => {
+    if (!token) return null;
+    const idToken = await deleteSession(db, token, idKey);
     deps.onSessionEnded?.(hashSecret(token));
+    return idToken;
   };
   const security = (req: FastifyRequest, e: Parameters<typeof logSecurity>[1]) =>
     logSecurity(db, { ip: req.ip, userAgent: req.headers['user-agent'] ?? null, ...e }).catch((err: unknown) => req.log.warn({ err }, 'security log write failed'));
@@ -221,10 +292,11 @@ export function registerAuth(
       req.log.warn({ ip: req.ip }, 'rate limit: login start');
       return tooMany(req, reply);
     }
+    const q = req.query as LoginQuery;
+    if (config.singleProvider) return singleLogin(req, reply, q);
     const providers = providersFor(req, config, oidc);
-    const q = req.query as { return?: string; prompt?: string; provider?: string; invite?: string };
     const prompt = q.prompt === 'select_account' ? 'select_account' : undefined;
-    let provider: LoginProvider | null = q.provider === 'google' || q.provider === 'keycloak' ? q.provider : null;
+    let provider: TwoProvider | null = q.provider === 'google' || q.provider === 'keycloak' ? q.provider : null;
     let invite: string | undefined;
     if (typeof q.invite === 'string' && q.invite) {
       const row = await findInvite(db, q.invite);
@@ -233,7 +305,8 @@ export function registerAuth(
       const st = inviteStatus(row);
       if (st === 'expired') return html(reply, 410, inviteExpiredPage(req.locale));
       if (st !== 'active') return html(reply, 410, inviteInvalidPage(req.locale));
-      provider = row.provider;
+      // An invite without a provider (issued in single-provider mode) leaves the choice to the person.
+      if (row.provider === 'google' || row.provider === 'keycloak') provider = row.provider;
       invite = q.invite;
     }
     if (provider === 'keycloak' && oidc.keycloak && !providers.includes('keycloak')) {
@@ -256,6 +329,10 @@ export function registerAuth(
       return html(reply, 502, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.providerDown', { provider: providerLabel(provider) })));
     }
     const cookie: OidcCookie = { ...started.checks, r: safeReturnPath(q.return, base), p: provider, ...(invite ? { i: invite } : {}) };
+    return toProvider(reply, cookie, started.url);
+  });
+
+  const toProvider = (reply: FastifyReply, cookie: OidcCookie, url: string) => {
     reply.setCookie(OIDC_COOKIE, JSON.stringify(cookie), {
       httpOnly: true,
       secure: true,
@@ -264,8 +341,96 @@ export function registerAuth(
       maxAge: OIDC_COOKIE_TTL_S,
       signed: true,
     });
-    return reply.redirect(started.url, 302);
-  });
+    return reply.redirect(url, 302);
+  };
+
+  /**
+   * keycloak-auth D5: /auth/login of the single provider. An address without hints goes to the provider at once; with hints
+   * and without `provider=oidc` or `hint` — the login page. `?hint=` becomes kc_idp_hint, a hint unknown on this address is
+   * 400. An invite link is checked before the provider is visited; admission itself goes by address (D6).
+   */
+  async function singleLogin(req: FastifyRequest, reply: FastifyReply, q: LoginQuery) {
+    // «Войти под другим аккаунтом»: the provider asks for the login again (Keycloak has no account chooser).
+    const prompt = q.prompt === 'select_account' ? 'login' : undefined;
+    let invite: string | undefined;
+    if (typeof q.invite === 'string' && q.invite) {
+      const row = await findInvite(db, q.invite);
+      if (!row) return html(reply, 404, inviteInvalidPage(req.locale));
+      const st = inviteStatus(row);
+      if (st === 'expired') return html(reply, 410, inviteExpiredPage(req.locale));
+      if (st !== 'active') return html(reply, 410, inviteInvalidPage(req.locale));
+      invite = q.invite;
+    }
+    const hints = hintsFor(req, config);
+    let hint: IdpHint | undefined;
+    if (q.hint !== undefined) {
+      hint = hints.find(h => h.id === q.hint);
+      if (!hint) return html(reply, 400, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.unknownHint')));
+    }
+    if (!hint && q.provider !== 'oidc' && hints.length > 0) {
+      const keep: Record<string, string> = {};
+      if (typeof q.return === 'string') keep.return = q.return;
+      if (prompt) keep.prompt = 'select_account';
+      if (invite) keep.invite = invite;
+      const href = (extra: Record<string, string>) => `/auth/login?${new URLSearchParams({ ...extra, ...keep }).toString()}`;
+      const choices = hints.map(h => ({ label: h.label, href: href({ hint: h.id }) }));
+      return html(reply, 200, signInPage(req.locale, href({ provider: 'oidc' }), config.OIDC_PROVIDER_LABEL ?? null, choices));
+    }
+    const base = requestPublicUrl(req, config);
+    let started;
+    try {
+      started = await oidc.google.start({
+        redirectUri: `${base}/auth/callback`,
+        uiLocales: req.locale,
+        ...(prompt ? { prompt } : {}),
+        ...(hint ? { idpHint: hint.id } : {}),
+      });
+    } catch (err) {
+      req.log.error({ err, provider: 'oidc' }, 'oidc discovery failed');
+      return html(reply, 502, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.providerDown', { provider: singleProviderLabel(config) })));
+    }
+    const cookie: OidcCookie = { ...started.checks, r: safeReturnPath(q.return, base), p: 'oidc', ...(invite ? { i: invite } : {}) };
+    return toProvider(reply, cookie, started.url);
+  }
+
+  /** keycloak-auth D6, D7: the callback of the single provider; the id_token is kept with the session for the logout. */
+  async function singleCallback(req: FastifyRequest, reply: FastifyReply, q: { error?: string }, checks: OidcCookie) {
+    const label = singleProviderLabel(config);
+    // A login started before the switch to the single provider.
+    if (checks.p !== 'oidc') return html(reply, 400, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.linkExpired')));
+    if (q.error) return html(reply, 400, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.providerError', { provider: label, error: String(q.error) })));
+    const base = requestPublicUrl(req, config);
+    let identity;
+    try {
+      identity = await oidc.google.finish(new URL(req.url, base), checks);
+    } catch (err) {
+      req.log.warn({ err: (err as Error).message, provider: 'oidc' }, 'oidc code exchange failed');
+      return html(reply, 400, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.notConfirmed', { provider: label })));
+    }
+    const a = await admitSingle(db, identity, config.SIGNUP_MODE);
+    if (!a.ok) {
+      await endSession(req.cookies[SESSION_COOKIE]);
+      reply.clearCookie(SESSION_COOKIE, { path: '/' });
+      req.log.warn({ email: identity.email, emailVerified: identity.emailVerified, provider: 'oidc', reason: a.reason }, 'login denied');
+      void security(req, { userId: null, kind: 'login_denied', provider: 'oidc', email: identity.email });
+      rememberDeniedLogin(reply, idKey, identity.idToken);
+      // multi-user D6, scenario «Вход под другим адресом»: the login came from an invite link issued to another address
+      const invited = a.reason === 'not_invited' && checks.i ? await findInvite(db, checks.i) : null;
+      if (invited && inviteStatus(invited) === 'active' && invited.email.toLowerCase() !== identity.email?.toLowerCase())
+        return html(reply, 403, singleInviteMismatchPage(req.locale, invited.email, label, identity.email));
+      const page = singleDeniedPage(req.locale, a.reason, identity.email);
+      return html(reply, page.code, page.body);
+    }
+    await endSession(req.cookies[SESSION_COOKIE]);
+    const token = await createSession(db, a.user.id, req.headers['user-agent'], new Date(), identity.idToken, idKey);
+    reply.setCookie(SESSION_COOKIE, token, sessionCookieOptions());
+    // a refusal of another account in this browser must not lend its id_token to a later provider logout
+    if (req.cookies[DENIED_COOKIE]) reply.clearCookie(DENIED_COOKIE, { path: '/auth' });
+    req.log.info({ userId: a.user.id, provider: 'oidc', created: a.created, migrated: a.migrated }, 'login ok');
+    if (a.signup) void security(req, { userId: a.user.id, kind: 'signup', provider: 'oidc', email: a.user.email });
+    void security(req, { userId: a.user.id, kind: 'login', provider: 'oidc' });
+    return reply.redirect(a.created ? '/' : safeReturnPath(checks.r, base), 302);
+  }
 
   app.get('/auth/callback', async (req, reply) => {
     const q = req.query as { state?: string; code?: string; error?: string };
@@ -286,7 +451,10 @@ export function registerAuth(
       req.log.warn('oidc callback rejected: state mismatch or missing login cookie');
       return html(reply, 400, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.linkExpired')));
     }
-    const provider: LoginProvider = checks.p === 'keycloak' ? 'keycloak' : 'google';
+    if (config.singleProvider) return singleCallback(req, reply, q, checks);
+    // A login started by the single-provider hub before a rollback to two providers.
+    if (checks.p === 'oidc') return html(reply, 400, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.linkExpired')));
+    const provider: TwoProvider = checks.p === 'keycloak' ? 'keycloak' : 'google';
     const client = provider === 'keycloak' ? oidc.keycloak : oidc.google;
     if (!client) return html(reply, 400, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.methodOff')));
     if (q.error) return html(reply, 400, loginErrorPage(req.locale, tr(req.locale).text('hub.auth.providerError', { provider: providerLabel(provider), error: String(q.error) })));
@@ -351,19 +519,47 @@ export function registerAuth(
     const st = inviteStatus(row);
     if (st === 'expired') return html(reply, 410, inviteExpiredPage(req.locale));
     if (st !== 'active') return html(reply, 410, inviteInvalidPage(req.locale));
+    // keycloak-auth D6: in single-provider mode an invite is bound to the address only.
+    if (config.singleProvider) return html(reply, 200, invitePage(req.locale, row.email, null, code));
     if (row.provider === 'keycloak' && oidc.keycloak && !providersFor(req, config, oidc).includes('keycloak')) {
       return reply.redirect(`${config.keycloakOrigins[0]}${req.url}`, 302);
     }
-    return html(reply, 200, invitePage(req.locale, row.email, row.provider, code));
+    return html(reply, 200, invitePage(req.locale, row.email, row.provider === 'keycloak' ? 'keycloak' : 'google', code));
   });
 
   // Scenario «Отключение коллеги»: windows closed with 4403 come here.
-  app.get('/auth/disabled', async (req, reply) => html(reply, 200, disabledPage(req.locale)));
+  app.get('/auth/disabled', async (req, reply) => html(reply, 200, disabledPage(req.locale, config.singleProvider ? PROVIDER_LOGOUT_HREF : undefined)));
 
-  app.post('/auth/logout', async (req, reply) => {
-    await endSession(req.cookies[SESSION_COOKIE]);
+  // idtoken-at-rest-denied-logout D3: «Войти другим аккаунтом» of a refusal page ends the session of the single provider
+  // (its end_session_endpoint, back to the root of this address; upstream Google/Corp sessions stay). The id_token_hint
+  // comes from the cookie of a refused login in this browser; without it the provider asks to confirm the logout.
+  app.get('/auth/provider-logout', async (req, reply) => {
+    // the same budget as the login start: both reach the provider's discovery
+    if (!limits.loginStart.hit(req.ip)) {
+      req.log.warn({ ip: req.ip }, 'rate limit: provider logout');
+      return tooMany(req, reply);
+    }
+    const raw = req.cookies[DENIED_COOKIE];
+    const unsigned = raw ? req.unsignCookie(raw) : null;
+    reply.clearCookie(DENIED_COOKIE, { path: '/auth' });
+    reply.header('Cache-Control', 'no-store');
+    if (!config.singleProvider) return reply.redirect(SWITCH_ACCOUNT_HREF, 302);
+    const idToken = unsigned?.valid && unsigned.value && idKey ? openDeniedIdToken(idKey, unsigned.value) : null;
+    const url = await oidc.google.endSessionUrl({ idToken, postLogoutRedirectUri: `${requestPublicUrl(req, config)}/` });
+    return reply.redirect(url ?? SWITCH_ACCOUNT_HREF, 302);
+  });
+
+  // keycloak-auth D7: the browser goes on to the end_session_endpoint of the single provider (its session ends, the upstream
+  // Google/Corp sessions stay); without one, or with two providers — to the root.
+  app.post('/auth/logout', async (req, reply): Promise<LogoutResponse> => {
+    const idToken = await endSession(req.cookies[SESSION_COOKIE]);
     reply.clearCookie(SESSION_COOKIE, { path: '/' });
-    return reply.code(204).send();
+    let redirect = '/';
+    if (config.singleProvider) {
+      const url = await oidc.google.endSessionUrl({ idToken, postLogoutRedirectUri: `${requestPublicUrl(req, config)}/` });
+      if (url) redirect = url;
+    }
+    return { redirect };
   });
 
   // Requirement: Журнал безопасности и выход везде — every other browser session of the user.

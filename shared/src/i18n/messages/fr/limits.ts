@@ -45,12 +45,16 @@ export default {
   'limits.window.seven_day_oauth_apps.short': '7 j applis',
   'limits.window.seven_day_oauth_apps.name': '7 jours · applications',
   'limits.window.seven_day_oauth_apps.desc': 'La limite hebdomadaire pour les requêtes des applications connectées au compte via OAuth. C’est Anthropic qui décide de ce qui est compté ici.',
+  'limits.window.seven_day_overage_included.short': '7 j Fable',
+  'limits.window.seven_day_overage_included.name': '7 jours · Fable',
+  'limits.window.seven_day_overage_included.desc':
+    'Une limite hebdomadaire distincte pour les requêtes aux modèles Fable. Les autres modèles ne la consomment pas ; le service envoie cette fenêtre uniquement en réponse aux requêtes Fable.',
   'limits.window.unknownDesc': 'Fenêtre sans description : le service a renvoyé un nouveau type de limite.',
   'limits.text.overage':
     'Consommation au-delà de la limite de l’abonnement, payée en crédits ou en argent, si elle est activée dans le compte. Le hub n’affiche que l’état : activée, utilisée, épuisée ; il ne calcule pas les montants.',
   'limits.text.exhaustion':
     'Lorsqu’une fenêtre atteint 100%, l’abonnement rejette les tours jusqu’à sa réinitialisation. Si le basculement automatique est activé sur l’abonnement, le hub poursuit la session avec l’abonnement suivant du registre ; sinon le chat affiche un bouton « Continuer avec un autre abonnement ».',
-  'limits.text.refresh': 'Actualiser envoie une courte requête au service, sur un modèle Haiku, avec cet abonnement : elle consomme une petite part de la fenêtre de 5 heures.',
+  'limits.text.refresh': 'Actualiser envoie une courte requête au service, sur un modèle Haiku, avec cet abonnement : elle consomme une petite part de la limite de l’abonnement.',
   'limits.text.quiet': 'Le tour a abouti et la limite n’est pas épuisée ; le service n’a pas envoyé de nouveaux pourcentages, les valeurs connues des fenêtres sont sous le seuil.',
   'limits.text.held': 'Le service n’envoie pas les pourcentages à chaque tour, donc les fenêtres affichent les dernières valeurs connues.',
   'limits.reason.token_rejected': 'jeton rejeté',
@@ -109,6 +113,7 @@ export default {
   'limits.card.updatedAt': 'Mis à jour à {time}',
   'limits.card.updatedAtSource': 'Mis à jour à {time} · {source}',
   'limits.card.noWindowsYet': 'Pas encore de données de fenêtre',
+  'limits.card.noFiveHour': 'Le service ne limite pas la fenêtre de 5 heures pour cet abonnement.',
   'limits.card.probeAt': 'Tour de sondage à {time}',
   'limits.chip.label': 'Limites {name} : {aria}',
   'limits.window.resetTip': '{window} — réinitialisation de la fenêtre',

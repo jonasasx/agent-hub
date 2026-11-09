@@ -72,6 +72,8 @@ export default {
   'machines.enroll.path1': '1. Name and system',
   'machines.enroll.path2': '2. Command',
   'machines.enroll.path3': '3. Connection',
+  'machines.enroll.path4': '4. MCP',
+  'machines.enroll.mcpTitle': 'MCP servers of this machine',
   'machines.enroll.nameLabel': 'Machine name',
   'machines.enroll.nameHint': 'You can change it later in Settings → Machines.',
   'machines.enroll.osLabel': 'System',
@@ -95,4 +97,9 @@ export default {
   'machines.enroll.macTitle': 'No access to protected macOS folders.',
   'machines.enroll.macBefore': 'The agent cannot read ~/Documents, ~/Desktop and ~/Downloads. Open System Settings → Privacy & Security → Full Disk Access and add',
   'machines.enroll.macAfter': '. Directories outside these folders (for example, ~/code) work as they are.',
+  'machines.defaultDir.label': 'Default folder',
+  'machines.defaultDir.change': 'Change…',
+  'machines.defaultDir.hint': 'Sessions on this machine start here; a project folder is set relative to it.',
+  'machines.defaultDir.failed': 'Could not change the default folder',
+  'machines.menu.defaultDir': 'Default folder…',
 } as const;

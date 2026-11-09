@@ -40,6 +40,29 @@ describe('FileTree', () => {
     expect(useFiles.getState().pinned).toEqual([]);
   });
 
+  it('«Скачать» in a file row downloads without opening a tab; a folder has none; an old agent dims it', async () => {
+    stubFs({ list: { '/home/u': dir('/home/u', ['docs', 'a.zip']) }, files: { '/home/u/a.zip': { body: 'zip' } } });
+    const hrefs: Array<string | null> = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      hrefs.push(this.getAttribute('href'));
+    });
+    const { unmount } = render(<FileTree src={mkSrc({ protocolVersion: '1.16' })} />);
+    const row = await screen.findByRole('treeitem', { name: /a\.zip/ });
+    expect(screen.getByRole('treeitem', { name: /docs/ }).querySelector('[data-testid="file-download"]')).toBeNull();
+    const btn = row.querySelector<HTMLButtonElement>('[data-testid="file-download"]')!;
+    expect(btn).toHaveAccessibleName('Скачать a.zip');
+    expect(btn).toHaveAttribute('tabindex', '-1');
+    await userEvent.click(btn);
+    await waitFor(() => expect(hrefs).toEqual(['/api/runners/vm/fs/download?path=%2Fhome%2Fu%2Fa.zip']));
+    expect(allTabs(useStore.getState().ws)).not.toContain('file:vm:/home/u/a.zip');
+    click.mockRestore();
+    unmount();
+    resetFiles();
+    render(<FileTree src={mkSrc({ protocolVersion: '1.15' })} />);
+    const old = await screen.findByRole('treeitem', { name: /a\.zip/ });
+    expect(old.querySelector('[data-testid="file-download"]')).toBeDisabled();
+  });
+
   it('a double click pins the tab', async () => {
     stubFs({ list: { '/home/u': dir('/home/u', ['a.txt']) }, files: {} });
     render(<FileTree src={mkSrc()} />);
