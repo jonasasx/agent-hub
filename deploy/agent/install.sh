@@ -271,7 +271,7 @@ install_node() {
   file="$(grep -oE "node-v[0-9]+\.[0-9]+\.[0-9]+-$plat-$arch\.tar\.gz" "$tmp/SHASUMS256.txt" | head -n 1 || true)"
   [[ -n "$file" ]] || die "нет сборки Node.js для $plat-$arch"
   expected="$(awk -v f="$file" '$2 == f { print $1 }' "$tmp/SHASUMS256.txt")"
-  say "Скачиваем $file…"
+  say "Скачиваем ${file}…"
   curl -fsS --max-time 600 -o "$tmp/$file" "$dist/$file" || die "не удалось скачать Node.js" 3
   [[ "$(sha256_of "$tmp/$file")" == "$expected" ]] || die "Node.js не совпал по SHA-256 с SHASUMS256.txt — установка остановлена"
   rm -rf "$dest"
