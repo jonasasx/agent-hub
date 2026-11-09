@@ -189,7 +189,7 @@ export default {
   'hub.sessions.copyNoCwd': '사용할 수 없음: 머신에 디렉터리가 없습니다',
   'hub.sessions.cwdNotFound': '{name}에서 디렉터리를 찾을 수 없습니다',
   'hub.sessions.failMachineAccount': '머신 로그인 계정을 사용할 수 없습니다{why}',
-  'hub.sessions.failMachineAuth': '머신 로그인이 거부되었습니다{why}',
+  'hub.sessions.failMachineAuth': '머신 로그인이 거부되었습니다{why}. 해당 머신에서 Claude에 다시 로그인하세요: ~/.agent-hub/bin/agent-hub login',
   'hub.sessions.failMachineLimit': '머신 로그인의 한도에 도달했습니다',
   'hub.sessions.failMachineLimitReset': '머신 로그인의 한도에 도달했습니다. {time}에 초기화됩니다',
   'hub.sessions.failProviderAccount': '{label}: 계정을 사용할 수 없습니다{why}',

@@ -189,7 +189,7 @@ export default {
   'hub.sessions.copyNoCwd': '利用できません: マシン上にディレクトリがありません',
   'hub.sessions.cwdNotFound': '{name}にディレクトリが見つかりません',
   'hub.sessions.failMachineAccount': 'マシンのサインインアカウントを利用できません{why}',
-  'hub.sessions.failMachineAuth': 'マシンのサインインが拒否されました{why}',
+  'hub.sessions.failMachineAuth': 'マシンのサインインが拒否されました{why}。そのマシンで Claude に再度サインインしてください: ~/.agent-hub/bin/agent-hub login',
   'hub.sessions.failMachineLimit': 'マシンのサインインの上限に達しました',
   'hub.sessions.failMachineLimitReset': 'マシンのサインインの上限に達しました。{time}にリセットされます',
   'hub.sessions.failProviderAccount': '{label}: アカウントを利用できません{why}',

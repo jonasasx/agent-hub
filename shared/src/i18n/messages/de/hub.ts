@@ -189,7 +189,7 @@ export default {
   'hub.sessions.copyNoCwd': 'Nicht verfügbar: Das Verzeichnis fehlt auf dem Rechner',
   'hub.sessions.cwdNotFound': 'Verzeichnis auf {name} nicht gefunden',
   'hub.sessions.failMachineAccount': 'Das Anmeldekonto des Rechners ist nicht verfügbar{why}',
-  'hub.sessions.failMachineAuth': 'Die Anmeldung des Rechners wurde abgelehnt{why}',
+  'hub.sessions.failMachineAuth': 'Die Anmeldung des Rechners wurde abgelehnt{why}. Melden Sie sich auf diesem Rechner erneut bei Claude an: ~/.agent-hub/bin/agent-hub login',
   'hub.sessions.failMachineLimit': 'Das Limit der Rechner-Anmeldung ist erreicht',
   'hub.sessions.failMachineLimitReset': 'Das Limit der Rechner-Anmeldung ist erreicht, wird um {time} zurückgesetzt',
   'hub.sessions.failProviderAccount': '{label}: Das Konto ist nicht verfügbar{why}',

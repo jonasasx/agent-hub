@@ -429,7 +429,7 @@ function RegistryOAuthControl({
           {t('mcp.list.oauth.signOut')}
         </button>
       ) : (
-        <button className="btn" disabled={busy || !machineId || selectedStatus?.state === 'pending'} onClick={() => void startLogin()}>
+        <button className="btn" disabled={busy || !machineId} onClick={() => void startLogin()}>
           {busy ? t('mcp.list.oauth.preparing') : t('mcp.list.oauth.signIn')}
         </button>
       )}

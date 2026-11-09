@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { McpRegistryDraftView, McpRegistryOAuthStatus, McpRegistryOAuthValidateResponse } from '../../api/mcpRegistryTypes';
 import type { McpWizardState } from './McpWizard';
 import { McpSegment } from './McpSegment';
@@ -41,6 +42,8 @@ interface McpServerFormProps {
   oauthStatus: McpRegistryOAuthStatus | null;
   oauthValidationState: McpRegistryOAuthValidateResponse['state'] | null;
   oauthLink: string;
+  oauthManualCallback: boolean;
+  onOAuthComplete: (callbackUrl: string) => Promise<boolean>;
   onOAuthValidate: () => void;
   onOAuthConnect: () => void;
   onSaveUnchecked: () => void;
@@ -307,6 +310,8 @@ function ValidationStep({
   oauthStatus,
   oauthValidationState,
   oauthLink,
+  oauthManualCallback,
+  onOAuthComplete,
   onOAuthValidate,
   onOAuthConnect,
   onSaveUnchecked,
@@ -345,6 +350,8 @@ function ValidationStep({
           status={oauthStatus}
           validationState={oauthValidationState}
           link={oauthLink}
+          manualCallback={oauthManualCallback}
+          onComplete={onOAuthComplete}
           onStart={onStartOAuth}
           onValidate={onOAuthValidate}
           onConnect={onOAuthConnect}
@@ -549,6 +556,8 @@ function OAuthStep({
   status,
   validationState,
   link,
+  manualCallback,
+  onComplete,
   onStart,
   onValidate,
   onConnect,
@@ -558,12 +567,20 @@ function OAuthStep({
   status: McpRegistryOAuthStatus | null;
   validationState: McpRegistryOAuthValidateResponse['state'] | null;
   link: string;
+  manualCallback: boolean;
+  onComplete: (callbackUrl: string) => Promise<boolean>;
   onStart: () => void;
   onValidate: () => void;
   onConnect: () => void;
 }) {
   const t = useT();
+  const [pastedUrl, setPastedUrl] = useState('');
   const signedIn = status?.state === 'signed-in';
+  const showPaste = manualCallback && status?.state === 'pending';
+  const complete = async () => {
+    if (busy || !pastedUrl.trim()) return;
+    if (await onComplete(pastedUrl)) setPastedUrl('');
+  };
 
   return (
     <section className="mcp-oauth" aria-label="OAuth">
@@ -572,9 +589,30 @@ function OAuthStep({
       </p>
       {status?.error && <small role="alert">{status.error}</small>}
       {!signedIn && (
-        <button className="btn" disabled={!machineId || busy || status?.state === 'pending'} onClick={onStart}>
+        <button className="btn" disabled={!machineId || busy} onClick={onStart}>
           {t('mcp.list.oauth.signIn')}
         </button>
+      )}
+      {showPaste && (
+        <>
+          <small role="note">{t('mcp.list.oauth.manual.hint')}</small>
+          <label>
+            {t('mcp.list.oauth.manual.label')}
+            <input
+              className="input"
+              value={pastedUrl}
+              placeholder="http://localhost:45129/callback?code=…"
+              disabled={busy}
+              onChange={event => setPastedUrl(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter') void complete();
+              }}
+            />
+          </label>
+          <button className="btn primary" disabled={busy || !pastedUrl.trim()} onClick={() => void complete()}>
+            {t('mcp.list.oauth.manual.complete')}
+          </button>
+        </>
       )}
       {signedIn && validationState !== 'checked' && (
         <button className="btn" disabled={busy || !machineId} onClick={onValidate}>

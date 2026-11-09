@@ -1074,6 +1074,71 @@ describe('MCP registry wizard', () => {
     });
   });
 
+  it('wizard: a loopback sign-in takes the pasted address and keeps «Войти» available while pending', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(window, 'open').mockReturnValue({ opener: window, location: { href: '' }, close: vi.fn() } as unknown as Window);
+    const persistedServerId = 'b7e6aab4-1528-4a36-a7fa-7beacdc5aa30';
+    const httpDraft: McpRegistryDraftView = {
+      ...draft('needs_auth'),
+      state: 'needs_auth',
+      server: { ...draft().server, transport: 'http', url: 'https://example.test/mcp' },
+      validation: { ok: false, status: 'needs_auth', oauthRequired: true, tools: [] },
+    };
+    let completed = false;
+    const loopback = 'http://localhost:45129/callback?code=abc&state=s1';
+    const calls = mockFetch({
+      'GET /api/mcp/registry': reply(blank),
+      'GET /api/mcp/registry/status': () => {
+        const oauth = [{ serverId: persistedServerId, machineId: id, state: completed ? 'signed-in' : 'pending', validationState: 'needs_auth', connected: false }];
+        return reply({
+          revision: 1,
+          agents: [{ machineId: id, machineName: 'X1', online: true, protocolVersion: '1.13', capabilities: ['mcp.oauth.v1'] }],
+          gateways: [],
+          oauth,
+        })();
+      },
+      'GET /api/catalog/projects': reply([]),
+      'POST /api/mcp/registry/drafts': reply(httpDraft, 201),
+      [`POST /api/mcp/registry/drafts/${id}/validate`]: reply(httpDraft),
+      [`POST /api/mcp/registry/drafts/${id}/connect`]: reply({ serverId: persistedServerId, state: 'connected', server: { ...httpDraft.server, id: persistedServerId } }),
+      [`POST /api/mcp/registry/servers/${persistedServerId}/oauth/start`]: reply(
+        {
+          serverId: persistedServerId,
+          machineId: id,
+          state: 'pending',
+          authorizationUrl: 'https://auth.example.test/login?state=s1',
+          expiresAt: 1_800_000_000_000,
+          callback: 'manual',
+        },
+        202,
+      ),
+      [`POST /api/mcp/registry/servers/${persistedServerId}/oauth/complete`]: () => {
+        completed = true;
+        return reply({ serverId: persistedServerId, machineId: id, state: 'pending' })();
+      },
+    });
+    render(<McpRegistry onClose={() => undefined} />);
+    await screen.findByRole('dialog');
+    await userEvent.click(screen.getByRole('button', { name: 'Добавить сервер' }));
+    await userEvent.click(screen.getByRole('radio', { name: /Удалённый HTTP/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Далее' }));
+    await userEvent.type(screen.getByLabelText('Имя'), 'loopback-demo');
+    await userEvent.type(screen.getByLabelText('URL'), 'https://example.test/mcp');
+    await userEvent.click(screen.getByRole('button', { name: 'Далее' }));
+    await userEvent.click(screen.getByRole('radio', { name: /X1/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Сохранить черновик и проверить' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Проверить' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Сохранить и перейти ко входу' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Войти' }));
+    const field = await screen.findByLabelText('Адрес после входа');
+    expect(screen.getByRole('button', { name: 'Войти' })).toBeEnabled();
+    await userEvent.type(field, loopback);
+    await userEvent.click(screen.getByRole('button', { name: 'Завершить вход' }));
+    await waitFor(() => expect(calls.find(call => call.url.endsWith('/oauth/complete'))?.body).toEqual({ machineId: id, callbackUrl: loopback }));
+    expect(await screen.findByRole('button', { name: 'Проверить после входа' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Адрес после входа')).toBeNull();
+  });
+
   it('switches a server off on one machine and resets a machine-specific config', async () => {
     const server = { ...draft().server, machines: [{ machineId: id, enabled: true, customConfig: true }] };
     const calls = mockFetch({

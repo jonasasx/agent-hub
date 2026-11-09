@@ -359,6 +359,8 @@ export function McpWizard({ initialDraft, sessionId, machines, onDraftChange, on
   const [oauthStatus, setOauthStatus] = useState<McpRegistryOAuthStatus | null>(null);
   const [oauthValidationState, setOauthValidationState] = useState<McpRegistryOAuthValidateResponse['state'] | null>(null);
   const [oauthLink, setOauthLink] = useState('');
+  // A pre-registered client sends the browser to localhost: the user pastes that address back.
+  const [oauthManualCallback, setOauthManualCallback] = useState(false);
 
   useEffect(() => {
     if (!persistedServerId || oauthStatus?.state !== 'pending') return;
@@ -580,6 +582,7 @@ export function McpWizard({ initialDraft, sessionId, machines, onDraftChange, on
 
     try {
       const result = await api.mcpRegistryOAuthStart(persistedServerId, { machineId: state.machineId });
+      setOauthManualCallback(result.callback === 'manual');
       setOauthStatus({ serverId: result.serverId, machineId: result.machineId, state: result.state, validationState: 'needs_auth', connected: false, expiresAt: result.expiresAt });
       setOauthValidationState(null);
       if (loginWindow) {
@@ -592,6 +595,24 @@ export function McpWizard({ initialDraft, sessionId, machines, onDraftChange, on
     } catch (cause) {
       loginWindow?.close();
       reportError(cause);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const completeOAuth = async (callbackUrl: string): Promise<boolean> => {
+    if (!persistedServerId || !callbackUrl.trim()) return false;
+    setBusy(true);
+    clearError();
+    try {
+      await api.mcpRegistryOAuthComplete(persistedServerId, { machineId: state.machineId, callbackUrl: callbackUrl.trim() });
+      const status = await api.mcpRegistryStatus();
+      const next = status.oauth?.find(item => item.serverId === persistedServerId && item.machineId === state.machineId);
+      if (next) setOauthStatus(next);
+      return true;
+    } catch (cause) {
+      reportError(cause);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -668,6 +689,8 @@ export function McpWizard({ initialDraft, sessionId, machines, onDraftChange, on
         oauthStatus={oauthStatus}
         oauthValidationState={oauthValidationState}
         oauthLink={oauthLink}
+        oauthManualCallback={oauthManualCallback}
+        onOAuthComplete={completeOAuth}
         onOAuthValidate={() => void validateOAuthServer()}
         onOAuthConnect={() => void connectOAuthServer()}
         onSaveUnchecked={() => void saveUnchecked()}

@@ -189,7 +189,7 @@ export default {
   'hub.sessions.copyNoCwd': 'Unavailable: the directory is missing on the machine',
   'hub.sessions.cwdNotFound': 'Directory not found on {name}',
   'hub.sessions.failMachineAccount': 'The machine sign-in account is unavailable{why}',
-  'hub.sessions.failMachineAuth': 'The machine sign-in was rejected{why}',
+  'hub.sessions.failMachineAuth': 'The machine sign-in was rejected{why}. Sign in to Claude again on that machine: ~/.agent-hub/bin/agent-hub login',
   'hub.sessions.failMachineLimit': 'The machine sign-in limit is reached',
   'hub.sessions.failMachineLimitReset': 'The machine sign-in limit is reached, resets at {time}',
   'hub.sessions.failProviderAccount': '{label}: the account is unavailable{why}',

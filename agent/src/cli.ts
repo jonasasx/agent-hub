@@ -51,12 +51,13 @@ export function claudeCommand(env: NodeJS.ProcessEnv): { file: string; args: str
 
 const ANSI = new RegExp(String.raw`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(\x07|\x1b\\)|\x1b[@-Z\\-_]`, 'g');
 const TOKEN_RE = /sk-ant-oat\d*-[A-Za-z0-9_-]+/g;
-const TOKEN_OK = /^sk-ant-[A-Za-z0-9_-]{20,}$/;
+const TOKEN_OK = /^sk-ant-[A-Za-z0-9_-]+$/;
+const TOKEN_MIN = 80;
 
 /** The long-lived token printed by `claude setup-token` (≥ 80 characters; a wrapped, broken one is not accepted). */
 export function findSetupToken(output: string): string | null {
   const text = output.replace(ANSI, '');
-  const all = [...text.matchAll(TOKEN_RE)].map(m => m[0]).filter(t => t.length >= 80);
+  const all = [...text.matchAll(TOKEN_RE)].map(m => m[0]).filter(t => t.length >= TOKEN_MIN);
   return all.at(-1) ?? null;
 }
 
@@ -122,10 +123,15 @@ export async function cmdLogin(c: CliEnv, o: { restart: boolean }): Promise<numb
   let token = findSetupToken(output);
   if (!token) {
     if (code !== 0 && code !== null) c.io.err(`claude setup-token exited with code ${code}.\n`);
-    token = (await c.io.readSecret('Paste the token that claude showed (input is hidden): ')).trim();
+    // A token copied from a wrapped terminal line arrives with spaces or line breaks inside.
+    token = (await c.io.readSecret('Paste the token that claude showed (input is hidden): ')).replace(/\s+/g, '');
   }
-  if (!TOKEN_OK.test(token)) {
+  if (!token) {
     c.io.err('No token received. Try again: ~/.agent-hub/bin/agent-hub login\n');
+    return 1;
+  }
+  if (!TOKEN_OK.test(token) || token.length < TOKEN_MIN) {
+    c.io.err(`The token is incomplete (${token.length} characters, a full one is ${TOKEN_MIN}+ and starts with sk-ant-): copy it whole. ` + 'Try again: ~/.agent-hub/bin/agent-hub login\n');
     return 1;
   }
   mkdirSync(c.stateDir, { recursive: true });

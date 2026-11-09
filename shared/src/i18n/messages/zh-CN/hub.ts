@@ -189,7 +189,7 @@ export default {
   'hub.sessions.copyNoCwd': '不可用：机器上缺少该目录',
   'hub.sessions.cwdNotFound': '在 {name} 上未找到该目录',
   'hub.sessions.failMachineAccount': '机器登录账号不可用{why}',
-  'hub.sessions.failMachineAuth': '机器登录被拒绝{why}',
+  'hub.sessions.failMachineAuth': '机器登录被拒绝{why}。请在该机器上重新登录 Claude： ~/.agent-hub/bin/agent-hub login',
   'hub.sessions.failMachineLimit': '机器登录的额度已达上限',
   'hub.sessions.failMachineLimitReset': '机器登录的额度已达上限，将于 {time} 重置',
   'hub.sessions.failProviderAccount': '{label}：账号不可用{why}',

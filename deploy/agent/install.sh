@@ -147,6 +147,13 @@ EOF
     [[ -n "$claude" ]] || die "claude не найден после установки"
   fi
   say "Есть: $("$claude" --version < /dev/null 2> /dev/null | head -n 1) ($claude)"
+  # The agent finds claude by full path, but the user's shell may not: the official installer does not always edit PATH.
+  if ! command -v claude > /dev/null 2>&1; then
+    local rc="$HOME/.bashrc"
+    [[ "${SHELL:-}" == */zsh ]] && rc="$HOME/.zshrc"
+    warn "Команда claude не видна в терминале. Чтобы запускать её вручную, добавьте папку в PATH:"
+    warn "  echo 'export PATH=\"$(dirname "$claude"):\$PATH\"' >> $rc && source $rc"
+  fi
 
   # ---- the agent build from the hub, SHA-256 from latest.json, prepared in $tmp/agent ----
   step "Агент"

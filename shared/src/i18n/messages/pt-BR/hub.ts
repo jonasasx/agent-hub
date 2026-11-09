@@ -189,7 +189,7 @@ export default {
   'hub.sessions.copyNoCwd': 'Indisponível: o diretório não existe na máquina',
   'hub.sessions.cwdNotFound': 'Diretório não encontrado em {name}',
   'hub.sessions.failMachineAccount': 'A conta de login da máquina está indisponível{why}',
-  'hub.sessions.failMachineAuth': 'O login da máquina foi recusado{why}',
+  'hub.sessions.failMachineAuth': 'O login da máquina foi recusado{why}. Entre no Claude novamente nessa máquina: ~/.agent-hub/bin/agent-hub login',
   'hub.sessions.failMachineLimit': 'O limite do login da máquina foi atingido',
   'hub.sessions.failMachineLimitReset': 'O limite do login da máquina foi atingido, renova às {time}',
   'hub.sessions.failProviderAccount': '{label}: a conta está indisponível{why}',

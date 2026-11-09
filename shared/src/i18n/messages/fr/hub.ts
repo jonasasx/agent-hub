@@ -189,7 +189,7 @@ export default {
   'hub.sessions.copyNoCwd': 'Indisponible : le répertoire est absent de la machine',
   'hub.sessions.cwdNotFound': 'Répertoire introuvable sur {name}',
   'hub.sessions.failMachineAccount': 'Le compte de connexion de la machine est indisponible{why}',
-  'hub.sessions.failMachineAuth': 'La connexion de la machine a été rejetée{why}',
+  'hub.sessions.failMachineAuth': 'La connexion de la machine a été rejetée{why}. Reconnectez-vous à Claude sur cette machine : ~/.agent-hub/bin/agent-hub login',
   'hub.sessions.failMachineLimit': 'La limite de la connexion de la machine est atteinte',
   'hub.sessions.failMachineLimitReset': 'La limite de la connexion de la machine est atteinte, réinitialisation à {time}',
   'hub.sessions.failProviderAccount': '{label} : le compte est indisponible{why}',

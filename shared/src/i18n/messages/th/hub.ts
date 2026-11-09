@@ -189,7 +189,7 @@ export default {
   'hub.sessions.copyNoCwd': 'ใช้ไม่ได้: ไม่มีไดเรกทอรีบนเครื่อง',
   'hub.sessions.cwdNotFound': 'ไม่พบไดเรกทอรีบน {name}',
   'hub.sessions.failMachineAccount': 'บัญชีที่ลงชื่อเข้าใช้บนเครื่องใช้งานไม่ได้{why}',
-  'hub.sessions.failMachineAuth': 'การลงชื่อเข้าใช้บนเครื่องถูกปฏิเสธ{why}',
+  'hub.sessions.failMachineAuth': 'การลงชื่อเข้าใช้บนเครื่องถูกปฏิเสธ{why} ลงชื่อเข้าใช้ Claude อีกครั้งบนเครื่องนั้น: ~/.agent-hub/bin/agent-hub login',
   'hub.sessions.failMachineLimit': 'ถึงขีดจำกัดของบัญชีที่ลงชื่อเข้าใช้บนเครื่องแล้ว',
   'hub.sessions.failMachineLimitReset': 'ถึงขีดจำกัดของบัญชีที่ลงชื่อเข้าใช้บนเครื่องแล้ว รีเซ็ตเวลา {time}',
   'hub.sessions.failProviderAccount': '{label}: บัญชีใช้งานไม่ได้{why}',

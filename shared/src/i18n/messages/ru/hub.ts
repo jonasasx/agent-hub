@@ -189,7 +189,7 @@ export default {
   'hub.sessions.copyNoCwd': 'Недоступно: нет каталога на машине',
   'hub.sessions.cwdNotFound': 'Каталог не найден на {name}',
   'hub.sessions.failMachineAccount': 'Аккаунт входа машины недоступен{why}',
-  'hub.sessions.failMachineAuth': 'Вход машины отклонён{why}',
+  'hub.sessions.failMachineAuth': 'Вход машины отклонён{why}. Войдите в Claude заново на этой машине: ~/.agent-hub/bin/agent-hub login',
   'hub.sessions.failMachineLimit': 'Лимит входа машины исчерпан',
   'hub.sessions.failMachineLimitReset': 'Лимит входа машины исчерпан, сброс в {time}',
   'hub.sessions.failProviderAccount': '{label}: аккаунт недоступен{why}',

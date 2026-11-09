@@ -129,6 +129,26 @@ describe('agent-hub login (Requirement: Экран «Машины» — «Нет
     expect(readEnvFile(join(stateDir, 'agent.env')).CLAUDE_CODE_OAUTH_TOKEN).toBe(TOKEN);
   });
 
+  it('a paste broken across lines is joined back into the token', async () => {
+    const { c, stateDir } = ctx({
+      secret: `${TOKEN.slice(0, 40)}
+  ${TOKEN.slice(40)}
+`,
+    });
+    c.env.AGENT_HUB_CLAUDE = fakeClaude(stateDir, 'none');
+    expect(await runCli(['login', '--no-restart'], c)).toBe(0);
+    expect(readEnvFile(join(stateDir, 'agent.env')).CLAUDE_CODE_OAUTH_TOKEN).toBe(TOKEN);
+  });
+
+  it('a truncated paste is refused with its length, agent.env untouched', async () => {
+    const { c, stateDir, err } = ctx({ secret: TOKEN.slice(0, 50) });
+    c.env.AGENT_HUB_CLAUDE = fakeClaude(stateDir, 'none');
+    expect(await runCli(['login', '--no-restart'], c)).toBe(1);
+    expect(err.join('')).toContain('The token is incomplete (50 characters');
+    expect(err.join('')).toContain('agent-hub login');
+    expect(readEnvFile(join(stateDir, 'agent.env'))).toEqual({});
+  });
+
   it('nothing pasted → exit 1, agent.env untouched', async () => {
     const { c, stateDir, err } = ctx({ secret: '' });
     c.env.AGENT_HUB_CLAUDE = fakeClaude(stateDir, 'none');
