@@ -41,7 +41,7 @@ COPY web/package.json web/
 COPY agent/package.json agent/
 COPY e2e/package.json e2e/
 COPY desktop/package.json desktop/
-RUN npm ci --no-audit --no-fund --omit=dev --workspace hub --workspace shared --include-workspace-root
+RUN npm ci --no-audit --no-fund --omit=dev --workspace hub --workspace shared --include-workspace-root  && mkdir -p hub/node_modules
 
 # ---------- runtime ----------
 FROM ${NODE_IMAGE}
@@ -52,6 +52,8 @@ ENV NODE_ENV=production \
     INSTALLERS_DIR=/app/installers
 WORKDIR /app
 COPY --from=deps /app/node_modules node_modules
+# Hub dependencies npm nests when the root slot holds another version (undici: root has the dev copy of jsdom).
+COPY --from=deps /app/hub/node_modules hub/node_modules
 COPY --from=build /src/package.json ./
 COPY --from=build /src/shared/package.json shared/
 COPY --from=build /src/shared/dist shared/dist
