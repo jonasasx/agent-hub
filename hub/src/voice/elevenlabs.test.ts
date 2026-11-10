@@ -1,6 +1,6 @@
 // Task 2.2 (change voice-input, D2, D3): the ElevenLabs Scribe client on a mocked fetch — never the real API.
 import { describe, expect, it } from 'vitest';
-import { ScribeClient, ScribeError, baseMime } from './elevenlabs.js';
+import { ScribeClient, ScribeError, baseMime, envFetch } from './elevenlabs.js';
 
 const KEY = 'sk_unit_test_key';
 const URL_BASE = 'https://el.mock';
@@ -127,5 +127,17 @@ describe('baseMime', () => {
   it('drops parameters and case', () => {
     expect(baseMime('Audio/WebM; codecs=opus')).toBe('audio/webm');
     expect(baseMime(undefined)).toBe('');
+  });
+});
+
+describe('envFetch', () => {
+  it('is plain fetch without a proxy in the environment', () => {
+    expect(envFetch({})).toBe(fetch);
+  });
+
+  it('wraps fetch with a proxy dispatcher when HTTPS_PROXY is set', () => {
+    const f = envFetch({ HTTPS_PROXY: 'http://proxy.mock:3128' });
+    expect(f).not.toBe(fetch);
+    expect(envFetch({ https_proxy: 'http://proxy.mock:3128' })).toBe(f);
   });
 });

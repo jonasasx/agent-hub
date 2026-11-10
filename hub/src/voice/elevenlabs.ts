@@ -2,6 +2,8 @@
 // Requirements: Эндпоинт распознавания; Приватность диктовки.
 // The key goes only into the `xi-api-key` header of outgoing requests; error messages never carry the audio or the text.
 
+import { EnvHttpProxyAgent } from 'undici';
+
 /** Why a transcription failed (mapped to the hub's error codes by the route). */
 export type ScribeErrorKind = 'quota' | 'key' | 'upstream' | 'timeout' | 'aborted';
 
@@ -29,6 +31,22 @@ export interface ScribeOptions {
   fetch?: typeof fetch;
 }
 
+let proxyFetch: typeof fetch | undefined;
+
+/**
+ * fetch through the proxy of the environment (HTTPS_PROXY / NO_PROXY): on a PaaS the egress gateway reaches
+ * ElevenLabs, which geo-blocks the cluster NAT. Node's fetch ignores these variables without NODE_USE_ENV_PROXY,
+ * so the proxy goes in as a dispatcher. Without the variables — plain fetch.
+ */
+export function envFetch(env: NodeJS.ProcessEnv = process.env): typeof fetch {
+  if (!env.HTTPS_PROXY && !env.https_proxy) return fetch;
+  if (!proxyFetch) {
+    const dispatcher = new EnvHttpProxyAgent();
+    proxyFetch = (input, init) => fetch(input, { ...init, dispatcher } as RequestInit);
+  }
+  return proxyFetch;
+}
+
 /** `detail.status` / `detail.code` values of ElevenLabs that mean «no credits left», whatever the HTTP status. */
 const QUOTA_CODES = new Set(['quota_exceeded', 'insufficient_credits']);
 
@@ -51,7 +69,7 @@ function detailCodes(body: unknown): string[] {
  * GET /v1/convai/conversation/get-signed-url?agent_id=…. Throws ScribeError (`key`, `upstream`, `timeout`).
  */
 export async function conversationSignedUrl(o: { apiKey: string; apiUrl: string; agentId: string; timeoutMs?: number; fetch?: typeof fetch }): Promise<string> {
-  const f = o.fetch ?? fetch;
+  const f = o.fetch ?? envFetch();
   const timeout = AbortSignal.timeout(o.timeoutMs ?? 10_000);
   let res: Response;
   try {
@@ -79,7 +97,7 @@ export class ScribeClient {
   private readonly fetch: typeof fetch;
 
   constructor(private readonly o: ScribeOptions) {
-    this.fetch = o.fetch ?? fetch;
+    this.fetch = o.fetch ?? envFetch();
   }
 
   /**
