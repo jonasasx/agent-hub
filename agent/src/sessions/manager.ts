@@ -11,6 +11,7 @@ import {
   PEERS_PROTOCOL,
   PEERS_READ_TOOL_NAMES,
   PEERS_SERVER_NAME,
+  PROJECT_TOOLS_PROTOCOL,
   RESULT_TEXT_MAX,
   SPAWN_PROTOCOL,
   isLocalPosixPath,
@@ -235,10 +236,11 @@ function userMessage(sessionId: string, text: string, uuid: string, images: Arra
 export const HUB_SYSTEM_PROMPT_APPEND = 'To show the user an image, read the file with the Read tool: the hub will show it in the chat.';
 
 /** The text appended to Claude Code's system prompt: the hub, the peers and spawn tools when on, the project catalogue (catalog-db-session-context D3). */
-export function systemPromptAppend(peersOn: boolean, spawnOn: boolean, catalog: string): string {
+export function systemPromptAppend(peersOn: boolean, spawnOn: boolean, catalog: string, projectsOn = false): string {
   const parts = [HUB_SYSTEM_PROMPT_APPEND];
   if (peersOn) parts.push(PEERS_SYSTEM_PROMPT_APPEND);
   if (peersOn && spawnOn) parts.push(SPAWN_SYSTEM_PROMPT_APPEND);
+  if (peersOn && projectsOn) parts.push(PROJECTS_SYSTEM_PROMPT_APPEND);
   if (catalog) parts.push(catalog);
   return parts.join('\n\n');
 }
@@ -254,6 +256,11 @@ export const PEERS_SYSTEM_PROMPT_APPEND =
 export const SPAWN_SYSTEM_PROMPT_APPEND =
   'The session_spawn tool starts a new hub session with a task: another vendor (provider: claude or codex), another machine (machine; the session starts in the project folder on that machine), long independent work in its own window, or when the user asks for it. ' +
   'Give a short subtask on the same machine to the built-in Agent. The call returns immediately; the hub itself sends the result of every turn of the child session as a <peer-message kind="report"> message, so there is no need to wait or poll. Read the text of the result: the subagent may have refused or asked a question, in which case answer it; do not tell the user that the work is in progress unless the result confirms it. To continue the task, use session_send with its sessionId.';
+
+/** agent-project-tools D5: the catalogue and project folders are changed through the agent-hub tools. */
+export const PROJECTS_SYSTEM_PROMPT_APPEND =
+  'Projects of the Agent Hub catalogue are listed by projects_list and created or changed by project_create and project_update; the folder of a project is where its new sessions start. ' +
+  'To give the current session a project, pass linkSession: true.';
 
 function ruleKey(toolName: string, ruleContent?: string): string {
   return `${toolName}\u0000${ruleContent ?? '*'}`;
@@ -836,6 +843,7 @@ export class SessionManager {
     const canUseTool: CanUseTool = (toolName, input, opts) => this.askPermission(s, toolName, input, opts);
     const peersOn = !!this.deps.peers && protocolAtLeast(this.deps.hubProtocol?.() ?? null, PEERS_PROTOCOL);
     const spawnOn = peersOn && protocolAtLeast(this.deps.hubProtocol?.() ?? null, SPAWN_PROTOCOL);
+    const projectsOn = peersOn && protocolAtLeast(this.deps.hubProtocol?.() ?? null, PROJECT_TOOLS_PROTOCOL);
     const registrySnapshot = this.deps.registry?.();
     const registryProtocol = protocolAtLeast(this.deps.hubProtocol?.() ?? null, MCP_REGISTRY_PROTOCOL);
     const registryMode = registryProtocol && registrySnapshot?.registryEnabled === true;
@@ -858,6 +866,7 @@ export class SessionManager {
     const agentHub = peersOn
       ? createPeersServer(p.sessionId, this.deps.peers!, {
           spawn: spawnOn,
+          projects: projectsOn,
           ...(mcpToolsOn && machineId ? { mcpDraft: this.deps.mcpDraft, machineId } : {}),
         })
       : null;
@@ -878,7 +887,7 @@ export class SessionManager {
       systemPrompt: {
         type: 'preset',
         preset: 'claude_code',
-        append: systemPromptAppend(peersOn, spawnOn, renderProjectCatalog(p.projectCatalog)),
+        append: systemPromptAppend(peersOn, spawnOn, renderProjectCatalog(p.projectCatalog), projectsOn),
       },
       // session-peers D1: the tools of the other sessions, in this process, with this session as the caller
       ...(!registryMode && peersOn ? { mcpServers: { [PEERS_SERVER_NAME]: agentHub! } } : {}),

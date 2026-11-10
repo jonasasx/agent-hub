@@ -10,6 +10,14 @@ import type { FastifyBaseLogger } from 'fastify';
 import { sql } from 'kysely';
 import {
   PEERS_PROTOCOL,
+  PROJECT_TOOLS_PROTOCOL,
+  createUserProjectSchema,
+  normalizeProjectFolder,
+  patchUserProjectSchema,
+  platformOfHome,
+  projectDir,
+  relativeFolder,
+  type AgentProjectView,
   PEER_TEXT_MAX,
   SPAWN_LIVE_MAX,
   SPAWN_PROTOCOL,
@@ -32,6 +40,7 @@ import { getRunner, type RunnerRow } from '../runners/repo.js';
 import { findSessionByClaudeId, getSession, type SessionBase } from '../sessions/repo.js';
 import { HttpError, inheritMode, type SessionService } from '../sessions/service.js';
 import { isLiveStatus } from '../sessions/status.js';
+import { createCatalogProject, isNameConflict, linkSessionToProject, updateCatalogProject, type CatalogProjectRow } from '../projects/catalogWrite.js';
 import { countRecent, peerCatalog, recordPeerMessage, type PeerJournalKind, type PeerResult } from './repo.js';
 
 export interface PeersServiceOptions {
@@ -57,6 +66,8 @@ export const REPORT_CUT_NOTE = '\n… (truncated, the full answer is in the sess
 export const REPORT_UNAVAILABLE = 'The result text is unavailable: open the session';
 
 type SpawnRequest = Extract<PeersRequest, { op: 'spawn' }>;
+type ProjectCreateRequest = Extract<PeersRequest, { op: 'project_create' }>;
+type ProjectUpdateRequest = Extract<PeersRequest, { op: 'project_update' }>;
 type TurnResult = PayloadOf<AgentMessage, 'session.result'>;
 
 class PeerError extends Error {
@@ -67,6 +78,45 @@ class PeerError extends Error {
   ) {
     super(message);
   }
+}
+
+const machineBase = (runner: RunnerRow): string => runner.default_dir ?? runner.home_dir ?? '';
+const isWindows = (runner: RunnerRow): boolean => platformOfHome(runner.home_dir) === 'windows';
+
+function projectView(p: CatalogProjectRow, runner: RunnerRow): AgentProjectView {
+  const base = machineBase(runner);
+  // the machine has not reported its folders yet: no path rather than one from the root
+  const dir = base ? projectDir(base, p.folder, isWindows(runner)) : '';
+  return { id: p.id, name: p.name, description: p.description, remote: p.remote, folder: p.folder, dir };
+}
+
+/**
+ * agent-project-tools D3: a project folder from a tool — relative to the default folder of the caller's machine, or an
+ * absolute path (or `~/…`) on that machine turned relative; outside the default folder or invalid — invalid_request.
+ */
+export function toProjectFolder(runner: RunnerRow, input: string | null): string | null {
+  const raw = (input ?? '').trim();
+  if (!raw) return null;
+  const base = machineBase(runner);
+  const windows = isWindows(runner);
+  let folder = raw;
+  const home = runner.home_dir ?? '';
+  const tilde = /^~(?=$|[\\/])/.test(raw);
+  if (tilde || /^[\\/]/.test(raw) || /^[A-Za-z]:/.test(raw)) {
+    const abs = tilde ? home + raw.slice(1) : raw;
+    const rel = base ? relativeFolder(base, abs, windows) : null;
+    if (rel === null) throw new PeerError('invalid_request', `the folder ${raw} is outside the default folder of the machine ${base || '(unknown)'}; pass a folder inside it`);
+    folder = rel;
+  }
+  try {
+    return normalizeProjectFolder(folder);
+  } catch (err) {
+    throw new PeerError('invalid_request', `${(err as Error).message} (relative to the default folder of the machine ${base || '(unknown)'})`);
+  }
+}
+
+function nameConflict(err: unknown): unknown {
+  return isNameConflict(err) ? new PeerError('conflict', 'a project with this name already exists: find it with projects_list and change it with project_update') : err;
 }
 
 const baseName = (cwd: string | null): string => (cwd ? (cwd.split(/[\\/]/).filter(Boolean).pop() ?? '') : '');
@@ -131,6 +181,12 @@ export class PeersService {
     if (!caller) throw new PeerError('not_found', 'the calling session is unknown to the hub');
     if (req.op === 'list') return { sessions: await peerCatalog(this.o.db, caller.user_id, caller.id, { machine: req.machine, project: req.project, status: req.status, limit: req.limit ?? 50 }) };
     if (req.op === 'get') return this.get(caller, req.target);
+    if (req.op === 'projects' || req.op === 'project_create' || req.op === 'project_update') {
+      if (!protocolAtLeast(runner.protocol_version, PROJECT_TOOLS_PROTOCOL)) throw new PeerError('unsupported', 'the machine agent does not support the project tools: update the agent');
+      if (req.op === 'projects') return { projects: await this.projects(caller, runner) };
+      if (req.op === 'project_create') return { project: await this.projectCreate(caller, runner, req) };
+      return { project: await this.projectUpdate(caller, runner, req) };
+    }
     if (req.op === 'spawn') {
       const prev = this.spawning.get(caller.id) ?? Promise.resolve();
       const run = prev.catch(() => undefined).then(() => this.spawn(caller, runner, req));
@@ -142,6 +198,51 @@ export class PeersService {
       return run;
     }
     return this.send(caller, runner.name, req.to, req.text, req.inReplyTo);
+  }
+
+  /** agent-project-tools: the active catalogue of the caller's owner with the folder of each project on the caller's machine. */
+  private async projects(caller: SessionBase, runner: RunnerRow): Promise<AgentProjectView[]> {
+    const rows = await this.o.db.selectFrom('catalog_projects').selectAll().where('user_id', '=', caller.user_id).where('archived', '=', false).orderBy('name').execute();
+    return rows.map(p => projectView(p, runner));
+  }
+
+  private async projectCreate(caller: SessionBase, runner: RunnerRow, req: ProjectCreateRequest): Promise<AgentProjectView> {
+    const folder = req.folder === undefined ? undefined : toProjectFolder(runner, req.folder);
+    const parsed = createUserProjectSchema.safeParse({ name: req.name, description: req.description, remote: req.remote, folder });
+    if (!parsed.success) throw new PeerError('invalid_request', parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; '));
+    let row: CatalogProjectRow;
+    try {
+      row = await createCatalogProject(this.o.db, caller.user_id, parsed.data);
+    } catch (err) {
+      throw nameConflict(err);
+    }
+    this.o.sessions.projects?.catalogChanged(caller.user_id);
+    if (req.linkSession) await this.link(caller, row.id);
+    this.o.log.info({ sessionId: caller.id, projectId: row.id }, 'project created by a session');
+    return projectView(row, runner);
+  }
+
+  private async projectUpdate(caller: SessionBase, runner: RunnerRow, req: ProjectUpdateRequest): Promise<AgentProjectView> {
+    const folder = req.folder === undefined ? undefined : toProjectFolder(runner, req.folder);
+    const parsed = patchUserProjectSchema.safeParse({ name: req.name, description: req.description, remote: req.remote, folder });
+    if (!parsed.success) throw new PeerError('invalid_request', parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; '));
+    let row: CatalogProjectRow | undefined;
+    try {
+      row = await updateCatalogProject(this.o.db, caller.user_id, req.id, parsed.data, true);
+    } catch (err) {
+      throw nameConflict(err);
+    }
+    if (!row) throw new PeerError('not_found', 'project not found: see projects_list');
+    this.o.sessions.projectsChanged(caller.user_id);
+    if (parsed.data.name || parsed.data.folder !== undefined) this.o.sessions.projects?.catalogChanged(caller.user_id);
+    if (req.linkSession) await this.link(caller, row.id);
+    return projectView(row, runner);
+  }
+
+  /** agent-project-tools D4: the caller moves to the project by hand, as «Перенести в…». */
+  private async link(caller: SessionBase, projectId: string): Promise<void> {
+    await linkSessionToProject(this.o.db, caller.user_id, caller.id, projectId);
+    await this.o.sessions.upsert(caller.id);
   }
 
   private async get(caller: SessionBase, target: string): Promise<PeerSession> {

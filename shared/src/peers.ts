@@ -3,9 +3,17 @@
 
 /** The in-process MCP server every hub session gets (design D1) and its tools; `mcp__<server>__<tool>` is what the model calls. */
 export const PEERS_SERVER_NAME = 'agent-hub';
-export const PEERS_TOOLS = { list: 'sessions_list', get: 'session_get', send: 'session_send', spawn: 'session_spawn' } as const;
-/** Read-only tools: allowed without a permission request (design D7). */
-export const PEERS_READ_TOOL_NAMES: readonly string[] = [PEERS_TOOLS.list, PEERS_TOOLS.get].map(t => `mcp__${PEERS_SERVER_NAME}__${t}`);
+export const PEERS_TOOLS = {
+  list: 'sessions_list',
+  get: 'session_get',
+  send: 'session_send',
+  spawn: 'session_spawn',
+  projects: 'projects_list',
+  projectCreate: 'project_create',
+  projectUpdate: 'project_update',
+} as const;
+/** Read-only tools: allowed without a permission request (design D7, agent-project-tools D5). */
+export const PEERS_READ_TOOL_NAMES: readonly string[] = [PEERS_TOOLS.list, PEERS_TOOLS.get, PEERS_TOOLS.projects].map(t => `mcp__${PEERS_SERVER_NAME}__${t}`);
 
 export interface PeerEnvelope {
   from: string;

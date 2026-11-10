@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto';
 import type { CatalogDetection } from '../projects/detection.js';
+import { createCatalogProject, isNameConflict, linkSessionToProject, updateCatalogProject } from '../projects/catalogWrite.js';
 // REST API (design.md D10): sessions, chat history, runners' directories, models, sidebar, layout template.
 // Every query is scoped by req.user.id (Requirement: Данные привязаны к пользователю).
 import type { FastifyInstance, FastifyReply } from 'fastify';
@@ -7,7 +7,6 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import {
   LAYOUT_BODY_LIMIT,
-  allocateProjectColor,
   projectColorSchema,
   type ColorKey,
   createSessionRequestSchema,
@@ -93,7 +92,7 @@ export function registerApi(
       const message = err.i18n ? tr(req.locale).text(err.i18n.key, err.i18n.params) : err.message;
       return reply.code(err.status).send({ ...err.details, error: err.code, message });
     }
-    if ((err as { code?: string; constraint?: string }).code === '23505' && (err as { constraint?: string }).constraint === 'catalog_projects_active_name') {
+    if (isNameConflict(err)) {
       return reply.code(409).send({ error: 'name_conflict', message: tr(req.locale).text('hub.api.nameConflict') });
     }
     const e = err as { statusCode?: number; message?: string };
@@ -200,30 +199,7 @@ export function registerApi(
   app.post('/api/catalog/projects', async (req, reply): Promise<UserProjectView> => {
     const b = parse(createUserProjectSchema, req.body);
     const userId = req.user!.id;
-    const p = await db.transaction().execute(async tx => {
-      await sql`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`.execute(tx);
-      const used = await tx.selectFrom('catalog_projects').select('color_key').where('user_id', '=', userId).where('archived', '=', false).execute();
-      const id = randomUUID();
-      const created = await tx
-        .insertInto('catalog_projects')
-        .values({
-          id,
-          user_id: userId,
-          name: b.name,
-          color_key:
-            b.colorKey ??
-            allocateProjectColor(
-              used.map(p => p.color_key),
-              id,
-            ),
-          description: b.description ?? '',
-          remote: b.remote ?? null,
-          folder: b.folder ?? null,
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      return created;
-    });
+    const p = await createCatalogProject(db, userId, b);
     sessions.projects?.catalogChanged(userId);
     reply.code(201);
     return {
@@ -240,20 +216,11 @@ export function registerApi(
   app.patch('/api/catalog/projects/:id', async (req): Promise<{ ok: true }> => {
     const b = parse(patchUserProjectSchema, req.body);
     const { id } = parse(userProjectParamsSchema, req.params);
-    const { colorKey, ...metadata } = b;
     const userId = req.user!.id;
-    await db.transaction().execute(async tx => {
-      const own = await tx.selectFrom('catalog_projects').select('id').where('id', '=', id).where('user_id', '=', userId).forUpdate().executeTakeFirst();
-      if (!own) throw new HttpError(404, 'not_found', { key: 'hub.api.projectNotFound' });
-      await tx
-        .updateTable('catalog_projects')
-        .set({ ...metadata, ...(colorKey ? { color_key: colorKey } : {}), updated_at: sql`now()` })
-        .where('id', '=', id)
-        .where('user_id', '=', userId)
-        .execute();
-    });
+    const updated = await updateCatalogProject(db, userId, id, b);
+    if (!updated) throw new HttpError(404, 'not_found', { key: 'hub.api.projectNotFound' });
     sessions.projectsChanged(userId);
-    if (metadata.name || metadata.folder !== undefined) sessions.projects?.catalogChanged(userId);
+    if (b.name || b.folder !== undefined) sessions.projects?.catalogChanged(userId);
     return { ok: true };
   });
   app.delete('/api/catalog/projects/:id', async req => {
@@ -528,14 +495,7 @@ export function registerApi(
       ? await db.selectFrom('catalog_projects').select('id').where('user_id', '=', userId).where('id', '=', projectId).where('archived', '=', false).executeTakeFirst()
       : null;
     if (catalogProject) {
-      await db.transaction().execute(async tx => {
-        await tx.selectFrom('sessions').select('id').where('id', '=', s.id).where('user_id', '=', userId).forUpdate().executeTakeFirst();
-        await tx
-          .insertInto('session_projects')
-          .values({ user_id: userId, session_id: s.id, project_id: catalogProject.id, source: 'manual', confidence: null, reason_code: 'selected' })
-          .onConflict(oc => oc.columns(['user_id', 'session_id']).doUpdateSet({ project_id: catalogProject.id, source: 'manual', confidence: null, reason_code: 'selected' }))
-          .execute();
-      });
+      await linkSessionToProject(db, userId, s.id, catalogProject.id);
       return sessions.upsert(s.id);
     }
     // A legacy path-group id is not a project any more (single-project-classifier).

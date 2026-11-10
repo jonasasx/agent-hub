@@ -26,8 +26,16 @@ export interface PeerToolDef {
   run: (args: Record<string, unknown>) => Promise<ToolResult>;
 }
 
-/** The tools of one session with this session as the caller (the closure's `sessionId`); `spawn` — the hub is ≥1.12. */
-export function peersToolDefs(sessionId: string, client: Pick<PeersClient, 'request'>, o: { spawn?: boolean; mcpDraft?: Pick<McpDraftClient, 'request'>; machineId?: string } = {}): PeerToolDef[] {
+/** `spawn` — the hub is ≥1.12; `projects` — the hub is ≥1.18 (agent-project-tools D5). */
+export interface PeerToolOptions {
+  spawn?: boolean;
+  projects?: boolean;
+  mcpDraft?: Pick<McpDraftClient, 'request'>;
+  machineId?: string;
+}
+
+/** The tools of one session with this session as the caller (the closure's `sessionId`). */
+export function peersToolDefs(sessionId: string, client: Pick<PeersClient, 'request'>, o: PeerToolOptions = {}): PeerToolDef[] {
   const call = async (payload: Parameters<PeersClient['request']>[0]): Promise<ToolResult> => {
     try {
       return ok(await client.request(payload));
@@ -91,12 +99,64 @@ export function peersToolDefs(sessionId: string, client: Pick<PeersClient, 'requ
         return call({ op: 'spawn', sessionId, task: v.task, ...opt });
       },
     });
+  // agent-project-tools: the catalogue of the owner's projects and their folders
+  if (o.projects) defs.push(...projectToolDefs(sessionId, call));
   if (o.mcpDraft && o.machineId) defs.push(...mcpDraftTools(sessionId, o.machineId, o.mcpDraft));
   return defs;
 }
 
+const folderDescription =
+  'folder of the project: a path relative to the default folder of the machine (e.g. personal-os) or an absolute path on the machine of this session ' +
+  'inside that default folder; new sessions of the project start there on every machine; null or empty — no folder';
+
+function projectToolDefs(sessionId: string, call: (payload: Parameters<PeersClient['request']>[0]) => Promise<ToolResult>): PeerToolDef[] {
+  const createShape = {
+    name: z.string().min(1).max(120).describe('project name, unique among active projects'),
+    description: z.string().max(2000).optional().describe('what the project is about; helps the hub put sessions into it'),
+    remote: z.string().max(2000).nullable().optional().describe('git remote of the project repository'),
+    folder: z.string().max(4096).nullable().optional().describe(folderDescription),
+    linkSession: z.boolean().optional().describe('also move this session into the project'),
+  };
+  const updateShape = {
+    id: z.guid().describe('project id from projects_list'),
+    name: z.string().min(1).max(120).optional(),
+    description: z.string().max(2000).optional(),
+    remote: z.string().max(2000).nullable().optional(),
+    folder: z.string().max(4096).nullable().optional().describe(folderDescription),
+    linkSession: z.boolean().optional().describe('also move this session into the project'),
+  };
+  const pick = (a: Record<string, unknown>, keys: string[]) => Object.fromEntries(keys.filter(k => a[k] !== undefined).map(k => [k, a[k]]));
+  return [
+    {
+      name: PEERS_TOOLS.projects,
+      description:
+        "List the projects of the owner's Agent Hub catalogue: id, name, description, git remote, folder relative to the machine's default folder, " +
+        'and dir — the folder where a new session of the project starts on the machine of this session.',
+      shape: {},
+      readOnly: true,
+      run: () => call({ op: 'projects', sessionId }),
+    },
+    {
+      name: PEERS_TOOLS.projectCreate,
+      description:
+        "Create a project in the owner's Agent Hub catalogue. Set folder to the project's repository so that new sessions of the project start there. " +
+        'A name already taken is a conflict error: find the project with projects_list and change it with project_update.',
+      shape: createShape,
+      readOnly: false,
+      run: a => call({ op: 'project_create', sessionId, name: String(a.name), ...pick(a, ['description', 'remote', 'folder', 'linkSession']) }),
+    },
+    {
+      name: PEERS_TOOLS.projectUpdate,
+      description: "Change the name, description, git remote or folder of a project of the owner's Agent Hub catalogue; fields not given stay as they are.",
+      shape: updateShape,
+      readOnly: false,
+      run: a => call({ op: 'project_update', sessionId, id: String(a.id), ...pick(a, ['name', 'description', 'remote', 'folder', 'linkSession']) }),
+    },
+  ];
+}
+
 /** The tool definitions of one session for the SDK (exported for the tests; createPeersServer wraps them). */
-export function peersTools(sessionId: string, client: Pick<PeersClient, 'request'>, o: { spawn?: boolean; mcpDraft?: Pick<McpDraftClient, 'request'>; machineId?: string } = {}) {
+export function peersTools(sessionId: string, client: Pick<PeersClient, 'request'>, o: PeerToolOptions = {}) {
   return peersToolDefs(sessionId, client, o).map(d => tool(d.name, d.description, d.shape, a => d.run(a as Record<string, unknown>), d.readOnly ? { annotations: { readOnlyHint: true } } : undefined));
 }
 
@@ -112,10 +172,6 @@ export async function runPeerTool(defs: PeerToolDef[], name: string, args: unkno
   return d.run(parsed.data as Record<string, unknown>);
 }
 
-export function createPeersServer(
-  sessionId: string,
-  client: Pick<PeersClient, 'request'>,
-  o: { spawn?: boolean; mcpDraft?: Pick<McpDraftClient, 'request'>; machineId?: string } = {},
-): McpSdkServerConfigWithInstance {
+export function createPeersServer(sessionId: string, client: Pick<PeersClient, 'request'>, o: PeerToolOptions = {}): McpSdkServerConfigWithInstance {
   return createSdkMcpServer({ name: PEERS_SERVER_NAME, version: '1.0.0', tools: peersTools(sessionId, client, o) });
 }

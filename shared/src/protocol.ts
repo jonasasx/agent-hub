@@ -50,11 +50,14 @@ import { fsListPayload, fsReadChunkPayload, fsReadPayload } from './files.js';
  * 1.16 (change `file-download`, design D1): negotiated fs.download, command fs.read_chunk (a file read in pieces for download).
  * 1.17 (change `mcp-hub-only`, design D8): negotiated mcp.import.v2 — import from Codex, Claude plugins and all projects
  * (`projectRoots` in mcp.import.preview), `projectIds` honoured by the agent, static `oauthClientId`.
+ * 1.18 (change `agent-project-tools`, design D1): ops `projects`, `project_create`, `project_update` in peers.request.
  * Minor versions talk to each other (D3); images need 1.2 on the agent, subscriptions 1.4, self-update 1.5, limits 1.6,
  * MCP management 1.7, MCP sign-out 1.8, session peers 1.9, providers other than Claude 1.10, negotiated fs.list-dirs 1.13, fs.browse 1.14,
  * the project catalogue in the session context 1.15, file download 1.16.
  */
-export const PROTOCOL_VERSION = '1.17';
+export const PROTOCOL_VERSION = '1.18';
+/** The first protocol version whose agents give sessions the project catalogue tools (agent-project-tools D5). */
+export const PROJECT_TOOLS_PROTOCOL = '1.18';
 /** The first protocol version whose agents declare `mcp.import.v2` and filter servers by `projectIds` (mcp-hub-only D8). */
 export const MCP_IMPORT_V2_PROTOCOL = '1.17';
 /** The first protocol version whose agents answer fs.list / fs.read and declare the capability `fs.browse` (tool-windows-file-explorer D1). */
@@ -442,7 +445,7 @@ export type McpProbeResult = z.infer<typeof mcpProbeResultSchema>;
 export const PEER_TEXT_MAX = 20_000;
 export const PEER_LIST_MAX = 100;
 export const PEER_SESSION_STATUSES = ['working', 'waiting', 'permission', 'sleeping', 'closed'] as const;
-export const PEER_ERROR_CODES = ['not_found', 'invalid_target', 'runner_offline', 'rate_limited', 'invalid_request', 'send_failed', 'unsupported', 'spawn_failed'] as const;
+export const PEER_ERROR_CODES = ['not_found', 'invalid_target', 'runner_offline', 'rate_limited', 'invalid_request', 'send_failed', 'unsupported', 'spawn_failed', 'conflict'] as const;
 /** Live children a session may hold (hub-subagents D4). */
 export const SPAWN_LIVE_MAX = 10;
 /** Final answer of a turn carried by session.result (hub-subagents D2). */
@@ -489,7 +492,36 @@ export const peersRequestPayload = z.discriminatedUnion('op', [
     model: z.string().max(200).optional(),
     title: z.string().max(200).optional(),
   }),
+  z.object({ op: z.literal('projects'), ...peerCaller }),
+  z.object({
+    op: z.literal('project_create'),
+    ...peerCaller,
+    name: z.string().max(200),
+    description: z.string().max(2000).optional(),
+    remote: z.string().max(2000).nullable().optional(),
+    folder: z.string().max(4096).nullable().optional(),
+    linkSession: z.boolean().optional(),
+  }),
+  z.object({
+    op: z.literal('project_update'),
+    ...peerCaller,
+    id: z.guid(),
+    name: z.string().max(200).optional(),
+    description: z.string().max(2000).optional(),
+    remote: z.string().max(2000).nullable().optional(),
+    folder: z.string().max(4096).nullable().optional(),
+    linkSession: z.boolean().optional(),
+  }),
 ]);
+/** A catalogue project as a session's tools see it (agent-project-tools D1); `dir` — its folder on the caller's machine, empty while the machine has not reported its folders. */
+export interface AgentProjectView {
+  id: string;
+  name: string;
+  description: string;
+  remote: string | null;
+  folder: string | null;
+  dir: string;
+}
 /** cmd result of a `spawn` (hub-subagents D1). */
 export interface PeerSpawnResult {
   sessionId: string;

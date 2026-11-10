@@ -38,7 +38,7 @@ describe('/ws/agent (integration)', () => {
     // A 1.0 agent (M2) and the 1.5 hub talk: minor versions do not break the connection; the hub records 1.0.
     const a = connectFakeAgent(t.wsBase, hpToken, { protocol: '1.0' });
     const welcome = await a.next('welcome');
-    expect(welcome.payload).toEqual({ runnerId: 'hp', protocol: '1.17', cursors: [] });
+    expect(welcome.payload).toEqual({ runnerId: 'hp', protocol: '1.18', cursors: [] });
     const r = await waitFor(async () => {
       const row = await getRunner(t.tdb.db, 'hp');
       return row?.online ? row : null;

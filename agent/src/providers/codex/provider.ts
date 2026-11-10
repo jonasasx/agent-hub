@@ -9,6 +9,7 @@ import {
   LIMITS_PROTOCOL,
   PEERS_PROTOCOL,
   PEERS_SERVER_NAME,
+  PROJECT_TOOLS_PROTOCOL,
   protocolAtLeast,
   RESULT_TEXT_MAX,
   SPAWN_PROTOCOL,
@@ -26,7 +27,7 @@ import {
   MCP_REGISTRY_PROTOCOL,
 } from '@agent-hub/shared';
 import type { Logger } from '../../log.js';
-import { assertLocalPath, CmdError, HUB_SYSTEM_PROMPT_APPEND, PEERS_SYSTEM_PROMPT_APPEND, SPAWN_SYSTEM_PROMPT_APPEND } from '../../sessions/manager.js';
+import { assertLocalPath, CmdError, HUB_SYSTEM_PROMPT_APPEND, PEERS_SYSTEM_PROMPT_APPEND, PROJECTS_SYSTEM_PROMPT_APPEND, SPAWN_SYSTEM_PROMPT_APPEND } from '../../sessions/manager.js';
 import { projectRootOf } from '../../sessions/mcp.js';
 import { redactText } from '../../sessions/mcpRedact.js';
 import type { PeersClient } from '../../peers/client.js';
@@ -326,10 +327,15 @@ export class CodexProvider implements SessionProvider {
     return protocolAtLeast(this.d.hubProtocol?.() ?? null, SPAWN_PROTOCOL);
   }
 
-  private developerInstructions(peersOn: boolean, mode: PermissionMode, spawnOn = false, catalog = ''): string {
+  private projectsOn(): boolean {
+    return protocolAtLeast(this.d.hubProtocol?.() ?? null, PROJECT_TOOLS_PROTOCOL);
+  }
+
+  private developerInstructions(peersOn: boolean, mode: PermissionMode, spawnOn = false, catalog = '', projectsOn = false): string {
     const parts = [HUB_SYSTEM_PROMPT_APPEND.replace('with the Read tool', 'by its path (image view)')];
     if (peersOn) parts.push(PEERS_SYSTEM_PROMPT_APPEND);
     if (spawnOn) parts.push(SPAWN_SYSTEM_PROMPT_APPEND);
+    if (projectsOn) parts.push(PROJECTS_SYSTEM_PROMPT_APPEND);
     if (mode === 'plan') parts.push(PLAN_INSTRUCTIONS);
     if (catalog) parts.push(catalog);
     return parts.join('\n\n');
@@ -382,11 +388,13 @@ export class CodexProvider implements SessionProvider {
       await initialize(s.rpc, this.d.agentVersion);
       const peersOn = !!this.d.peers && protocolAtLeast(this.d.hubProtocol?.() ?? null, PEERS_PROTOCOL);
       const spawnOn = peersOn && this.spawnOn();
+      const projectsOn = peersOn && this.projectsOn();
       // A machine with registry mode enabled gets registry definitions in thread/start.
       const machineId = this.d.machineId?.();
       s.peers = peersOn
         ? peersToolDefs(s.id, this.d.peers!, {
             spawn: spawnOn,
+            projects: projectsOn,
             ...(registryMode && this.d.mcpDraft && machineId ? { mcpDraft: this.d.mcpDraft, machineId } : {}),
           })
         : [];
@@ -412,7 +420,7 @@ export class CodexProvider implements SessionProvider {
         approvalPolicy: pol.approvalPolicy,
         sandbox: pol.sandbox,
         config: { mcp_servers: mcp.servers },
-        developerInstructions: this.developerInstructions(peersOn, s.mode, spawnOn, renderProjectCatalog(p.projectCatalog)),
+        developerInstructions: this.developerInstructions(peersOn, s.mode, spawnOn, renderProjectCatalog(p.projectCatalog), projectsOn),
       };
       // client tools are declared at thread/start only (thread/resume has no such field): the thread keeps them
       const tools = s.peers.length
