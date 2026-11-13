@@ -79,13 +79,17 @@ export interface PeerCatalogFilter {
   machine?: string | undefined;
   project?: string | undefined;
   status?: PeerSession['status'] | undefined;
+  /** sessions-list-query: whitespace-separated words, each must occur in the title (the folder name when untitled). */
+  query?: string | undefined;
+  /** sessions-list-readonly: also the sessions the hub does not run and the read-only ones (list and get); messaging leaves it off. */
+  withReadOnly?: boolean | undefined;
   limit: number;
 }
 
 const like = (v: string): string => `%${v.replace(/[\\%_]/g, '\\$&')}%`;
 
 /**
- * Sessions the owner's sessions may see: hub-managed, writable. `selfId` marks the caller. Newest activity first.
+ * Sessions the owner's sessions may see: hub-managed and writable ones, with `withReadOnly` the others too (not cron). `selfId` marks the caller. Newest activity first.
  * `id` is the hub's session id (the one the web shows in its addresses).
  */
 export async function peerCatalog(db: Db, userId: string, selfId: string, f: PeerCatalogFilter, single?: string): Promise<PeerSession[]> {
@@ -93,17 +97,21 @@ export async function peerCatalog(db: Db, userId: string, selfId: string, f: Pee
   let q = db
     .selectFrom('sessions as s')
     .innerJoin('runners as r', 'r.id', 's.runner_id')
-    .select(['s.id', 's.title', 's.cwd', 's.status', 's.process_alive', 'r.name as machine', last.as('last_activity')])
+    .select(['s.id', 's.title', 's.cwd', 's.status', 's.process_alive', 's.is_hub_managed', 's.read_only_reason', 'r.name as machine', last.as('last_activity')])
     .where('s.user_id', '=', userId)
-    .where('s.is_hub_managed', '=', true)
-    .where('s.read_only_reason', 'is', null)
     .where('s.source', '!=', 'cron')
     .orderBy(last, 'desc')
     .limit(f.limit);
+  if (!f.withReadOnly) q = q.where('s.is_hub_managed', '=', true).where('s.read_only_reason', 'is', null);
   if (single) q = q.where('s.id', '=', single);
   if (f.machine) q = q.where(sql<boolean>`r.name ILIKE ${like(f.machine)}`);
   if (f.project) q = q.where(sql<boolean>`s.cwd ILIKE ${like(f.project)}`);
   if (f.status) q = q.where('s.status', '=', f.status);
+  // Same fallback as the title below: the last segment of the folder.
+  const shown = sql<string>`coalesce(nullif(s.title, ''), substring(translate(coalesce(s.cwd, ''), '\\', '/') from '([^/]+)/*$'), '')`;
+  for (const word of (f.query ?? '').split(/\s+/).filter(Boolean)) {
+    q = q.where(sql<boolean>`${shown} ILIKE ${like(word)}`);
+  }
   const rows = await q.execute();
   return rows.map(r => ({
     id: r.id,
@@ -114,5 +122,6 @@ export async function peerCatalog(db: Db, userId: string, selfId: string, f: Pee
     processAlive: r.process_alive,
     lastActivityAt: r.last_activity ? new Date(r.last_activity).toISOString() : null,
     self: r.id === selfId,
+    readOnly: !r.is_hub_managed || r.read_only_reason !== null,
   }));
 }

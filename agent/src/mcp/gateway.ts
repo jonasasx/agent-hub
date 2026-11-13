@@ -38,6 +38,13 @@ const DEFAULT_LIMITS: GatewayLimits = {
 const HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'authorization', 'x-agent-session']);
 const RESPONSE_BODY_HEADERS = new Set(['content-encoding', 'content-length', 'transfer-encoding']);
 type ServerConfig = RegistrySnapshot['servers'][number];
+type RpcMessage = { id?: string | number; method?: string; params?: unknown; [k: string]: unknown };
+/**
+ * MCP revisions a stdio process cannot mix: one connection either takes the initialize handshake (up to 2025-11-25)
+ * or serves the stateless revision 2026-07-28 without it, and rejects the other kind of client with -32022.
+ */
+type ProtocolFamily = 'legacy' | 'stateless';
+const STATELESS_PROTOCOL_VERSION = '2026-07-28';
 
 // Streamable HTTP servers may answer a request with an SSE stream instead of a JSON body; the stream may stay open after the response.
 async function readRpcResponse(res: Response, id: number): Promise<Record<string, unknown>> {
@@ -68,6 +75,9 @@ async function readRpcResponse(res: Response, id: number): Promise<Record<string
 }
 interface ProcessEntry {
   child: ChildProcess;
+  serverId: string;
+  serverName: string;
+  family: ProtocolFamily;
   started: Promise<void>;
   exited: boolean;
   exitCode: number | null;
@@ -80,7 +90,7 @@ interface ProcessEntry {
   timer?: NodeJS.Timeout;
   healthyTimer?: NodeJS.Timeout;
   stopping: boolean;
-  /** Counted against maxProcesses: per-session and validation processes. A machine-shared server has one process at most. */
+  /** Counted against maxProcesses: per-session and validation processes. A machine-shared server has one process per protocol family at most. */
   capped: boolean;
 }
 
@@ -93,6 +103,7 @@ interface PendingRequest {
   session: string;
   response: ServerResponse;
   originalId: string | number;
+  method?: string;
   timer?: NodeJS.Timeout;
 }
 
@@ -117,6 +128,8 @@ export class McpGateway {
   private tokens = new Map<string, Map<string, string>>();
   private sessionGenerations = new Map<string, StartGenerationState>();
   private sessionServerGenerations = new Map<string, StartGenerationState>();
+  /** Protocol family of a session's MCP clients per server, for requests that do not name a revision (GET streams, notifications). */
+  private clientFamilies = new Map<string, ProtocolFamily>();
   private config = new Map<string, ServerConfig>();
   private secretValues = new Map<string, Map<string, string>>();
   private validationConfigs = new Map<string, ServerConfig>();
@@ -290,13 +303,12 @@ export class McpGateway {
       return { ok: false, status: 'validation-failed', tools: [], error: safe, oauthRequired: false };
     } finally {
       this.revoke(candidate.id, sessionId);
-      const key = this.processKey(candidate, sessionId),
-        entry = this.entries.get(key);
-      if (entry) {
-        if (entry.timer) clearTimeout(entry.timer);
-        this.kill(entry);
-        this.entries.delete(key);
-      }
+      for (const [key, entry] of this.entries)
+        if (key.startsWith(`${candidate.id}:`)) {
+          if (entry.timer) clearTimeout(entry.timer);
+          this.kill(entry);
+          this.entries.delete(key);
+        }
       this.validationConfigs.delete(candidate.id);
       const child = this.validationChildren.get(candidate.id);
       if (child) {
@@ -331,7 +343,8 @@ export class McpGateway {
     const pairGeneration = pairState.generation;
     let startedEntry: ProcessEntry | undefined;
     try {
-      if (cfg.transport === 'stdio') startedEntry = await this.process(cfg, sessionId);
+      // Started ahead of the first client: in the family this session's clients used before, the handshake one otherwise.
+      if (cfg.transport === 'stdio') startedEntry = await this.process(cfg, sessionId, this.clientFamilies.get(pairKey) ?? 'legacy');
       if (startedEntry) {
         startedEntry.managedSessions.add(sessionId);
         this.clearIdle(startedEntry);
@@ -427,7 +440,7 @@ export class McpGateway {
   private matchesTimedOutProcess(key: string, serverId: string, sessionId: string, revision?: number): boolean {
     const server = this.config.get(serverId);
     if (server?.mode === 'per-session') {
-      if (revision !== undefined) return key === `${serverId}:${revision}:${sessionId}`;
+      if (revision !== undefined) return key === `${serverId}:${revision}:${sessionId}` || key === `${serverId}:${revision}:@stateless:${sessionId}`;
       return key.startsWith(`${serverId}:`) && key.endsWith(`:${sessionId}`);
     }
     return this.matchesServerRevision(key, serverId, revision);
@@ -458,18 +471,20 @@ export class McpGateway {
     const pairKey = this.sessionServerKey(serverId, sessionId);
     this.invalidateStart(this.sessionServerGenerations, pairKey);
     this.tokens.get(serverId)?.delete(sessionId);
+    this.clientFamilies.delete(pairKey);
     for (const [key, e] of this.entries)
       if (key === serverId || key.startsWith(`${serverId}:`)) {
         e.sessions.delete(sessionId);
         e.managedSessions.delete(sessionId);
-        if (!e.sessions.size && !e.managedSessions.size) {
-          this.clearIdle(e);
-          e.timer = setTimeout(() => {
-            this.expireIdle(key, serverId, e);
-          }, this.limits.idleMs);
-          e.timer.unref();
-        }
+        if (!e.sessions.size && !e.managedSessions.size) this.armIdle(key, serverId, e);
       }
+  }
+  private armIdle(key: string, serverId: string, e: ProcessEntry): void {
+    this.clearIdle(e);
+    e.timer = setTimeout(() => {
+      this.expireIdle(key, serverId, e);
+    }, this.limits.idleMs);
+    e.timer.unref();
   }
   revokeSession(sessionId: string): void {
     this.invalidateStart(this.sessionGenerations, sessionId);
@@ -480,6 +495,7 @@ export class McpGateway {
     for (const serverId of this.config.keys()) this.clearRetries(serverId);
     for (const e of this.entries.values()) this.kill(e);
     this.entries.clear();
+    this.clientFamilies.clear();
     this.secretValues.clear();
     this.validationConfigs.clear();
     this.validationSecrets.clear();
@@ -543,8 +559,10 @@ export class McpGateway {
       return;
     }
     try {
-      const entry = await this.process(cfg, sid);
+      const rpc = req.method === 'POST' ? (JSON.parse((await readBody(req)).toString('utf8')) as RpcMessage) : undefined;
+      const entry = await this.process(cfg, sid, this.clientFamily(cfg.id, sid, req, rpc));
       this.clearIdle(entry);
+      this.adoptManagedSession(cfg.id, sid, entry);
       if (!entry.sessions.has(sid) && entry.sessions.size >= this.limits.maxSessions) {
         res.writeHead(503).end('MCP client session limit reached');
         return;
@@ -564,14 +582,13 @@ export class McpGateway {
         });
         return;
       }
-      const body = await readBody(req);
+      if (!rpc) throw new Error('MCP request has no body');
       if (entry.exited) throw this.processExitError(entry);
-      const rpc = JSON.parse(body.toString('utf8')) as { id?: string | number; method?: string; [k: string]: unknown };
       const originalId = rpc.id;
       // Unique per HTTP request: several MCP clients of one hub session (Codex opens a startup client and a session client at once) number their requests from 0.
       const backendId = `${sid}:${randomUUID()}`;
       if (originalId !== undefined) {
-        const pending: PendingRequest = { session: sid, response: res, originalId };
+        const pending: PendingRequest = { session: sid, response: res, originalId, ...(typeof rpc.method === 'string' ? { method: rpc.method } : {}) };
         const timeoutMs = this.limits.requestTimeoutMs ?? 30_000;
         pending.timer = setTimeout(() => {
           entry!.pending.delete(backendId);
@@ -674,8 +691,32 @@ export class McpGateway {
       this.safeError(res, new Error(this.redactText(cfg.id, e instanceof Error ? e.message : 'MCP proxy request failed')));
     }
   }
-  private async process(cfg: ServerConfig, session: string): Promise<ProcessEntry> {
-    const key = this.processKey(cfg, session);
+  /**
+   * Protocol family of a request: `initialize` is the handshake revision; otherwise the `MCP-Protocol-Version` header or the
+   * protocol version in `params._meta`; a request without either takes the family the session's client used last, the handshake one at first.
+   */
+  private clientFamily(serverId: string, sid: string, req: IncomingMessage, rpc: RpcMessage | undefined): ProtocolFamily {
+    const key = this.sessionServerKey(serverId, sid);
+    const header = req.headers['mcp-protocol-version'];
+    const version = typeof header === 'string' && header ? header : rpc && requestedProtocolVersion(rpc);
+    const family: ProtocolFamily = rpc?.method === 'initialize' ? 'legacy' : version ? protocolFamily(version) : (this.clientFamilies.get(key) ?? 'legacy');
+    this.clientFamilies.set(key, family);
+    return family;
+  }
+  /** A managed session belongs to the process its clients talk to: the process started ahead in the other protocol family is released. */
+  private adoptManagedSession(serverId: string, sid: string, entry: ProcessEntry): void {
+    if (entry.managedSessions.has(sid)) return;
+    let managed = false;
+    for (const [key, other] of this.entries) {
+      if (other === entry || !other.managedSessions.has(sid) || !this.matchesServerRevision(key, serverId)) continue;
+      other.managedSessions.delete(sid);
+      managed = true;
+      if (!other.sessions.size && !other.managedSessions.size) this.armIdle(key, serverId, other);
+    }
+    if (managed) entry.managedSessions.add(sid);
+  }
+  private async process(cfg: ServerConfig, session: string, family: ProtocolFamily = 'legacy'): Promise<ProcessEntry> {
+    const key = this.processKey(cfg, session, family);
     let entry = this.entries.get(key);
     if (entry) {
       await entry.started;
@@ -722,6 +763,9 @@ export class McpGateway {
     }
     entry = {
       child,
+      serverId: cfg.id,
+      serverName: cfg.name,
+      family,
       started,
       exited: false,
       exitCode: null,
@@ -758,6 +802,7 @@ export class McpGateway {
       this.fail(entry!, key, cfg.id, entry!.exitReason, false);
     });
     this.reportStatus(cfg.id, { serverId: cfg.id, status: 'starting', observedAt: Date.now() });
+    this.log.info('MCP stdio process starting', { server: cfg.name, mode: cfg.mode, family });
     await started;
     if (entry.exited) throw this.processExitError(entry);
     return entry;
@@ -767,8 +812,9 @@ export class McpGateway {
     return new Error(entry.exitReason ?? `MCP server process exited with code ${entry.exitCode ?? 'signal'}`);
   }
 
-  private processKey(cfg: ServerConfig, session: string): string {
-    return cfg.mode === 'per-session' ? `${cfg.id}:${cfg.revision}:${session}` : `${cfg.id}:${cfg.revision}`;
+  private processKey(cfg: ServerConfig, session: string, family: ProtocolFamily): string {
+    const base = family === 'stateless' ? `${cfg.id}:${cfg.revision}:@stateless` : `${cfg.id}:${cfg.revision}`;
+    return cfg.mode === 'per-session' ? `${base}:${session}` : base;
   }
 
   private armPendingDelivery(serverId: string, delivery: PendingSecretDelivery): void {
@@ -837,6 +883,7 @@ export class McpGateway {
           e.pending.delete(msg.id);
           if (p.timer) clearTimeout(p.timer);
           msg.id = p.originalId;
+          if (msg.error) this.logRpcError(e, p.method, msg.error);
           p.response.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': p.session });
           p.response.end(JSON.stringify(msg));
         } else if (msg.method === 'notifications/tools/list_changed') for (const stream of e.streams.values()) stream.write(`event: message\ndata: ${JSON.stringify(msg)}\n\n`);
@@ -844,6 +891,16 @@ export class McpGateway {
         /* malformed server stdout is ignored and never logged */
       }
     }
+  }
+  private logRpcError(e: ProcessEntry, method: string | undefined, error: unknown): void {
+    const { code, message } = (typeof error === 'object' && error ? error : {}) as { code?: unknown; message?: unknown };
+    this.log.warn('MCP server returned an error', {
+      server: e.serverName,
+      family: e.family,
+      method,
+      code: typeof code === 'number' ? code : undefined,
+      message: typeof message === 'string' ? this.redactText(e.serverId, message).slice(0, 500) : undefined,
+    });
   }
   private fail(e: ProcessEntry, key: string, serverId: string, reason: string, terminal: boolean): void {
     if (e.stopping) return;
@@ -877,7 +934,7 @@ export class McpGateway {
       const current = this.config.get(serverId);
       if (!current || current.revision !== cfg.revision) return;
       const first = [...e.sessions.keys()][0] ?? 'machine';
-      void this.process(current, first)
+      void this.process(current, first, e.family)
         .then(next => {
           for (const [sid, value] of e.sessions) next.sessions.set(sid, value);
           for (const [sid, stream] of e.streams) next.streams.set(sid, stream);
@@ -908,6 +965,8 @@ export class McpGateway {
     if (this.entries.get(key) !== entry || entry.sessions.size || entry.managedSessions.size) return;
     this.kill(entry);
     this.entries.delete(key);
+    // The server's process of the other protocol family may still run.
+    if ([...this.entries.keys()].some(current => this.matchesServerRevision(current, serverId))) return;
     this.emitStatus({ serverId, status: 'stopped', observedAt: Date.now() });
   }
   private redactText(serverId: string, text: string): string {
@@ -946,6 +1005,16 @@ export class McpGateway {
     if (res.headersSent || res.destroyed) return;
     res.writeHead(502, { 'content-type': 'application/json' }).end(JSON.stringify({ error: redact(error instanceof Error ? error.message : 'MCP gateway request failed') }));
   }
+}
+function protocolFamily(version: string): ProtocolFamily {
+  return /^\d{4}-\d{2}-\d{2}$/.test(version) && version >= STATELESS_PROTOCOL_VERSION ? 'stateless' : 'legacy';
+}
+/** The stateless revision repeats the protocol version in every request's `_meta`. */
+function requestedProtocolVersion(rpc: RpcMessage): string | undefined {
+  const meta = (rpc.params as { _meta?: unknown } | undefined)?._meta;
+  if (!meta || typeof meta !== 'object') return undefined;
+  for (const [key, value] of Object.entries(meta)) if ((key === 'protocolVersion' || key.endsWith('/protocolVersion')) && typeof value === 'string' && value) return value;
+  return undefined;
 }
 function redact(s: string): string {
   return s.replace(/(bearer\s+)[^\s"']+/gi, '$1[redacted]').replace(/([?&](?:token|key|secret|password)=)[^&\s]+/gi, '$1[redacted]');

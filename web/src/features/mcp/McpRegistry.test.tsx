@@ -1139,6 +1139,111 @@ describe('MCP registry wizard', () => {
     expect(screen.queryByLabelText('Адрес после входа')).toBeNull();
   });
 
+  it('wizard: a rejected client registration asks for a client id, saves it, and signs in by the pasted address', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(window, 'open').mockReturnValue({ opener: window, location: { href: '' }, close: vi.fn() } as unknown as Window);
+    const persistedServerId = 'c8e6aab4-1528-4a36-a7fa-7beacdc5aa31';
+    const httpDraft: McpRegistryDraftView = {
+      ...draft('needs_auth'),
+      state: 'needs_auth',
+      server: { ...draft().server, transport: 'http', url: 'https://example.test/mcp' },
+      validation: { ok: false, status: 'needs_auth', oauthRequired: true, tools: [] },
+    };
+    let persisted = false;
+    let starts = 0;
+    const calls = mockFetch({
+      'GET /api/mcp/registry': () => reply(persisted ? { revision: 2, servers: [{ ...httpDraft.server, id: persistedServerId, revision: 3 }], drafts: [] } : blank)(),
+      'GET /api/mcp/registry/status': reply({
+        revision: 1,
+        agents: [{ machineId: id, machineName: 'X1', online: true, protocolVersion: '1.13', capabilities: ['mcp.oauth.v1'] }],
+        gateways: [],
+        oauth: [],
+      }),
+      'GET /api/catalog/projects': reply([]),
+      'POST /api/mcp/registry/drafts': reply(httpDraft, 201),
+      [`POST /api/mcp/registry/drafts/${id}/validate`]: reply(httpDraft),
+      [`POST /api/mcp/registry/drafts/${id}/connect`]: () => {
+        persisted = true;
+        return reply({ serverId: persistedServerId, state: 'needs-login', server: { ...httpDraft.server, id: persistedServerId } })();
+      },
+      [`PATCH /api/mcp/registry/servers/${persistedServerId}`]: reply({ ...httpDraft.server, id: persistedServerId, revision: 4, oauthClientId: 'hr-portal-mcp' }),
+      [`POST /api/mcp/registry/servers/${persistedServerId}/oauth/start`]: () => {
+        starts += 1;
+        if (starts === 1) return reply({ error: 'oauth_registration_rejected', message: 'The authorization server does not allow automatic client registration' }, 502)();
+        return reply(
+          { serverId: persistedServerId, machineId: id, state: 'pending', authorizationUrl: 'https://auth.example.test/login?state=s1', expiresAt: 1_800_000_000_000, callback: 'manual' },
+          202,
+        )();
+      },
+    });
+    render(<McpRegistry onClose={() => undefined} />);
+    await screen.findByRole('dialog');
+    await userEvent.click(screen.getByRole('button', { name: 'Добавить сервер' }));
+    await userEvent.click(screen.getByRole('radio', { name: /Удалённый HTTP/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Далее' }));
+    expect(screen.getByLabelText('OAuth client ID (необязательно)')).toHaveValue('');
+    await userEvent.type(screen.getByLabelText('Имя'), 'dcr-rejected-demo');
+    await userEvent.type(screen.getByLabelText('URL'), 'https://example.test/mcp');
+    await userEvent.click(screen.getByRole('button', { name: 'Далее' }));
+    await userEvent.click(screen.getByRole('radio', { name: /X1/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Сохранить черновик и проверить' }));
+    expect(calls.find(call => call.url.endsWith('/api/mcp/registry/drafts'))?.body).not.toHaveProperty('server.oauthClientId');
+    await userEvent.click(await screen.findByRole('button', { name: 'Проверить' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Сохранить и перейти ко входу' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Войти' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/запрещает автоматическую регистрацию клиента — укажите заранее созданный client ID/);
+    expect(screen.queryByRole('button', { name: 'Войти' })).toBeNull();
+    const retry = screen.getByRole('button', { name: 'Сохранить и войти' });
+    expect(retry).toBeDisabled();
+    await userEvent.type(screen.getByLabelText('OAuth client ID (необязательно)'), '  hr-portal-mcp ');
+    await userEvent.click(retry);
+    await waitFor(() => expect(calls.find(call => call.method === 'PATCH')?.body).toEqual({ revision: 3, oauthClientId: 'hr-portal-mcp' }));
+    expect(await screen.findByLabelText('Адрес после входа')).toBeInTheDocument();
+    expect(starts).toBe(2);
+    expect(screen.queryByRole('button', { name: 'Сохранить и войти' })).toBeNull();
+  });
+
+  it('edits and clears the OAuth client id of a remote server in its card', async () => {
+    const server = { ...draft().server, transport: 'http' as const, mode: 'remote' as const, url: 'https://example.test/mcp', oauthClientId: 'old-client' };
+    const calls = mockFetch({
+      'GET /api/mcp/registry': reply({ revision: 1, servers: [server], drafts: [] }),
+      'GET /api/mcp/registry/status': reply({}),
+      'GET /api/catalog/projects': reply([]),
+      [`PATCH /api/mcp/registry/servers/${server.id}`]: reply(server),
+    });
+    render(<McpRegistry onClose={() => undefined} />);
+    await screen.findByText(server.name);
+    await userEvent.click(screen.getByText('Изменить режим и доступ по машинам'));
+    const field = screen.getByLabelText('OAuth client ID');
+    expect(field).toHaveValue('old-client');
+    await userEvent.click(screen.getByRole('button', { name: 'Сохранить настройки' }));
+    await waitFor(() => expect(calls.filter(call => call.method === 'PATCH')).toHaveLength(1));
+    expect(calls.filter(call => call.method === 'PATCH')[0]?.body).not.toHaveProperty('oauthClientId');
+    await userEvent.clear(field);
+    await userEvent.click(screen.getByRole('button', { name: 'Сохранить настройки' }));
+    await waitFor(() => expect(calls.filter(call => call.method === 'PATCH')[1]?.body).toMatchObject({ revision: server.revision, oauthClientId: null }));
+  });
+
+  it('explains a rejected client registration when signing in from the card', async () => {
+    const server = { ...draft().server, transport: 'http' as const, url: 'https://example.test/mcp' };
+    vi.spyOn(window, 'open').mockReturnValue({ opener: window, location: { href: '' }, close: vi.fn() } as unknown as Window);
+    mockFetch({
+      'GET /api/mcp/registry': reply({ revision: 1, servers: [server], drafts: [] }),
+      'GET /api/mcp/registry/status': reply({
+        revision: 1,
+        agents: [{ machineId: id, machineName: 'X1', online: true, protocolVersion: '1.13', capabilities: ['mcp.oauth.v1'] }],
+        gateways: [],
+        oauth: [],
+      }),
+      [`POST /api/mcp/registry/servers/${id}/oauth/start`]: reply({ error: 'oauth_registration_rejected', message: 'raw' }, 502),
+    });
+    render(<McpRegistry onClose={() => undefined} />);
+    await screen.findByText(server.name);
+    await screen.findAllByRole('option', { name: 'X1' });
+    await userEvent.click(screen.getByRole('button', { name: 'Войти' }));
+    expect(await screen.findByText(/запрещает автоматическую регистрацию клиента — укажите заранее созданный client ID/)).toBeInTheDocument();
+  });
+
   it('switches a server off on one machine and resets a machine-specific config', async () => {
     const server = { ...draft().server, machines: [{ machineId: id, enabled: true, customConfig: true }] };
     const calls = mockFetch({

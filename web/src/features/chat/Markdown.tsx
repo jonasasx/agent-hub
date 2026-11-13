@@ -12,6 +12,9 @@ import { ImageGroup, picOf } from '../images/ImagePreview';
 import type { ImageRef } from '../images/format';
 import { isNameWithLine, type FileLinkResolver } from '../files/links';
 import { openFileLink } from '../files/fileActions';
+import { useStore } from '../../store';
+import { openSession } from '../workspace/actions';
+import { remarkSessionRefs, sessionRefOf, useSessionRef } from '../sessions/sessionLinks';
 
 /** The session the text belongs to: «Показать изображение» asks the hub for a file of its machine. */
 export interface ImageSource {
@@ -110,8 +113,29 @@ function MdImg({ src, alt }: { src?: unknown; alt?: string }) {
  */
 export const FileLinkContext = createContext<FileLinkResolver | null>(null);
 
+/**
+ * A UUID of the feed that is a session of the user (change session-links, Requirement: Ссылки на сессии): the label is
+ * the live title of the session, a click opens its tab. Until the hub answers, or for a foreign UUID, the text stays.
+ */
+function SessionLink({ id, children }: { id: string; children?: ReactNode }) {
+  const ref = useSessionRef(id);
+  const title = useStore(st => (ref ? st.sessions[ref.id]?.title : undefined)) ?? ref?.title;
+  if (!ref) return <>{children}</>;
+  const open = (e: MouseEvent) => {
+    e.preventDefault();
+    openSession(ref.id);
+  };
+  return (
+    <a href={`/s/${ref.id}`} className="md-session-link" title={ref.runnerName ? `${ref.runnerName} · ${id}` : id} onClick={open}>
+      {title || id}
+    </a>
+  );
+}
+
 function MdLink({ href, children }: { href?: string; children?: ReactNode }) {
   const resolve = useContext(FileLinkContext);
+  const sessionRef = sessionRefOf(href);
+  if (sessionRef) return <SessionLink id={sessionRef}>{children}</SessionLink>;
   const file = resolve ? resolve(decodePath(href ?? '')) : null;
   if (!file)
     return (
@@ -162,12 +186,13 @@ export function protectWindowsPaths(text: string): string {
 function urlTransform(url: string, key: string): string {
   if ((key === 'src' || key === 'href') && isAbsoluteLocalPath(decodePath(url))) return url;
   if (key === 'href' && (/^file:/i.test(url) || isNameWithLine(url))) return url;
+  if (key === 'href' && sessionRefOf(url)) return url;
   return defaultUrlTransform(url);
 }
 
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={urlTransform}>
+    <ReactMarkdown remarkPlugins={[remarkGfm, remarkSessionRefs]} components={components} urlTransform={urlTransform}>
       {protectWindowsPaths(text)}
     </ReactMarkdown>
   );

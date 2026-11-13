@@ -86,6 +86,7 @@ export default {
   'hub.mcp.noAuthFlow': 'Попытка входа не найдена — нажмите «Войти» ещё раз',
   'hub.mcp.notConnectedAfterSignIn': 'Сервер не подключился после входа',
   'hub.mcp.notHubManaged': 'MCP видны только у сессий, запущенных или продолженных хабом',
+  'hub.mcp.oauthRegistrationRejected': 'Сервер авторизации запрещает автоматическую регистрацию клиента: укажите для сервера заранее созданный OAuth client ID',
   'hub.mcp.probeBusy': 'Проверка уже идёт',
   'hub.mcp.probeBusyMachine': 'Проверка уже идёт на машине',
   'hub.mcp.probeTooSoon': 'Проверить снова можно через {sec} с',

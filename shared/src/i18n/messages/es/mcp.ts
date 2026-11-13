@@ -214,6 +214,13 @@ export default {
   'mcp.list.oauth.openLogin': 'Abrir la página de inicio de sesión',
   'mcp.list.oauth.error.startFailed':
     'La máquina no pudo iniciar sesión: el servidor o su servicio de autorización no respondió o rechazó la solicitud. Reinténtalo; si se repite, revisa la dirección del servidor.',
+  'mcp.list.oauth.error.registrationRejected': 'El servidor de autorización no permite el registro automático de clientes. Introduce un client ID creado previamente e inicia sesión de nuevo.',
+  'mcp.list.editor.oauthClientId': 'Client ID de OAuth',
+  'mcp.list.editor.oauthClientIdHint': 'Vacío: el cliente se registra automáticamente. Cambiarlo cierra la sesión del servidor en todas las máquinas.',
+  'mcp.wizard.oauthClientId.label': 'Client ID de OAuth (opcional)',
+  'mcp.wizard.oauthClientId.hint': 'Necesario si el servicio de autorización del servidor no permite el registro automático de clientes. Si no, déjalo vacío.',
+  'mcp.wizard.oauthClientId.rejected': 'El servidor de autorización no permite el registro automático de clientes. Introduce un client ID creado previamente e inicia sesión de nuevo.',
+  'mcp.wizard.oauthClientId.retry': 'Guardar e iniciar sesión',
   'mcp.list.oauth.error.startInvalid': 'La máquina devolvió un enlace de inicio de sesión no válido. Actualiza el agente en la máquina e inténtalo de nuevo.',
   'mcp.list.oauth.error.offline': 'La máquina está desconectada. Inicia sesión en otra máquina o espera a que se conecte.',
   'mcp.list.oauth.error.timeout': 'La máquina no respondió a tiempo. Inténtalo de nuevo.',

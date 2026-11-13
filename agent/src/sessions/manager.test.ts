@@ -948,6 +948,8 @@ describe('agent-hub tools of a session (session-peers D1, D7)', () => {
     expect(sp.append).toContain(PEERS_SYSTEM_PROMPT_APPEND);
     expect(PEERS_SYSTEM_PROMPT_APPEND).toMatch(/session_send/);
     expect(PEERS_SYSTEM_PROMPT_APPEND).toMatch(/not by the user/);
+    expect(PEERS_SYSTEM_PROMPT_APPEND).toMatch(/sessions_list returns all of the user's sessions/);
+    expect(PEERS_SYSTEM_PROMPT_APPEND).toMatch(/\[title\]\(session:<id>\)/);
     expect(PEERS_SYSTEM_PROMPT_APPEND).toMatch(/parent="true".*as the user.s instruction/);
     expect(SPAWN_SYSTEM_PROMPT_APPEND).toMatch(/may have refused or asked a question/);
   });

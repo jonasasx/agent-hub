@@ -472,12 +472,15 @@ function ServerConfigEditor({ server, machines, onSave }: { server: McpRegistryR
   const [mode, setMode] = useState(server.mode);
   const [allMachines, setAllMachines] = useState(server.machineScope.allMachines);
   const [machineIds, setMachineIds] = useState(server.machineScope.machineIds);
+  const [oauthClientId, setOauthClientId] = useState(server.oauthClientId ?? '');
+  const remote = server.transport !== 'stdio';
 
   useEffect(() => {
     setMode(server.mode);
     setAllMachines(server.machineScope.allMachines);
     setMachineIds(server.machineScope.machineIds);
-  }, [server.revision, server.mode, server.machineScope.allMachines, server.machineScope.machineIds]);
+    setOauthClientId(server.oauthClientId ?? '');
+  }, [server.revision, server.mode, server.machineScope.allMachines, server.machineScope.machineIds, server.oauthClientId]);
 
   const toggleMachine = (machineId: string) => {
     const selected = machineIds.includes(machineId);
@@ -489,10 +492,13 @@ function ServerConfigEditor({ server, machines, onSave }: { server: McpRegistryR
   };
 
   const save = () => {
+    const clientId = oauthClientId.trim();
     onSave(server.id, {
       revision: server.revision,
       mode,
       machineScope: { allMachines, machineIds: allMachines ? [] : machineIds },
+      // Only a changed client id is sent: the hub signs the server out on every machine when it changes.
+      ...(remote && clientId !== (server.oauthClientId ?? '') ? { oauthClientId: clientId || null } : {}),
     });
   };
 
@@ -523,6 +529,15 @@ function ServerConfigEditor({ server, machines, onSave }: { server: McpRegistryR
             </label>
           ))}
         </fieldset>
+      )}
+      {remote && (
+        <>
+          <label>
+            {t('mcp.list.editor.oauthClientId')}
+            <input className="input" value={oauthClientId} onChange={event => setOauthClientId(event.target.value)} />
+          </label>
+          <small>{t('mcp.list.editor.oauthClientIdHint')}</small>
+        </>
       )}
       <button className="btn" disabled={!allMachines && machineIds.length === 0} onClick={save}>
         {t('mcp.list.editor.save')}
@@ -678,6 +693,7 @@ function errorText(cause: unknown): string {
 function oauthErrorText(cause: unknown): string {
   if (cause instanceof ApiError) {
     if (cause.code === 'oauth_start_failed') return t('mcp.list.oauth.error.startFailed');
+    if (cause.code === 'oauth_registration_rejected') return t('mcp.list.oauth.error.registrationRejected');
     if (cause.code === 'oauth_start_invalid') return t('mcp.list.oauth.error.startInvalid');
     if (cause.code === 'machine_offline') return t('mcp.list.oauth.error.offline');
     if (cause.code === 'timeout') return t('mcp.list.oauth.error.timeout');

@@ -330,6 +330,7 @@ describe('isolation of users (integration)', () => {
     'GET /api/search': { url: `/api/search?q=${encodeURIComponent(o.word)}&cron=1`, list: true },
     'GET /api/runners/:id/stat': { url: `/api/runners/${o.runner}/stat?path=${encodeURIComponent('/home/ubuntu')}` },
     'POST /api/sessions': { url: '/api/sessions', body: { runnerId: o.runner, cwd: '/home/ubuntu/code', model: 'opus', prompt: 'hi' } },
+    'POST /api/sessions/resolve': { url: '/api/sessions/resolve', body: { ids: [o.session] }, list: true },
     'GET /api/sessions/:id': { url: `/api/sessions/${o.session}` },
     'POST /api/sessions/:id/fork': { url: `/api/sessions/${o.session}/fork`, body: { mode: 'copy' } },
     'POST /api/sessions/:id/title/regenerate': { url: `/api/sessions/${o.session}/title/regenerate`, body: {} },

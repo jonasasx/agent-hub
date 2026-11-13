@@ -86,6 +86,7 @@ export default {
   'hub.mcp.noAuthFlow': '로그인 시도를 찾을 수 없습니다. "로그인"을 다시 누르세요',
   'hub.mcp.notConnectedAfterSignIn': '로그인 후에도 서버가 연결되지 않았습니다',
   'hub.mcp.notHubManaged': 'MCP 서버는 허브에서 시작하거나 재개한 세션에서만 볼 수 있습니다',
+  'hub.mcp.oauthRegistrationRejected': '인증 서버가 클라이언트 자동 등록을 허용하지 않습니다. 이 서버에 미리 만든 OAuth 클라이언트 ID를 지정하세요',
   'hub.mcp.probeBusy': '이미 확인이 진행 중입니다',
   'hub.mcp.probeBusyMachine': '이 머신에서 이미 확인이 진행 중입니다',
   'hub.mcp.probeTooSoon': '{sec}초 후에 다시 확인할 수 있습니다',

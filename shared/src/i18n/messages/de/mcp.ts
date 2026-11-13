@@ -213,6 +213,13 @@ export default {
   'mcp.list.oauth.openLogin': 'Anmeldeseite öffnen',
   'mcp.list.oauth.error.startFailed':
     'Der Rechner konnte die Anmeldung nicht starten: Server oder Autorisierungsdienst antworteten nicht oder lehnten ab. Erneut versuchen; bei Wiederholung die Serveradresse prüfen.',
+  'mcp.list.oauth.error.registrationRejected': 'Der Autorisierungsserver erlaubt keine automatische Client-Registrierung. Geben Sie eine vorab erstellte Client-ID ein und melden Sie sich erneut an.',
+  'mcp.list.editor.oauthClientId': 'OAuth-Client-ID',
+  'mcp.list.editor.oauthClientIdHint': 'Leer lassen für automatische Client-Registrierung. Eine Änderung meldet den Server auf allen Rechnern ab.',
+  'mcp.wizard.oauthClientId.label': 'OAuth-Client-ID (optional)',
+  'mcp.wizard.oauthClientId.hint': 'Erforderlich, wenn der Autorisierungsdienst des Servers keine automatische Client-Registrierung erlaubt. Sonst leer lassen.',
+  'mcp.wizard.oauthClientId.rejected': 'Der Autorisierungsserver erlaubt keine automatische Client-Registrierung. Geben Sie eine vorab erstellte Client-ID ein und melden Sie sich erneut an.',
+  'mcp.wizard.oauthClientId.retry': 'Speichern und anmelden',
   'mcp.list.oauth.error.startInvalid': 'Der Rechner hat einen ungültigen Anmeldelink zurückgegeben. Aktualisieren Sie den Agenten auf dem Rechner und versuchen Sie es erneut.',
   'mcp.list.oauth.error.offline': 'Der Rechner ist offline. Melden Sie sich auf einem anderen Rechner an oder warten Sie, bis er sich verbindet.',
   'mcp.list.oauth.error.timeout': 'Der Rechner hat nicht rechtzeitig geantwortet. Versuchen Sie es erneut.',

@@ -153,6 +153,50 @@ describe('session peers (integration)', () => {
     expect(some.length).toBeGreaterThanOrEqual(5);
   });
 
+  it('sessions_list: query matches every word of the title, any order and case; untitled — the folder name', async () => {
+    const list = async (query: string) => ((await ask('x1', A.sid, { op: 'list', query })).result as { sessions: PeerSession[] }).sessions.map(s => s.id);
+    await t.tdb.pool.query(`UPDATE sessions SET title = ''`);
+    await t.tdb.pool.query(`UPDATE sessions SET title = 'Затраты Selectel и резерв раннеров' WHERE id = $1`, [B.id]);
+    await t.tdb.pool.query(`UPDATE sessions SET title = 'Перенос услуг Selectel' WHERE id = $1`, [C.id]);
+    await t.tdb.pool.query(`UPDATE sessions SET title = 'Selectel' WHERE id = $1`, [OTHER]);
+    expect((await list('SELECTEL')).sort()).toEqual([B.id, C.id].sort());
+    expect(await list('selectel затраты')).toEqual([B.id]);
+    expect(await list('  затраты   SELECTEL ')).toEqual([B.id]);
+    expect(await list('selectel gitlab')).toEqual([]);
+    expect(await list('%')).toEqual([]);
+    // untitled sessions are listed under the last segment of the folder, and match it
+    expect((await list('vault')).sort()).toEqual([A.id, D.id, E.id].sort());
+    expect(await list('alice')).toEqual([]);
+  });
+
+  it('sessions_list and session_get show terminal sessions as readOnly; session_send to them is invalid_target; cron stays hidden', async () => {
+    const owner = (await t.tdb.pool.query(`SELECT user_id FROM sessions WHERE id = $1`, [A.id])).rows[0].user_id as string;
+    const add = async (source: string, managed: boolean, title: string) => {
+      const r = await t.tdb.pool.query(
+        `INSERT INTO sessions (user_id, runner_id, claude_session_id, cwd, source, status, is_hub_managed, title) VALUES ($1, 'hp', $2, $3, $4, 'closed', $5, $6) RETURNING id`,
+        [owner, randomUUID(), VAULT, source, managed, title],
+      );
+      return r.rows[0].id as string;
+    };
+    const terminal = await add('terminal', false, 'Затраты Selectel из терминала');
+    const cron = await add('cron', false, 'Selectel по расписанию');
+    try {
+      const found = ((await ask('x1', A.sid, { op: 'list', query: 'selectel терминала' })).result as { sessions: PeerSession[] }).sessions;
+      expect(found.map(s => s.id)).toEqual([terminal]);
+      expect(found[0]).toMatchObject({ readOnly: true, machine: 'HP' });
+      const all = ((await ask('x1', A.sid, { op: 'list', limit: 100 })).result as { sessions: PeerSession[] }).sessions;
+      expect(all.map(s => s.id)).not.toContain(cron);
+      expect(all.find(s => s.id === B.id)).toMatchObject({ readOnly: false });
+      expect((await ask('x1', A.sid, { op: 'get', target: terminal })).result).toMatchObject({ id: terminal, readOnly: true, workingChildren: 0 });
+      expect((await ask('x1', A.sid, { op: 'get', target: cron })).code).toBe('not_found');
+      const before = (await journal(A.id)).length;
+      expect(await send('x1', A, terminal, 'ты тут?')).toMatchObject({ ok: false, code: 'invalid_target' });
+      expect(await journal(A.id)).toHaveLength(before);
+    } finally {
+      await t.tdb.pool.query(`DELETE FROM sessions WHERE id = ANY($1)`, [[terminal, cron]]);
+    }
+  });
+
   it('session_get: details of one session; another owner and an unknown id are not_found', async () => {
     const r = await ask('x1', A.sid, { op: 'get', target: B.id });
     expect(r.ok).toBe(true);

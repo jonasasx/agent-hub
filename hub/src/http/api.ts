@@ -27,6 +27,8 @@ import {
   extraProviderSchema,
   wakeRequestSchema,
   projectSuggestionAnswerSchema,
+  resolveSessionRefsSchema,
+  type SessionRefView,
   type EventsPage,
   type LayoutResponse,
   type ProjectListItem,
@@ -44,7 +46,7 @@ import {
 import type { Db } from '../db/db.js';
 import type { AgentGateway, CommandError } from '../runners/agentGateway.js';
 import { listRunnerViews } from '../runners/repo.js';
-import { eventsPage, projectRef, selectSessions } from '../sessions/repo.js';
+import { eventsPage, projectRef, resolveSessionRefs, selectSessions } from '../sessions/repo.js';
 import { HttpError, type SessionService } from '../sessions/service.js';
 import type { HandoffService } from '../sessions/handoff.js';
 import { getSubagent, listHubChildren, listSubagents, runFile, subagentEventsPage } from '../subagents/repo.js';
@@ -610,6 +612,12 @@ export function registerApi(
       req.log.warn({ err, userId, runnerId: b.runnerId }, 'launch preferences could not be stored');
     }
     return reply.code(201).send(session);
+  });
+
+  /** Change session-links (D4): which UUIDs of the feed are sessions of the user. */
+  app.post('/api/sessions/resolve', async (req): Promise<{ sessions: SessionRefView[] }> => {
+    const b = parse(resolveSessionRefsSchema, req.body);
+    return { sessions: await resolveSessionRefs(db, req.user!.id, b.ids) };
   });
 
   app.get('/api/sessions/:id', async req => sessions.view(await sessions.get(req.user!.id, (req.params as { id: string }).id)));

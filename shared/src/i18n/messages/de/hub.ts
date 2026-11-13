@@ -86,6 +86,7 @@ export default {
   'hub.mcp.noAuthFlow': 'Der Anmeldeversuch wurde nicht gefunden: Klicken Sie erneut auf „Anmelden“',
   'hub.mcp.notConnectedAfterSignIn': 'Der Server hat sich nach der Anmeldung nicht verbunden',
   'hub.mcp.notHubManaged': 'MCP-Server sind nur für Sitzungen sichtbar, die vom Hub gestartet oder fortgesetzt wurden',
+  'hub.mcp.oauthRegistrationRejected': 'Der Autorisierungsserver erlaubt keine automatische Client-Registrierung: Hinterlegen Sie für diesen Server eine vorab erstellte OAuth-Client-ID',
   'hub.mcp.probeBusy': 'Eine Prüfung läuft bereits',
   'hub.mcp.probeBusyMachine': 'Auf dem Rechner läuft bereits eine Prüfung',
   'hub.mcp.probeTooSoon': 'Sie können in {sec} s erneut prüfen',

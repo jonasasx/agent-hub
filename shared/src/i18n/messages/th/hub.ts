@@ -86,6 +86,7 @@ export default {
   'hub.mcp.noAuthFlow': 'ไม่พบความพยายามลงชื่อเข้าใช้: กด "ลงชื่อเข้าใช้" อีกครั้ง',
   'hub.mcp.notConnectedAfterSignIn': 'เซิร์ฟเวอร์ไม่เชื่อมต่อหลังลงชื่อเข้าใช้',
   'hub.mcp.notHubManaged': 'เซิร์ฟเวอร์ MCP จะแสดงเฉพาะเซสชันที่ฮับเริ่มหรือทำงานต่อ',
+  'hub.mcp.oauthRegistrationRejected': 'เซิร์ฟเวอร์ยืนยันสิทธิ์ไม่อนุญาตให้ลงทะเบียนไคลเอนต์อัตโนมัติ: ระบุ OAuth client ID ที่สร้างไว้ล่วงหน้าสำหรับเซิร์ฟเวอร์นี้',
   'hub.mcp.probeBusy': 'กำลังตรวจสอบอยู่แล้ว',
   'hub.mcp.probeBusyMachine': 'กำลังตรวจสอบบนเครื่องอยู่แล้ว',
   'hub.mcp.probeTooSoon': 'ตรวจสอบอีกครั้งได้ในอีก {sec} วินาที',

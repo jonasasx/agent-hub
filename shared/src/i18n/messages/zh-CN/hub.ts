@@ -86,6 +86,7 @@ export default {
   'hub.mcp.noAuthFlow': '未找到此次登录尝试：请再次点击「登录」',
   'hub.mcp.notConnectedAfterSignIn': '登录后服务器未连接',
   'hub.mcp.notHubManaged': '仅能看到由中枢启动或恢复的会话的 MCP 服务器',
+  'hub.mcp.oauthRegistrationRejected': '授权服务器不允许自动注册客户端：请为此服务器设置预先创建的 OAuth 客户端 ID',
   'hub.mcp.probeBusy': '检查正在进行',
   'hub.mcp.probeBusyMachine': '机器上已有检查在进行',
   'hub.mcp.probeTooSoon': '{sec} 秒后可再次检查',

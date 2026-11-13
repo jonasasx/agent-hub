@@ -173,6 +173,16 @@ export const patchUserProjectSchema = z
 export const userProjectListQuerySchema = z.object({ sort: z.enum(['recent', 'name']).default('recent'), includeArchived: z.enum(['0', '1']).default('0') });
 export const userProjectParamsSchema = z.object({ id: z.guid() });
 
+/** POST /api/sessions/resolve (change session-links): UUIDs written in the feed — hub ids or Claude Code session ids. */
+export const resolveSessionRefsSchema = z.object({ ids: z.array(z.guid()).min(1).max(100) });
+/** A UUID of the feed that is a session of the user: `ref` as asked, `id` — the hub session to open. */
+export interface SessionRefView {
+  ref: string;
+  id: string;
+  title: string;
+  runnerName: string | null;
+}
+
 export interface ApiError {
   error: string;
   message?: string;

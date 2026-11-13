@@ -67,7 +67,12 @@ function validateSensitiveInputs(
     }
   }
 }
-export const mcpServerConfigPatchInputSchema = mcpServerConfigInputBaseSchema.partial().omit({ id: true, revision: true, secrets: true }).superRefine(validateSensitiveInputs);
+/** `oauthClientId: null` clears a pre-registered OAuth client: the server returns to dynamic client registration. */
+export const mcpServerConfigPatchInputSchema = mcpServerConfigInputBaseSchema
+  .partial()
+  .omit({ id: true, revision: true, secrets: true })
+  .extend({ oauthClientId: z.string().trim().min(1).max(256).nullable().optional() })
+  .superRefine(validateSensitiveInputs);
 export const mcpServerConfigSchema = mcpServerConfigBaseSchema.superRefine((server, ctx) => {
   if (server.transport === 'stdio' && !server.command) ctx.addIssue({ code: 'custom', path: ['command'], message: 'stdio requires command' });
   if (server.transport !== 'stdio' && !server.url) ctx.addIssue({ code: 'custom', path: ['url'], message: 'HTTP transport requires url' });

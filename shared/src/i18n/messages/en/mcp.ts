@@ -213,6 +213,13 @@ export default {
   'mcp.list.oauth.openLogin': 'Open the sign-in page',
   'mcp.list.oauth.error.startFailed':
     'The machine could not start the sign-in: the server or its authorization service did not answer or rejected the request. Try again; if it repeats, check the server address.',
+  'mcp.list.oauth.error.registrationRejected': 'The authorization server does not allow automatic client registration. Enter a pre-created client ID and sign in again.',
+  'mcp.list.editor.oauthClientId': 'OAuth client ID',
+  'mcp.list.editor.oauthClientIdHint': 'Leave empty for automatic client registration. Changing it signs the server out on all machines.',
+  'mcp.wizard.oauthClientId.label': 'OAuth client ID (optional)',
+  'mcp.wizard.oauthClientId.hint': "Needed when the server's authorization service does not allow automatic client registration. Leave empty otherwise.",
+  'mcp.wizard.oauthClientId.rejected': 'The authorization server does not allow automatic client registration. Enter a pre-created client ID and sign in again.',
+  'mcp.wizard.oauthClientId.retry': 'Save and sign in',
   'mcp.list.oauth.error.startInvalid': 'The machine returned an invalid sign-in link. Update the agent on the machine and try again.',
   'mcp.list.oauth.error.offline': 'The machine is offline. Sign in on another machine or wait until it connects.',
   'mcp.list.oauth.error.timeout': 'The machine did not answer in time. Try again.',

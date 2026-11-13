@@ -47,6 +47,7 @@ export function peersToolDefs(sessionId: string, client: Pick<PeersClient, 'requ
     machine: z.string().max(200).optional().describe('part of the machine name, e.g. X1'),
     project: z.string().max(1000).optional().describe('part of the project directory'),
     status: z.enum(PEER_SESSION_STATUSES).optional(),
+    query: z.string().max(200).optional().describe('words that must all occur in the session title, any order, case-insensitive; searches the whole history'),
     limit: z.number().int().min(1).max(PEER_LIST_MAX).optional().describe('default 50'),
   };
   const getShape = { session: z.guid().describe('session id from sessions_list') };
@@ -66,21 +67,21 @@ export function peersToolDefs(sessionId: string, client: Pick<PeersClient, 'requ
     {
       name: PEERS_TOOLS.list,
       description:
-        'List the Agent Hub sessions of this owner on all machines (X1, HP, VM): id, title, machine, directory, status (working, waiting, permission, sleeping, closed), whether the process is alive, time of last activity; your own session is marked self. Filters: by machine, by a substring of the project directory, by status.',
+        'List the Agent Hub sessions of this owner on all machines (X1, HP, VM): id, title, machine, directory, status (working, waiting, permission, sleeping, closed), whether the process is alive, time of last activity; your own session is marked self; readOnly: true marks a terminal or desktop session that the hub does not run: it can be found and read here, not messaged. Filters: by machine, by a substring of the project directory, by status, by words of the title (query). Newest activity first. To find a session by topic, pass a key word or two as query and retry with other spellings (Latin and Cyrillic, synonyms) if nothing is found.',
       shape: listShape,
       readOnly: true,
       run: a => call({ op: 'list', ...(a as z.infer<z.ZodObject<typeof listShape>>), sessionId }),
     },
     {
       name: PEERS_TOOLS.get,
-      description: 'Details of one Agent Hub session by id from sessions_list: status, machine, directory, number of running subagents and background tasks.',
+      description: 'Details of one Agent Hub session by id from sessions_list: status, machine, directory, readOnly, number of running subagents and background tasks.',
       shape: getShape,
       readOnly: true,
       run: a => call({ op: 'get', sessionId, target: String(a.session) }),
     },
     {
       name: PEERS_TOOLS.send,
-      description: `Send a message to another Agent Hub session, including one on another machine: a replacement for SendMessage for communication between sessions. The recipient gets the message as its next turn, marked with who sent it; a sleeping session wakes up, a busy one receives it after the current turn. There is no reply in this call: the recipient answers with a separate message, which reaches you as a user turn with a peer-message tag. Result: delivered, queued or resumed. Text up to ${PEER_TEXT_MAX} characters; rate limited.`,
+      description: `Send a message to another Agent Hub session, including one on another machine: a replacement for SendMessage for communication between sessions. The recipient gets the message as its next turn, marked with who sent it; a sleeping session wakes up, a busy one receives it after the current turn. There is no reply in this call: the recipient answers with a separate message, which reaches you as a user turn with a peer-message tag. Result: delivered, queued or resumed. A session with readOnly: true in sessions_list cannot be messaged (invalid_target). Text up to ${PEER_TEXT_MAX} characters; rate limited.`,
       shape: sendShape,
       readOnly: false,
       run: a => call({ op: 'send', sessionId, to: String(a.to), text: String(a.text), ...(typeof a.inReplyTo === 'string' ? { inReplyTo: a.inReplyTo } : {}) }),

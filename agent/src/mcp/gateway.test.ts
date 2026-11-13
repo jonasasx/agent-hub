@@ -13,6 +13,9 @@ import { McpRegistryQueue } from './registryQueue.js';
 function fakeProcessEntry() {
   return {
     child: { stdin: { end: vi.fn() }, kill: vi.fn() },
+    serverId: 'fake',
+    serverName: 'fake',
+    family: 'legacy' as const,
     started: Promise.resolve(),
     exited: false,
     exitCode: null,
@@ -1959,5 +1962,161 @@ describe('McpGateway', () => {
     expect(response.headers.get('content-encoding')).toBeNull();
     expect(response.headers.get('content-length')).toBeNull();
     expect(await response.json()).toEqual(JSON.parse(payload));
+  });
+});
+
+// A stdio server that pins its connection to the first client's revision, like FastMCP 4.x: a stateless request (2026-07-28)
+// makes it reject a later initialize with -32022, an initialize makes it reject later stateless requests.
+const PINNING_SERVER = [
+  'let served = null;',
+  "require('readline').createInterface({ input: process.stdin }).on('line', line => {",
+  '  const q = JSON.parse(line);',
+  '  if (q.id === undefined) return;',
+  "  const meta = q.params && q.params._meta && q.params._meta['io.modelcontextprotocol/protocolVersion'];",
+  "  const wanted = q.method === 'initialize' ? q.params.protocolVersion : meta || served;",
+  "  const reply = body => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: q.id, ...body }) + '\\n');",
+  '  if (served && wanted !== served) {',
+  "    const message = served === '2026-07-28' ? 'connection is serving the 2026-07-28 protocol; the initialize handshake is not accepted' : 'connection is serving the ' + served + ' protocol';",
+  '    return reply({ error: { code: -32022, message, data: { supported: [served], requested: wanted } } });',
+  '  }',
+  '  served = wanted;',
+  '  reply({ result: { pid: process.pid, served } });',
+  '});',
+].join('\n');
+
+describe('McpGateway protocol families', () => {
+  let gateway: McpGateway | undefined;
+  afterEach(async () => {
+    await gateway?.stop();
+    gateway = undefined;
+  });
+  const limits = {
+    maxProcesses: 8,
+    maxSessions: 64,
+    maxPending: 256,
+    maxPerServerSessions: 4,
+    idleMs: 20,
+    backoffBaseMs: 10,
+    backoffMaxMs: 30,
+    backoffWindowMs: 100,
+    maxRestarts: 5,
+    healthyResetMs: 100,
+  };
+  const server = (id: string, mode: 'machine-shared' | 'per-session') => ({
+    id,
+    name: 'pinning',
+    enabled: true,
+    transport: 'stdio' as const,
+    mode,
+    command: process.execPath,
+    args: ['-e', PINNING_SERVER],
+    machineScope: { allMachines: true, machineIds: [] },
+    projectIds: [],
+    revision: 1,
+    secrets: [],
+  });
+  type Reply = { id: number; result?: { pid: number; served: string }; error?: { code: number; message: string } };
+  const client = (g: McpGateway, serverId: string, sessionId: string, bearer: string) => {
+    const post = async (body: Record<string, unknown>, version?: string) => {
+      const response = await fetch(`${g.url}?server=${serverId}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${bearer}`,
+          'x-agent-session': sessionId,
+          'content-type': 'application/json',
+          ...(version ? { 'mcp-protocol-version': version } : {}),
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', ...body }),
+        signal: AbortSignal.timeout(5000),
+      });
+      return (response.status === 202 ? {} : await response.json()) as Reply;
+    };
+    return {
+      // Claude Code: the handshake revision, no version header on initialize, the negotiated one afterwards.
+      async legacy(id: number) {
+        const init = await post({ id, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'claude-code', version: '1' } } });
+        await post({ method: 'notifications/initialized' }, '2025-06-18');
+        const listed = await post({ id: id + 1, method: 'tools/list', params: {} }, '2025-06-18');
+        return [init, listed] as const;
+      },
+      // A 2026-07-28 client: no initialize, the version in the header and in every request's _meta.
+      stateless: (id: number) => post({ id, method: 'tools/list', params: { _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28' } } }, '2026-07-28'),
+    };
+  };
+
+  it.each([
+    ['machine-shared', 'stateless first'],
+    ['machine-shared', 'handshake first'],
+    ['per-session', 'stateless first'],
+    ['per-session', 'handshake first'],
+  ] as const)('keeps handshake and stateless clients of a %s server in separate processes (%s)', async (mode, order) => {
+    gateway = new McpGateway(createLogger({ level: 'error', write: () => undefined }), () => undefined, limits);
+    await gateway.start();
+    const serverId = randomUUID();
+    gateway.setRegistry({ protocol: '1.13', revision: 1, generatedAt: 1, registryEnabled: true, servers: [server(serverId, mode)] });
+    // Machine-shared: Claude Code and Codex sessions; per-session: two clients of one session.
+    const sessionA = randomUUID(),
+      sessionB = mode === 'per-session' ? sessionA : randomUUID();
+    const claude = client(gateway, serverId, sessionA, gateway.authorize(serverId, sessionA));
+    const codex = client(gateway, serverId, sessionB, sessionB === sessionA ? gateway.managedBearer(serverId, sessionA)! : gateway.authorize(serverId, sessionB));
+    let stateless: Reply, init: Reply, listed: Reply;
+    if (order === 'stateless first') {
+      stateless = await codex.stateless(1);
+      [init, listed] = await claude.legacy(1);
+    } else {
+      [init, listed] = await claude.legacy(1);
+      stateless = await codex.stateless(1);
+    }
+    expect(init).toMatchObject({ id: 1, result: { served: '2025-06-18' } });
+    expect(listed).toMatchObject({ id: 2, result: { served: '2025-06-18', pid: init.result!.pid } });
+    expect(stateless).toMatchObject({ id: 1, result: { served: '2026-07-28' } });
+    expect(stateless.result!.pid).not.toBe(init.result!.pid);
+    expect(await codex.stateless(3)).toMatchObject({ result: { pid: stateless.result!.pid } });
+  });
+
+  it('logs a JSON-RPC error a stdio process answers with', async () => {
+    const lines: string[] = [];
+    gateway = new McpGateway(createLogger({ level: 'warn', write: line => lines.push(line) }), () => undefined, limits);
+    await gateway.start();
+    const serverId = randomUUID();
+    gateway.setRegistry({ protocol: '1.13', revision: 1, generatedAt: 1, registryEnabled: true, servers: [server(serverId, 'machine-shared')] });
+    const sessionId = randomUUID();
+    const bearer = gateway.authorize(serverId, sessionId);
+    await client(gateway, serverId, sessionId, bearer).legacy(1);
+    // The same client switching revisions is still refused by the process: the gateway passes the error on and logs it.
+    const refused = await fetch(`${gateway.url}?server=${serverId}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${bearer}`, 'x-agent-session': sessionId, 'content-type': 'application/json', 'mcp-protocol-version': '2025-06-18' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/list', params: { _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28' } } }),
+    }).then(response => response.json() as Promise<Reply>);
+    expect(refused).toMatchObject({ id: 7, error: { code: -32022 } });
+    const logged = lines.map(line => JSON.parse(line) as Record<string, unknown>).find(line => line.msg === 'MCP server returned an error');
+    expect(logged).toMatchObject({ level: 'warn', server: 'pinning', family: 'legacy', method: 'tools/list', code: -32022, message: 'connection is serving the 2025-06-18 protocol' });
+  });
+
+  it('releases the process started ahead for a session whose client speaks the stateless revision', async () => {
+    const statuses: Array<{ status?: string }> = [];
+    gateway = new McpGateway(createLogger({ level: 'error', write: () => undefined }), status => statuses.push(status as { status?: string }), limits);
+    await gateway.start();
+    const serverId = randomUUID();
+    gateway.setRegistry({ protocol: '1.13', revision: 1, generatedAt: 1, registryEnabled: true, servers: [server(serverId, 'machine-shared')] });
+    const sessionId = randomUUID(),
+      bearer = randomUUID() + randomUUID();
+    await gateway.startManaged(serverId, sessionId, bearer);
+    const internals = gateway as unknown as { entries: Map<string, { managedSessions: Set<string> }> };
+    expect([...internals.entries.keys()]).toEqual([`${serverId}:1`]);
+    expect(await client(gateway, serverId, sessionId, bearer).stateless(1)).toMatchObject({ result: { served: '2026-07-28' } });
+    expect(internals.entries.get(`${serverId}:1:@stateless`)?.managedSessions.has(sessionId)).toBe(true);
+    await delay(80);
+    // The handshake process idled out; the server stays up in the panel because the stateless one runs.
+    expect([...internals.entries.keys()]).toEqual([`${serverId}:1:@stateless`]);
+    expect(statuses.map(status => status.status)).not.toContain('stopped');
+    // A later start of the same session goes straight to the family its client speaks.
+    await gateway.startManaged(serverId, sessionId, bearer);
+    expect([...internals.entries.keys()]).toEqual([`${serverId}:1:@stateless`]);
+    gateway.revokeSession(sessionId);
+    await delay(80);
+    expect(internals.entries.size).toBe(0);
+    expect(statuses.filter(status => status.status === 'stopped')).toHaveLength(1);
   });
 });

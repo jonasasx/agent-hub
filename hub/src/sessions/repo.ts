@@ -7,6 +7,7 @@ import type {
   PermissionView,
   ProjectKind,
   ProjectRef,
+  SessionRefView,
   SessionView,
   SubscriptionMode,
   SubscriptionNote,
@@ -271,6 +272,29 @@ export async function findSessionByClaudeId(db: Db, runnerId: string, claudeSess
 
 export async function findByClaudeId(db: Db, runnerId: string, claudeSessionId: string): Promise<SessionRow | undefined> {
   return selectSessions(db).where('s.runner_id', '=', runnerId).where('s.claude_session_id', '=', claudeSessionId).executeTakeFirst();
+}
+
+/**
+ * Change session-links (D4): sessions of the user whose hub id or Claude Code session id is one of `ids`. A Claude id on
+ * several machines gives the session with the latest event.
+ */
+export async function resolveSessionRefs(db: Db, userId: string, ids: string[]): Promise<SessionRefView[]> {
+  const wanted = [...new Set(ids.map(id => id.toLowerCase()))];
+  const rows = await db
+    .selectFrom('sessions as s')
+    .leftJoin('runners as r', 'r.id', 's.runner_id')
+    .select(['s.id', 's.claude_session_id', 's.title', 's.last_event_at', 'r.name as runner_name'])
+    .where('s.user_id', '=', userId)
+    .where(eb => eb.or([eb('s.id', 'in', wanted), eb('s.claude_session_id', 'in', wanted)]))
+    .execute();
+  const out: SessionRefView[] = [];
+  for (const ref of wanted) {
+    const own = rows.find(r => r.id === ref);
+    const byClaude = rows.filter(r => r.claude_session_id === ref).sort((a, b) => (b.last_event_at?.getTime() ?? 0) - (a.last_event_at?.getTime() ?? 0));
+    const hit = own ?? byClaude[0];
+    if (hit) out.push({ ref, id: hit.id, title: hit.title, runnerName: hit.runner_name ?? null });
+  }
+  return out;
 }
 
 /** M4b: what the card asks, by the tool (older agents do not send the kind). */

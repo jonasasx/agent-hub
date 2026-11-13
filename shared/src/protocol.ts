@@ -464,6 +464,8 @@ export const peerSessionSchema = z.object({
   processAlive: z.boolean(),
   lastActivityAt: z.string().nullable(),
   self: z.boolean(),
+  /** sessions-list-readonly: true for a session the hub does not run (terminal, desktop) or one that is read-only; it can be read, not messaged. */
+  readOnly: z.boolean().optional(),
   /** Only in `get`: running subagents plus background tasks. */
   workingChildren: nonNegInt.optional(),
 });
@@ -477,6 +479,8 @@ export const peersRequestPayload = z.discriminatedUnion('op', [
     machine: z.string().max(200).optional(),
     project: z.string().max(1000).optional(),
     status: z.enum(PEER_SESSION_STATUSES).optional(),
+    /** sessions-list-query: words that must all occur in the title. */
+    query: z.string().max(200).optional(),
     limit: z.number().int().min(1).max(PEER_LIST_MAX).optional(),
   }),
   z.object({ op: z.literal('get'), ...peerCaller, target: sessionId }),

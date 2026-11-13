@@ -312,6 +312,9 @@ textarea.input { resize: vertical; min-height: 120px; line-height: 1.45; font-si
 /* a wide table scrolls sideways: cells keep whole words (`anywhere` of the bubble would squeeze them to a letter per line) */
 .bubble.md th, .bubble.md td { min-width: 8ch; overflow-wrap: break-word; }
 .bubble.md a { color: var(--info); }
+/* change session-links: a UUID of the feed shown as the title of the session */
+.md-session-link { text-decoration: underline dotted; text-underline-offset: 2px; cursor: pointer; }
+.md-session-link::before { content: "↗ "; opacity: .7; }
 .bubble.md blockquote { margin: 0 0 8px; padding-left: 10px; border-left: 3px solid var(--line-strong); color: var(--muted); }
 .bubble.user-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .partial { opacity: .9; }

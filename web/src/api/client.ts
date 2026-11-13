@@ -203,6 +203,8 @@ export const api = {
   /** Ctrl+K (D10): titles, projects and the text of the replies; the body is parsed by features/search/snippet.ts. */
   search: (q: string, cron: boolean, limit = 12, signal?: AbortSignal) => request<unknown>(`/api/search?q=${enc(q)}&limit=${limit}&cron=${cron ? 1 : 0}`, { signal }),
   session: (id: string) => request<SessionView>(`/api/sessions/${enc(id)}`),
+  /** Change session-links (D2): UUIDs of the feed → sessions of the user; unknown ones are absent from the answer. */
+  resolveSessions: (ids: string[]) => request<{ sessions: import('@agent-hub/shared').SessionRefView[] }>('/api/sessions/resolve', json('POST', { ids })),
   /** The directory for «Перенести в…» (D10); parsed by features/projects/projects.ts. */
   projects: () => request<unknown>('/api/projects'),
   /** Move = pin (D10): `projectId` of the directory or 'none'. */

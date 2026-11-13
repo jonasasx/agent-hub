@@ -694,11 +694,21 @@ export class McpRegistryService {
         }),
       );
     } catch (error) {
-      await this.writeOAuthStatus(userId, serverId, request.machineId, 'failed', null, 'OAuth authorization could not be started');
+      // Agents from 0.8.15 tell a rejected dynamic client registration apart; older ones keep the generic code.
+      const registrationRejected = error instanceof CommandError && error.code === 'oauth_registration_rejected';
+      await this.writeOAuthStatus(
+        userId,
+        serverId,
+        request.machineId,
+        'failed',
+        null,
+        registrationRejected ? 'The authorization server does not allow automatic client registration; set a pre-registered OAuth client id' : 'OAuth authorization could not be started',
+      );
       await this.audit(userId, 'api', 'oauth.start-failed', serverId);
       const agentCode = error instanceof CommandError ? error.code : error instanceof Error ? error.name : 'unknown';
       this.o.log.warn({ serverId, machineId: request.machineId, agentCode }, 'MCP OAuth start failed');
       if (error instanceof CommandError && error.code === 'timeout') throw new HttpError(504, 'timeout', 'OAuth authorization start timed out');
+      if (registrationRejected) throw new HttpError(502, 'oauth_registration_rejected', { key: 'hub.mcp.oauthRegistrationRejected' });
       throw new HttpError(502, 'oauth_start_failed', 'OAuth authorization could not be started');
     }
     const now = Date.now();
@@ -809,9 +819,16 @@ export class McpRegistryService {
     const server = await this.o.db.selectFrom('mcp_registry_servers').select(['id', 'config']).where('user_id', '=', userId).where('id', '=', serverId).executeTakeFirst();
     if (!server) throw new HttpError(404, 'mcp_server_not_found', 'MCP server not found');
     await this.oauthMachine(userId, serverId, request.machineId, false);
+    await this.signOutEverywhere(userId, serverId, server.config);
+    await this.audit(userId, 'api', 'oauth.revoke', serverId);
+    await this.syncUser(userId);
+    return mcpRegistryOAuthRevokeResponseSchema.parse({ serverId, machineId: request.machineId, state: 'needs-login' });
+  }
+  /** Drops the server's OAuth tokens and pending flows, asks agents to forget them and marks every allowed machine `needs-login`. */
+  private async signOutEverywhere(userId: string, serverId: string, config: Cfg) {
     this.clearOAuthFlowsForServer(userId, serverId);
     await this.o.db.deleteFrom('mcp_oauth_tokens').where('user_id', '=', userId).where('server_id', '=', serverId).execute();
-    const scope = server.config.machineScope as { allMachines?: boolean; machineIds?: string[] } | undefined;
+    const scope = config.machineScope as { allMachines?: boolean; machineIds?: string[] } | undefined;
     const runners = await this.o.db.selectFrom('runners').select('id').where('user_id', '=', userId).where('state', '=', 'active').execute();
     const allowed = runners.filter(runner => !scope || scope.allMachines === true || scope.machineIds?.includes(runner.id) === true);
     await Promise.all(
@@ -827,9 +844,26 @@ export class McpRegistryService {
         await this.writeOAuthStatus(userId, serverId, runner.id, 'needs-login', null, null, { registryReady: false, validationState: 'unchecked', validatedRevision: null });
       }),
     );
-    await this.audit(userId, 'api', 'oauth.revoke', serverId);
-    await this.syncUser(userId);
-    return mcpRegistryOAuthRevokeResponseSchema.parse({ serverId, machineId: request.machineId, state: 'needs-login' });
+  }
+  /**
+   * A token belongs to the pair «authorization server, client»: a new URL origin or client id makes the old one useless or sends it
+   * to another origin. Only servers that already went through OAuth are signed out — a plain server must not get `needs-login`.
+   */
+  private async resetOAuthOnIdentityChange(userId: string, serverId: string, before: Cfg, after: Cfg): Promise<boolean> {
+    const origin = (url: unknown) => {
+      try {
+        return new URL(String(url)).origin;
+      } catch {
+        return String(url ?? '');
+      }
+    };
+    if (origin(before.url) === origin(after.url) && (before.oauthClientId ?? null) === (after.oauthClientId ?? null)) return false;
+    const token = await this.o.db.selectFrom('mcp_oauth_tokens').select('server_id').where('user_id', '=', userId).where('server_id', '=', serverId).executeTakeFirst();
+    const status = await this.o.db.selectFrom('mcp_oauth_statuses').select('server_id').where('user_id', '=', userId).where('server_id', '=', serverId).executeTakeFirst();
+    if (!token && !status) return false;
+    await this.signOutEverywhere(userId, serverId, after);
+    await this.audit(userId, 'api', 'oauth.reset', serverId);
+    return true;
   }
   async validateOAuthServer(userId: string, serverId: string, body: unknown) {
     const request = parse(mcpRegistryOAuthValidateRequestSchema, body);
@@ -1116,6 +1150,7 @@ export class McpRegistryService {
       revision: revision + 1,
       secrets: owned.config.secrets ?? [],
     } as Cfg;
+    if (merged.oauthClientId === null) delete merged.oauthClientId;
     const resolved = await this.resolveConfigSecretBindings(userId, merged, secretWrites, new Map(), { serverId: id }, owned.config);
     const patch = parse(mcpServerConfigSchema, resolved.config) as Cfg & { name: string; enabled: boolean; secrets: Array<{ secretId: string; name: string; state: string }> };
     const updated = await this.o.db
@@ -1138,6 +1173,7 @@ export class McpRegistryService {
       .executeTakeFirst();
     if (!updated) throw new HttpError(409, 'revision_conflict', 'Registry revision changed');
     await this.persistSecretWrites(userId, { serverId: id }, resolved.writes);
+    await this.resetOAuthOnIdentityChange(userId, id, owned.config, patch);
     await this.bump(userId);
     await this.audit(userId, 'api', 'server.update', id);
     await this.syncUser(userId);
@@ -1512,13 +1548,13 @@ export class McpRegistryService {
     draft: { config: Cfg; runner_id: string | null; session_id: string | null; server_id: string; base_revision: string | number | null },
     needsAuth: boolean,
   ) {
-    if (needsAuth) throw new HttpError(409, 'validation_required', 'Sign in before confirming this MCP server update');
     if (draft.base_revision === null) throw new HttpError(409, 'revision_conflict', 'Original MCP server revision is missing');
     const serverId = draft.server_id;
     const baseRevision = Number(draft.base_revision);
     const config = { ...draft.config, id: serverId, revision: baseRevision + 1 } as Cfg;
     parse(mcpServerConfigSchema, config);
     const refs = [...new Set(((config.secrets ?? []) as Array<{ secretId?: string }>).map(secret => secret.secretId).filter((id): id is string => !!id))];
+    const before = await this.o.db.selectFrom('mcp_registry_servers').select('config').where('user_id', '=', userId).where('id', '=', serverId).executeTakeFirst();
     try {
       await this.o.db.transaction().execute(async trx => {
         const updated = await trx
@@ -1542,7 +1578,7 @@ export class McpRegistryService {
           .where('user_id', '=', userId)
           .where('id', '=', draftId)
           .where('revision', '=', String(draftRevision))
-          .where('state', '=', 'checked')
+          .where('state', '=', needsAuth ? 'needs_auth' : 'checked')
           .returning('id')
           .executeTakeFirst();
         if (!claimed) throw new HttpError(409, 'revision_conflict', 'Draft changed before confirmation');
@@ -1556,11 +1592,25 @@ export class McpRegistryService {
       if ((error as { code?: string }).code === '23505') throw new HttpError(409, 'name_taken', 'An MCP server already uses this name');
       throw error;
     }
+    if (before) await this.resetOAuthOnIdentityChange(userId, serverId, before.config, config);
+    if (needsAuth) {
+      // Like a new OAuth server: every machine in scope waits for sign-in, the server stays out of snapshots until then.
+      const scope = config.machineScope as { allMachines?: boolean; machineIds?: string[] } | undefined;
+      const runners = await this.o.db.selectFrom('runners').select('id').where('user_id', '=', userId).where('state', '=', 'active').execute();
+      for (const runner of runners) {
+        if (scope && !scope.allMachines && !scope.machineIds?.includes(runner.id)) continue;
+        await this.writeOAuthStatus(userId, serverId, runner.id, 'needs-login', null, null, {
+          validationState: 'needs_auth',
+          validatedRevision: baseRevision + 1,
+          registryReady: false,
+        });
+      }
+    }
     const registryRevision = await this.bump(userId);
     await this.audit(userId, draft.session_id ?? 'api', 'server.update-confirm', serverId, draftId);
     await this.syncUser(userId);
     let sessionUpdate: Cfg | undefined;
-    if (draft.session_id && draft.runner_id && this.caps(draft.runner_id)?.has('mcp.registry.v1')) {
+    if (!needsAuth && draft.session_id && draft.runner_id && this.caps(draft.runner_id)?.has('mcp.registry.v1')) {
       const current = await this.o.db.selectFrom('sessions').select(['user_id', 'runner_id']).where('id', '=', draft.session_id).where('user_id', '=', userId).executeTakeFirst();
       if (current?.runner_id === draft.runner_id) {
         await this.o.db
@@ -1591,7 +1641,7 @@ export class McpRegistryService {
         sessionUpdate = { activation: 'pending', applied: false };
       }
     }
-    return { serverId, state: 'connected', server: safe(config), ...(sessionUpdate ? { sessionUpdate } : {}) };
+    return { serverId, state: needsAuth ? 'needs-login' : 'connected', server: safe(config), ...(sessionUpdate ? { sessionUpdate } : {}) };
   }
   async connect(userId: string, id: string, body: unknown, unchecked = false) {
     const row = await this.o.db

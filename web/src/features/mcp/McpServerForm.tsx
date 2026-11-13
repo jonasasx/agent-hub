@@ -38,6 +38,8 @@ interface McpServerFormProps {
   onSecretChange: (key: string, value: string) => void;
   onSaveSecret: (key: string) => void;
   onStartOAuth: () => void;
+  oauthRegistrationRejected: boolean;
+  onSaveOAuthClientId: (clientId: string) => void;
   persistedServerId: string;
   oauthStatus: McpRegistryOAuthStatus | null;
   oauthValidationState: McpRegistryOAuthValidateResponse['state'] | null;
@@ -169,6 +171,11 @@ function HttpParameters({ state, onPatch }: Pick<McpServerFormProps, 'state' | '
         <textarea className="input" value={state.headersText} onChange={event => onPatch({ headersText: event.target.value })} />
       </label>
       <p className="mcp-field-hint">{t('mcp.form.headersHint')}</p>
+      <label>
+        {t('mcp.wizard.oauthClientId.label')}
+        <input className="input" value={state.oauthClientId} onChange={event => onPatch({ oauthClientId: event.target.value })} />
+      </label>
+      <p className="mcp-field-hint">{t('mcp.wizard.oauthClientId.hint')}</p>
     </>
   );
 }
@@ -306,6 +313,8 @@ function ValidationStep({
   onSecretChange,
   onSaveSecret,
   onStartOAuth,
+  oauthRegistrationRejected,
+  onSaveOAuthClientId,
   persistedServerId,
   oauthStatus,
   oauthValidationState,
@@ -351,6 +360,9 @@ function ValidationStep({
           validationState={oauthValidationState}
           link={oauthLink}
           manualCallback={oauthManualCallback}
+          registrationRejected={oauthRegistrationRejected}
+          initialClientId={state.oauthClientId}
+          onSaveClientId={onSaveOAuthClientId}
           onComplete={onOAuthComplete}
           onStart={onStartOAuth}
           onValidate={onOAuthValidate}
@@ -557,6 +569,9 @@ function OAuthStep({
   validationState,
   link,
   manualCallback,
+  registrationRejected,
+  initialClientId,
+  onSaveClientId,
   onComplete,
   onStart,
   onValidate,
@@ -568,6 +583,9 @@ function OAuthStep({
   validationState: McpRegistryOAuthValidateResponse['state'] | null;
   link: string;
   manualCallback: boolean;
+  registrationRejected: boolean;
+  initialClientId: string;
+  onSaveClientId: (clientId: string) => void;
   onComplete: (callbackUrl: string) => Promise<boolean>;
   onStart: () => void;
   onValidate: () => void;
@@ -575,6 +593,7 @@ function OAuthStep({
 }) {
   const t = useT();
   const [pastedUrl, setPastedUrl] = useState('');
+  const [clientId, setClientId] = useState(initialClientId);
   const signedIn = status?.state === 'signed-in';
   const showPaste = manualCallback && status?.state === 'pending';
   const complete = async () => {
@@ -588,7 +607,19 @@ function OAuthStep({
         <span className={`pill mcp-status-pill ${mcpStatusTone(status?.state ?? 'needs-login')}`}>{oauthStatusLabel(status?.state ?? 'needs-login')}</span>
       </p>
       {status?.error && <small role="alert">{status.error}</small>}
-      {!signedIn && (
+      {!signedIn && registrationRejected && (
+        <>
+          <label>
+            {t('mcp.wizard.oauthClientId.label')}
+            <input className="input" value={clientId} disabled={busy} onChange={event => setClientId(event.target.value)} />
+          </label>
+          <small role="note">{t('mcp.wizard.oauthClientId.hint')}</small>
+          <button className="btn primary" disabled={!machineId || busy || !clientId.trim()} onClick={() => onSaveClientId(clientId.trim())}>
+            {t('mcp.wizard.oauthClientId.retry')}
+          </button>
+        </>
+      )}
+      {!signedIn && !registrationRejected && (
         <button className="btn" disabled={!machineId || busy} onClick={onStart}>
           {t('mcp.list.oauth.signIn')}
         </button>

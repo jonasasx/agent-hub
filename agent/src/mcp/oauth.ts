@@ -138,8 +138,15 @@ export class McpOAuthManager {
     const clientId = payload.oauthClientId ?? known?.oauthClientId;
     const clientInfo = clientId ? { client_id: clientId, redirect_uris: [payload.redirectUri] } : undefined;
     const provider = new OAuthProvider(payload.redirectUri, payload.flowId, payload.serverId, payload.machineId, payload.serverUrl, clientInfo ? { clientInfo } : undefined);
+    // Before the authorization URL the only POST `auth()` makes is dynamic client registration: a 4xx there is the server's policy.
+    let registrationStatus: number | undefined;
+    const fetchFn = async (input: string | URL, init?: RequestInit): Promise<Response> => {
+      const response = await fetch(input, init);
+      if (init?.method?.toUpperCase() === 'POST' && response.status >= 400 && response.status < 500) registrationStatus = response.status;
+      return response;
+    };
     try {
-      const result = await auth(provider, { serverUrl: provider.serverUrl });
+      const result = await auth(provider, { serverUrl: provider.serverUrl, fetchFn });
       if (result !== 'REDIRECT' || !provider.authorizationUrl || !provider.codeVerifierValue) throw new Error('OAuth server did not start an authorization flow');
       const timer = setTimeout(() => {
         const current = this.pending.get(payload.flowId);
@@ -154,6 +161,12 @@ export class McpOAuthManager {
       this.pending.set(payload.flowId, { provider, expiresAt, timer });
       return { flowId: payload.flowId, authorizationUrl: provider.authorizationUrl.toString(), state: provider.stateValue, expiresAt };
     } catch (error) {
+      const noRegistration = error instanceof Error && error.message.includes('does not support dynamic client registration');
+      if (!clientId && (registrationStatus !== undefined || noRegistration)) {
+        // The response body may echo server policy details: log the status only.
+        this.log.warn('MCP OAuth client registration rejected', { serverId: payload.serverId, status: registrationStatus ?? null });
+        throw new CmdError('oauth_registration_rejected', 'The authorization server does not allow dynamic client registration; set a pre-registered OAuth client id');
+      }
       this.log.warn('MCP OAuth start failed', { serverId: payload.serverId, error: error instanceof Error ? error.message : String(error) });
       throw new CmdError('oauth_start_failed', 'MCP OAuth discovery or authorization setup failed');
     }

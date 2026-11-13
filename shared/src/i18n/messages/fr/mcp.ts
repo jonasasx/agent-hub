@@ -215,6 +215,13 @@ export default {
   'mcp.list.oauth.openLogin': 'Ouvrir la page de connexion',
   'mcp.list.oauth.error.startFailed':
     "La machine n'a pas pu lancer la connexion : le serveur ou son service d'autorisation n'a pas répondu ou a refusé la requête. Réessayez ; si l'erreur se répète, vérifiez l'adresse du serveur.",
+  'mcp.list.oauth.error.registrationRejected': "Le serveur d'autorisation n'autorise pas l'enregistrement automatique du client. Saisissez un client ID créé au préalable et reconnectez-vous.",
+  'mcp.list.editor.oauthClientId': 'Client ID OAuth',
+  'mcp.list.editor.oauthClientIdHint': 'Vide : le client est enregistré automatiquement. Le modifier déconnecte le serveur sur toutes les machines.',
+  'mcp.wizard.oauthClientId.label': 'Client ID OAuth (facultatif)',
+  'mcp.wizard.oauthClientId.hint': "Nécessaire si le service d'autorisation du serveur n'autorise pas l'enregistrement automatique du client. Sinon, laissez vide.",
+  'mcp.wizard.oauthClientId.rejected': "Le serveur d'autorisation n'autorise pas l'enregistrement automatique du client. Saisissez un client ID créé au préalable et reconnectez-vous.",
+  'mcp.wizard.oauthClientId.retry': 'Enregistrer et se connecter',
   'mcp.list.oauth.error.startInvalid': "La machine a renvoyé un lien de connexion invalide. Mettez à jour l'agent sur la machine et réessayez.",
   'mcp.list.oauth.error.offline': "La machine est hors ligne. Connectez-vous sur une autre machine ou attendez qu'elle se connecte.",
   'mcp.list.oauth.error.timeout': "La machine n'a pas répondu à temps. Réessayez.",

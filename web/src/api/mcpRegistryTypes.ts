@@ -93,8 +93,10 @@ export interface McpRegistryPersistedDraftResponse {
   server: McpServerConfig;
 }
 
-export type McpRegistryServerUpdate = Partial<Omit<McpServerConfig, 'id' | 'revision' | 'secrets'>> & {
+export type McpRegistryServerUpdate = Partial<Omit<McpServerConfig, 'id' | 'revision' | 'secrets' | 'oauthClientId'>> & {
   revision: number;
+  /** `null` clears a pre-registered client: the server returns to dynamic client registration. */
+  oauthClientId?: string | null;
 };
 
 export interface McpProjectOverride {

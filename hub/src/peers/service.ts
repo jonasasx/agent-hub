@@ -179,7 +179,17 @@ export class PeersService {
     if (!runner || !protocolAtLeast(runner.protocol_version, PEERS_PROTOCOL)) throw new PeerError('unsupported', 'the machine agent does not support messaging between sessions');
     const caller = await findSessionByClaudeId(this.o.db, runnerId, req.sessionId);
     if (!caller) throw new PeerError('not_found', 'the calling session is unknown to the hub');
-    if (req.op === 'list') return { sessions: await peerCatalog(this.o.db, caller.user_id, caller.id, { machine: req.machine, project: req.project, status: req.status, limit: req.limit ?? 50 }) };
+    if (req.op === 'list')
+      return {
+        sessions: await peerCatalog(this.o.db, caller.user_id, caller.id, {
+          machine: req.machine,
+          project: req.project,
+          status: req.status,
+          query: req.query,
+          withReadOnly: true,
+          limit: req.limit ?? 50,
+        }),
+      };
     if (req.op === 'get') return this.get(caller, req.target);
     if (req.op === 'projects' || req.op === 'project_create' || req.op === 'project_update') {
       if (!protocolAtLeast(runner.protocol_version, PROJECT_TOOLS_PROTOCOL)) throw new PeerError('unsupported', 'the machine agent does not support the project tools: update the agent');
@@ -246,7 +256,7 @@ export class PeersService {
   }
 
   private async get(caller: SessionBase, target: string): Promise<PeerSession> {
-    const [s] = await peerCatalog(this.o.db, caller.user_id, caller.id, { limit: 1 }, target);
+    const [s] = await peerCatalog(this.o.db, caller.user_id, caller.id, { withReadOnly: true, limit: 1 }, target);
     if (!s) throw new PeerError('not_found', 'session not found');
     const row = await getSession(this.o.db, target, caller.user_id);
     return { ...s, workingChildren: Number(row?.children_working ?? 0) };
@@ -262,8 +272,9 @@ export class PeersService {
 
   /** The common path of a message and a report: the limits, the envelope, SessionService.sendMessage, the journal. */
   private async deliver(caller: SessionBase, machine: string, to: string, body: string, inReplyTo: string | undefined, kind: PeerJournalKind): Promise<{ result: PeerSendResult; messageId: string }> {
-    const [target] = await peerCatalog(this.o.db, caller.user_id, caller.id, { limit: 1 }, to);
+    const [target] = await peerCatalog(this.o.db, caller.user_id, caller.id, { withReadOnly: true, limit: 1 }, to);
     if (!target) throw new PeerError('not_found', 'session not found');
+    if (target.readOnly) throw new PeerError('invalid_target', 'the session is read-only: it is not run by the hub, so it can be found and read, not messaged');
 
     const id = randomUUID();
     const at = this.now();

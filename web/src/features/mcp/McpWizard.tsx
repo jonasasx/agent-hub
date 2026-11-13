@@ -23,6 +23,7 @@ export interface McpWizardState {
   scopeMachineIds: string[];
   machineId: string;
   oauthUrl: string;
+  oauthClientId: string;
 }
 
 type WizardAction = { type: 'reset' } | { type: 'patch'; patch: Partial<McpWizardState> } | { type: 'secret-value'; key: string; value: string };
@@ -44,6 +45,7 @@ const initialState: McpWizardState = {
   scopeMachineIds: [],
   machineId: '',
   oauthUrl: '',
+  oauthClientId: '',
 };
 
 function wizardReducer(state: McpWizardState, action: WizardAction): McpWizardState {
@@ -98,6 +100,7 @@ function createInitialState(draft: McpRegistryDraftView | null): McpWizardState 
     scope,
     scopeMachineIds: machineIds,
     machineId: selectedMachineId,
+    oauthClientId: server.oauthClientId ?? '',
   };
 }
 
@@ -160,6 +163,7 @@ function serverCandidate(state: McpWizardState, draft: McpRegistryDraftView | nu
       : {
           url: state.url,
           headers: parseEntries(state.headersText, state, draft),
+          ...(state.oauthClientId.trim() ? { oauthClientId: state.oauthClientId.trim() } : {}),
           ...(draft?.server.urlSecretId && state.url === draft.server.url
             ? { urlSecretId: draft.server.urlSecretId }
             : state.url.includes('__AGENT_HUB_SECRET__')
@@ -361,6 +365,8 @@ export function McpWizard({ initialDraft, sessionId, machines, onDraftChange, on
   const [oauthLink, setOauthLink] = useState('');
   // A pre-registered client sends the browser to localhost: the user pastes that address back.
   const [oauthManualCallback, setOauthManualCallback] = useState(false);
+  // The authorization server refused dynamic client registration: ask for a pre-registered client id.
+  const [oauthRegistrationRejected, setOauthRegistrationRejected] = useState(false);
 
   useEffect(() => {
     if (!persistedServerId || oauthStatus?.state !== 'pending') return;
@@ -573,7 +579,7 @@ export function McpWizard({ initialDraft, sessionId, machines, onDraftChange, on
     }
   };
 
-  const startOAuth = async () => {
+  const startOAuth = async (clientId?: string) => {
     if (!persistedServerId) return;
     const loginWindow = window.open('about:blank', '_blank');
     setBusy(true);
@@ -581,7 +587,15 @@ export function McpWizard({ initialDraft, sessionId, machines, onDraftChange, on
     setOauthLink('');
 
     try {
+      if (clientId !== undefined) {
+        const registry = await api.mcpRegistry();
+        const server = registry.servers.find(item => item.id === persistedServerId);
+        if (!server) throw new Error(t('mcp.wizard.notDone'));
+        await api.mcpRegistryPatchServer(persistedServerId, { revision: server.revision, oauthClientId: clientId });
+        patch({ oauthClientId: clientId });
+      }
       const result = await api.mcpRegistryOAuthStart(persistedServerId, { machineId: state.machineId });
+      setOauthRegistrationRejected(false);
       setOauthManualCallback(result.callback === 'manual');
       setOauthStatus({ serverId: result.serverId, machineId: result.machineId, state: result.state, validationState: 'needs_auth', connected: false, expiresAt: result.expiresAt });
       setOauthValidationState(null);
@@ -594,7 +608,13 @@ export function McpWizard({ initialDraft, sessionId, machines, onDraftChange, on
       }
     } catch (cause) {
       loginWindow?.close();
-      reportError(cause);
+      if (cause instanceof ApiError && cause.code === 'oauth_registration_rejected') {
+        setOauthRegistrationRejected(true);
+        setError(t('mcp.wizard.oauthClientId.rejected'));
+        setErrorDetails('');
+      } else {
+        reportError(cause);
+      }
     } finally {
       setBusy(false);
     }
@@ -685,6 +705,8 @@ export function McpWizard({ initialDraft, sessionId, machines, onDraftChange, on
         onSecretChange={changeSecretValue}
         onSaveSecret={key => void saveSecret(key)}
         onStartOAuth={() => void startOAuth()}
+        oauthRegistrationRejected={oauthRegistrationRejected}
+        onSaveOAuthClientId={clientId => void startOAuth(clientId)}
         persistedServerId={persistedServerId}
         oauthStatus={oauthStatus}
         oauthValidationState={oauthValidationState}

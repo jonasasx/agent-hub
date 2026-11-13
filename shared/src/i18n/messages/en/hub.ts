@@ -86,6 +86,7 @@ export default {
   'hub.mcp.noAuthFlow': 'The sign-in attempt was not found: click "Sign in" again',
   'hub.mcp.notConnectedAfterSignIn': 'The server did not connect after sign-in',
   'hub.mcp.notHubManaged': 'MCP servers are visible only for sessions started or resumed by the hub',
+  'hub.mcp.oauthRegistrationRejected': 'The authorization server does not allow automatic client registration: set a pre-registered OAuth client ID for this server',
   'hub.mcp.probeBusy': 'A check is already running',
   'hub.mcp.probeBusyMachine': 'A check is already running on the machine',
   'hub.mcp.probeTooSoon': 'You can check again in {sec} s',

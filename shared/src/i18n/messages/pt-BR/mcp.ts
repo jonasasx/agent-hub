@@ -214,6 +214,13 @@ export default {
   'mcp.list.oauth.openLogin': 'Abrir a página de login',
   'mcp.list.oauth.error.startFailed':
     'A máquina não conseguiu iniciar o login: o servidor ou seu serviço de autorização não respondeu ou recusou a solicitação. Tente de novo; se repetir, verifique o endereço do servidor.',
+  'mcp.list.oauth.error.registrationRejected': 'O servidor de autorização não permite o registro automático de clientes. Informe um client ID criado previamente e faça login novamente.',
+  'mcp.list.editor.oauthClientId': 'Client ID OAuth',
+  'mcp.list.editor.oauthClientIdHint': 'Vazio: o cliente é registrado automaticamente. Alterar encerra o login do servidor em todas as máquinas.',
+  'mcp.wizard.oauthClientId.label': 'Client ID OAuth (opcional)',
+  'mcp.wizard.oauthClientId.hint': 'Necessário quando o serviço de autorização do servidor não permite o registro automático de clientes. Caso contrário, deixe vazio.',
+  'mcp.wizard.oauthClientId.rejected': 'O servidor de autorização não permite o registro automático de clientes. Informe um client ID criado previamente e faça login novamente.',
+  'mcp.wizard.oauthClientId.retry': 'Salvar e entrar',
   'mcp.list.oauth.error.startInvalid': 'A máquina retornou um link de login inválido. Atualize o agente na máquina e tente de novo.',
   'mcp.list.oauth.error.offline': 'A máquina está offline. Faça login em outra máquina ou aguarde ela se conectar.',
   'mcp.list.oauth.error.timeout': 'A máquina não respondeu a tempo. Tente de novo.',

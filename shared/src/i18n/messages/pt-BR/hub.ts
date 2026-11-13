@@ -86,6 +86,7 @@ export default {
   'hub.mcp.noAuthFlow': 'A tentativa de login não foi encontrada: clique em “Entrar” novamente',
   'hub.mcp.notConnectedAfterSignIn': 'O servidor não se conectou após o login',
   'hub.mcp.notHubManaged': 'Os servidores MCP só são visíveis em sessões iniciadas ou retomadas pelo hub',
+  'hub.mcp.oauthRegistrationRejected': 'O servidor de autorização não permite o registro automático de clientes: defina um client ID OAuth criado previamente para este servidor',
   'hub.mcp.probeBusy': 'Uma verificação já está em andamento',
   'hub.mcp.probeBusyMachine': 'Uma verificação já está em andamento na máquina',
   'hub.mcp.probeTooSoon': 'Você poderá verificar novamente em {sec} s',

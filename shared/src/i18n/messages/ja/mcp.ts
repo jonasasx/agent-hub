@@ -210,6 +210,13 @@ export default {
   'mcp.list.oauth.openLogin': 'サインインページを開く',
   'mcp.list.oauth.error.startFailed':
     'マシンでサインインを開始できませんでした。サーバーまたはその認可サービスが応答しないか、要求を拒否しました。もう一度お試しください。繰り返す場合はサーバーのアドレスを確認してください。',
+  'mcp.list.oauth.error.registrationRejected': '認可サーバーはクライアントの自動登録を許可していません。事前作成したクライアント ID を入力して、もう一度サインインしてください。',
+  'mcp.list.editor.oauthClientId': 'OAuth クライアント ID',
+  'mcp.list.editor.oauthClientIdHint': '空欄の場合、クライアントは自動登録されます。変更するとすべてのマシンでサーバーからサインアウトします。',
+  'mcp.wizard.oauthClientId.label': 'OAuth クライアント ID（任意）',
+  'mcp.wizard.oauthClientId.hint': 'サーバーの認可サービスがクライアントの自動登録を許可していない場合に必要です。それ以外は空欄のままにしてください。',
+  'mcp.wizard.oauthClientId.rejected': '認可サーバーはクライアントの自動登録を許可していません。事前作成したクライアント ID を入力して、もう一度サインインしてください。',
+  'mcp.wizard.oauthClientId.retry': '保存してサインイン',
   'mcp.list.oauth.error.startInvalid': 'マシンが無効なサインインリンクを返しました。マシンのエージェントを更新してもう一度お試しください。',
   'mcp.list.oauth.error.offline': 'マシンがオフラインです。別のマシンでサインインするか、接続されるまでお待ちください。',
   'mcp.list.oauth.error.timeout': 'マシンが時間内に応答しませんでした。もう一度お試しください。',

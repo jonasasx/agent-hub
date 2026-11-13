@@ -16,6 +16,7 @@ describe('MCP registry draft tools', () => {
   const fakeAgents: FakeAgent[] = [];
   const secret = 'MCP_REGISTRY_TEST_SECRET_7c3ef3';
   let validationFailureCode: string | null = null;
+  let oauthStartFailureCode: string | null = null;
   let validationResult: Record<string, unknown> | null = null;
   let validationHold: (() => void) | null = null;
   let validationStarted = false;
@@ -99,17 +100,21 @@ describe('MCP registry draft tools', () => {
               ? { exists: true, isDir: true }
               : type === 'session.start'
                 ? { models: [] }
-                : type === 'mcp.oauth.start'
+                : type === 'mcp.oauth.start' && oauthStartFailureCode
                   ? (() => {
-                      const state = `hub-oauth-state-${String(payload.flowId)}`;
-                      const authUrl = new URL('https://idp.example.test/authorize');
-                      authUrl.searchParams.set('redirect_uri', String(payload.redirectUri));
-                      authUrl.searchParams.set('state', state);
-                      return { flowId: payload.flowId, authorizationUrl: authUrl.toString(), state, expiresAt: Date.now() + 9 * 60_000 };
+                      throw { code: oauthStartFailureCode, message: 'UNSAFE_AUTH_SERVER_BODY Trusted Hosts insufficient_scope' };
                     })()
-                  : type === 'mcp.registry.validate'
-                    ? { draftId: payload.draftId, revision: payload.revision, ok: true, status: 'checked', tools: [], oauthRequired: false }
-                    : {};
+                  : type === 'mcp.oauth.start'
+                    ? (() => {
+                        const state = `hub-oauth-state-${String(payload.flowId)}`;
+                        const authUrl = new URL('https://idp.example.test/authorize');
+                        authUrl.searchParams.set('redirect_uri', String(payload.redirectUri));
+                        authUrl.searchParams.set('state', state);
+                        return { flowId: payload.flowId, authorizationUrl: authUrl.toString(), state, expiresAt: Date.now() + 9 * 60_000 };
+                      })()
+                    : type === 'mcp.registry.validate'
+                      ? { draftId: payload.draftId, revision: payload.revision, ok: true, status: 'checked', tools: [], oauthRequired: false }
+                      : {};
     });
     await agent.next('welcome');
     userId = (await t.tdb.pool.query<{ id: string }>(`select id from users where email=$1`, ['alice@example.com'])).rows[0]!.id;
@@ -1572,6 +1577,161 @@ describe('MCP registry draft tools', () => {
     expect(sameOrigin.payload).toMatchObject({ ok: true });
     const sameOriginValidation = agent.messages.slice(sameOriginBefore).find(message => message.type === 'mcp.registry.validate' && message.payload.draftId !== sameOriginServerId);
     expect(sameOriginValidation?.payload).toMatchObject({ oauthServerId: sameOriginServerId });
+  });
+
+  it('maps a rejected dynamic client registration to its own code and keeps the old agent code generic', async () => {
+    const created = await t.hub.app.inject({
+      method: 'POST',
+      url: '/api/mcp/registry',
+      cookies: { ah_session: cookie },
+      headers: { origin: PUBLIC_URL },
+      payload: {
+        server: {
+          ...candidate(`registry_oauth_dcr_rejected_${randomUUID().slice(0, 8)}`).server,
+          transport: 'http',
+          mode: 'remote',
+          url: 'https://oauth-dcr-rejected.example.test/mcp',
+          machineScope: { allMachines: false, machineIds: [runnerId] },
+        },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const serverId = (created.json() as { id: string }).id;
+    const start = () =>
+      t.hub.app.inject({
+        method: 'POST',
+        url: `/api/mcp/registry/servers/${serverId}/oauth/start`,
+        cookies: { ah_session: cookie },
+        headers: { origin: PUBLIC_URL },
+        payload: { machineId: runnerId },
+      });
+    const oauthStatus = async () => {
+      const response = await t.hub.app.inject({ method: 'GET', url: '/api/mcp/registry/status', cookies: { ah_session: cookie } });
+      return (response.json() as { oauth: Array<{ serverId: string; state: string; error?: string }> }).oauth.find(row => row.serverId === serverId);
+    };
+    try {
+      oauthStartFailureCode = 'oauth_registration_rejected';
+      const rejected = await start();
+      expect(rejected.statusCode).toBe(502);
+      expect(rejected.json()).toMatchObject({ error: 'oauth_registration_rejected' });
+      expect(rejected.body).not.toContain('UNSAFE_AUTH_SERVER_BODY');
+      expect(await oauthStatus()).toMatchObject({ state: 'failed', error: expect.stringContaining('pre-registered OAuth client id') });
+
+      oauthStartFailureCode = 'oauth_start_failed';
+      const generic = await start();
+      expect(generic.statusCode).toBe(502);
+      expect(generic.json()).toMatchObject({ error: 'oauth_start_failed' });
+      expect(generic.body).not.toContain('UNSAFE_AUTH_SERVER_BODY');
+    } finally {
+      oauthStartFailureCode = null;
+    }
+    expect(JSON.stringify(await oauthStatus())).not.toContain('UNSAFE_AUTH_SERVER_BODY');
+    expect(logs.join('\n')).not.toContain('UNSAFE_AUTH_SERVER_BODY');
+  });
+
+  it('confirms an existing server edit that needs sign-in as needs-login without a session update', async () => {
+    const name = `registry_update_needs_auth_${randomUUID().slice(0, 8)}`;
+    const created = await t.hub.app.inject({
+      method: 'POST',
+      url: '/api/mcp/registry',
+      cookies: { ah_session: cookie },
+      headers: { origin: PUBLIC_URL },
+      payload: {
+        server: {
+          ...candidate(name).server,
+          transport: 'http',
+          mode: 'remote',
+          url: 'https://update-needs-auth.example.test/mcp',
+          machineScope: { allMachines: false, machineIds: [runnerId] },
+        },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const serverId = (created.json() as { id: string }).id;
+    validationResult = { ok: false, status: 'needs_auth', tools: [], oauthRequired: true };
+    let draftId: string;
+    try {
+      const edited = await request('update', { serverId, update: { revision: 1, server: { oauthClientId: 'pre-registered-client' } } });
+      expect(edited.payload).toMatchObject({ ok: true, result: { validation: { status: 'needs_auth' } } });
+      draftId = (edited.payload as { result: { draftId: string } }).result.draftId;
+    } finally {
+      validationResult = null;
+    }
+    const before = agent.messages.length;
+    const confirmed = await t.hub.app.inject({
+      method: 'POST',
+      url: `/api/mcp/registry/drafts/${draftId}/connect`,
+      cookies: { ah_session: cookie },
+      headers: { origin: PUBLIC_URL },
+      payload: { revision: 1, userConfirmed: true },
+    });
+    expect(confirmed.statusCode, confirmed.body).toBe(200);
+    expect(confirmed.json()).toMatchObject({ serverId, state: 'needs-login', server: { id: serverId, revision: 2, oauthClientId: 'pre-registered-client' } });
+    const statusResponse = await t.hub.app.inject({ method: 'GET', url: '/api/mcp/registry/status', cookies: { ah_session: cookie } });
+    expect(statusResponse.json()).toMatchObject({ oauth: expect.arrayContaining([expect.objectContaining({ serverId, machineId: runnerId, state: 'needs-login', connected: false })]) });
+    const sync = await waitFor(
+      () =>
+        agent.messages
+          .slice(before)
+          .filter(message => message.type === 'mcp.registry.sync')
+          .at(-1) ?? null,
+    );
+    expect(sync.payload.servers).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: serverId })]));
+    expect(agent.messages.slice(before).some(message => message.type === 'mcp.registry.session-update' && (message.payload.server as { id?: string } | undefined)?.id === serverId)).toBe(false);
+  });
+
+  it('resets OAuth tokens only when the client id or URL origin changes and clears the client id with null', async () => {
+    const created = await t.hub.app.inject({
+      method: 'POST',
+      url: '/api/mcp/registry',
+      cookies: { ah_session: cookie },
+      headers: { origin: PUBLIC_URL },
+      payload: {
+        server: {
+          ...candidate(`registry_oauth_reset_${randomUUID().slice(0, 8)}`).server,
+          transport: 'http',
+          mode: 'remote',
+          url: 'https://oauth-reset.example.test/mcp',
+          oauthClientId: 'client-a',
+          machineScope: { allMachines: false, machineIds: [runnerId] },
+        },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const serverId = (created.json() as { id: string }).id;
+    const tokenCount = () => t.tdb.pool.query(`select 1 from mcp_oauth_tokens where user_id=$1 and server_id=$2`, [userId, serverId]).then(result => result.rowCount ?? 0);
+    const signIn = async (accessToken: string) => {
+      agentSend(agent, 'mcp.oauth.token.update', { serverId, machineId: runnerId, accessToken });
+      await waitFor(tokenCount);
+    };
+    const patch = (payload: Record<string, unknown>) =>
+      t.hub.app.inject({ method: 'PATCH', url: `/api/mcp/registry/servers/${serverId}`, cookies: { ah_session: cookie }, headers: { origin: PUBLIC_URL }, payload });
+    const revokes = () => agent.messages.filter(message => message.type === 'mcp.oauth.revoke' && message.payload.serverId === serverId).length;
+
+    await signIn('oauth-reset-access-1');
+    const renamed = await patch({ revision: 1, name: `registry_oauth_reset_renamed_${randomUUID().slice(0, 8)}`, url: 'https://oauth-reset.example.test/other' });
+    expect(renamed.statusCode, renamed.body).toBe(200);
+    expect(await tokenCount()).toBe(1);
+    expect(revokes()).toBe(0);
+
+    const changedClient = await patch({ revision: 2, oauthClientId: 'client-b' });
+    expect(changedClient.statusCode, changedClient.body).toBe(200);
+    expect(changedClient.json()).toMatchObject({ oauthClientId: 'client-b' });
+    expect(await tokenCount()).toBe(0);
+    await waitFor(() => revokes() === 1);
+    const statusResponse = await t.hub.app.inject({ method: 'GET', url: '/api/mcp/registry/status', cookies: { ah_session: cookie } });
+    expect(statusResponse.json()).toMatchObject({ oauth: expect.arrayContaining([expect.objectContaining({ serverId, machineId: runnerId, state: 'needs-login' })]) });
+
+    await signIn('oauth-reset-access-2');
+    const changedOrigin = await patch({ revision: 3, url: 'https://oauth-reset-other.example.test/mcp' });
+    expect(changedOrigin.statusCode, changedOrigin.body).toBe(200);
+    expect(await tokenCount()).toBe(0);
+
+    const cleared = await patch({ revision: 4, oauthClientId: null });
+    expect(cleared.statusCode, cleared.body).toBe(200);
+    expect(cleared.json()).not.toHaveProperty('oauthClientId');
+    const stored = await t.hub.app.inject({ method: 'GET', url: `/api/mcp/registry/servers/${serverId}`, cookies: { ah_session: cookie } });
+    expect(stored.json()).not.toHaveProperty('oauthClientId');
   });
 
   it('returns only owner-visible drafts from mcp_list', async () => {
