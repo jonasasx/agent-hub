@@ -44,9 +44,10 @@ COPY desktop/package.json desktop/
 RUN npm ci --no-audit --no-fund --omit=dev --workspace hub --workspace shared --include-workspace-root  && mkdir -p hub/node_modules
 
 # ---------- desktop update feed: the installer of the release desktop-v<desktop version> (change desktop-download, D6) ----------
-# No release or no network: the stage leaves /feed empty and the hub shows no download button.
+# No release or no network fails the build (an empty feed would stay cached); DESKTOP_FEED_OPTIONAL=1 builds without it.
 FROM ${NODE_IMAGE} AS desktop-feed
 ARG DESKTOP_RELEASE_REPO=jonasasx/agent-hub
+ARG DESKTOP_FEED_OPTIONAL=
 WORKDIR /src
 COPY desktop/package.json desktop/
 COPY scripts/fetch-desktop-release.mjs scripts/

@@ -19,7 +19,8 @@ if (!token) throw new Error('GITHUB_TOKEN is not set');
 const { version } = JSON.parse(await readFile(join(desktop, 'package.json'), 'utf8'));
 const release = join(desktop, 'release');
 const installer = `Agent-Hub-Setup-${version}.exe`;
-const files = ['latest.yml', installer, `${installer}.blockmap`];
+// latest.yml last: a failed upload leaves no feed that names a missing installer.
+const files = [installer, `${installer}.blockmap`, 'latest.yml'];
 for (const f of files) {
   await stat(join(release, f)).catch(() => {
     throw new Error(`No ${f} in ${release}: run npm run dist -w desktop first`);
