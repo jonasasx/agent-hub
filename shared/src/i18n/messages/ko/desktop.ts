@@ -52,5 +52,9 @@ export default {
   'desktop.updates.errNoFeed': '허브에 업데이트 피드가 설정되어 있지 않습니다',
   'desktop.updates.errOffline': '허브에 연결할 수 없습니다',
   'desktop.updates.errUnknown': '알 수 없는 오류',
+  'desktop.installSource.message': '설치 프로그램을 {hub}에서 다운로드했습니다. 앱을 이 허브에 연결할까요?',
+  'desktop.installSource.detail': '현재 앱은 {current}에 연결되어 있습니다.',
+  'desktop.installSource.connect': '연결',
+  'desktop.installSource.keep': '유지',
   'desktop.imageWindow.title': '이미지 — Agent Hub',
 } satisfies Dict;

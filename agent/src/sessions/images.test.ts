@@ -8,6 +8,7 @@ import type { Options, Query, SDKUserMessage } from '@anthropic-ai/claude-agent-
 import type { HubMessage, PayloadOf } from '@agent-hub/shared';
 import { afterAll, describe, expect, it } from 'vitest';
 import { createLogger } from '../log.js';
+import { renderMachineContext } from '../machineContext.js';
 import { AsyncQueue } from './asyncQueue.js';
 import { readImageFile } from './images.js';
 import { HUB_SYSTEM_PROMPT_APPEND, SessionManager, type QueryFn } from './manager.js';
@@ -62,7 +63,13 @@ describe('attachments on the agent', () => {
     expect(content.map(c => c.type)).toEqual(['image', 'text']);
     expect(content[0]!.source).toEqual({ type: 'base64', media_type: 'image/png', data: PNG.toString('base64') });
     expect(content[1]!.text).toBe('какой код?');
-    expect(options()!.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code', append: HUB_SYSTEM_PROMPT_APPEND });
+    expect(options()!.systemPrompt).toEqual({
+      type: 'preset',
+      preset: 'claude_code',
+      append: `${HUB_SYSTEM_PROMPT_APPEND}
+
+${renderMachineContext(undefined)}`,
+    });
   });
 
   it('a wrong sha256 or a failed download → attachment_fetch_failed, no process, nothing queued', async () => {

@@ -43,6 +43,7 @@ import { snapshotOfRateLimits } from './limits.js';
 import { codexMcpServers } from './mcpConfig.js';
 import { CODEX_MIRROR_DIR, MirrorWriter, readHeader, readLines, unwrapShell, type CodexItem } from './mirror.js';
 import { initialize, RpcClient, spawnAppServer, type RpcTransport } from './rpc.js';
+import { renderMachineContext } from '../../machineContext.js';
 import { renderProjectCatalog } from '../../projectContext.js';
 import { CodexService, type CodexModel } from './service.js';
 
@@ -331,8 +332,9 @@ export class CodexProvider implements SessionProvider {
     return protocolAtLeast(this.d.hubProtocol?.() ?? null, PROJECT_TOOLS_PROTOCOL);
   }
 
-  private developerInstructions(peersOn: boolean, mode: PermissionMode, spawnOn = false, catalog = '', projectsOn = false): string {
+  private developerInstructions(peersOn: boolean, mode: PermissionMode, spawnOn = false, catalog = '', projectsOn = false, machine = ''): string {
     const parts = [HUB_SYSTEM_PROMPT_APPEND.replace('with the Read tool', 'by its path (image view)')];
+    if (machine) parts.push(machine);
     if (peersOn) parts.push(PEERS_SYSTEM_PROMPT_APPEND);
     if (spawnOn) parts.push(SPAWN_SYSTEM_PROMPT_APPEND);
     if (projectsOn) parts.push(PROJECTS_SYSTEM_PROMPT_APPEND);
@@ -420,7 +422,7 @@ export class CodexProvider implements SessionProvider {
         approvalPolicy: pol.approvalPolicy,
         sandbox: pol.sandbox,
         config: { mcp_servers: mcp.servers },
-        developerInstructions: this.developerInstructions(peersOn, s.mode, spawnOn, renderProjectCatalog(p.projectCatalog), projectsOn),
+        developerInstructions: this.developerInstructions(peersOn, s.mode, spawnOn, renderProjectCatalog(p.projectCatalog), projectsOn, renderMachineContext(p.machineName)),
       };
       // client tools are declared at thread/start only (thread/resume has no such field): the thread keeps them
       const tools = s.peers.length

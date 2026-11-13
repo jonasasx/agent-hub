@@ -12,7 +12,7 @@ import type { MeResponse } from '@agent-hub/shared';
 import type { Config } from './config.js';
 import type { Db } from './db/db.js';
 import type { OidcClient } from './auth/oidc.js';
-import { registerAuth } from './http/auth.js';
+import { registerAuth, requestPublicUrl } from './http/auth.js';
 import { idTokenKey, sealLegacyIdTokens } from './auth/idToken.js';
 import { registerDesktopAuth } from './http/desktopAuth.js';
 import { registerDesktopUpdates } from './http/desktopUpdates.js';
@@ -318,7 +318,7 @@ export async function buildHub(deps: HubDeps): Promise<Hub> {
   registerDesktopAuth(app, { config, db, oidc: providers, limits });
   // Change multi-user (task 5.4): the agent build and the installers.
   await registerAgentDist(app, { build: agentBuild, dir: config.AGENT_DIST_DIR || null, installersDir: config.INSTALLERS_DIR, publicUrl: config.PUBLIC_URL });
-  await registerDesktopUpdates(app, { dir: config.DESKTOP_UPDATES_DIR });
+  await registerDesktopUpdates(app, { dir: config.DESKTOP_UPDATES_DIR, publicUrlOf: req => requestPublicUrl(req, config) });
 
   app.get('/healthz', async (_req, reply) => {
     try {

@@ -50,5 +50,9 @@ export default {
   'desktop.updates.errNoFeed': 'the update feed is not configured on the hub',
   'desktop.updates.errOffline': 'cannot reach the hub',
   'desktop.updates.errUnknown': 'unknown error',
+  'desktop.installSource.message': 'The installer was downloaded from {hub}. Connect the app to this hub?',
+  'desktop.installSource.detail': 'The app is now connected to {current}.',
+  'desktop.installSource.connect': 'Connect',
+  'desktop.installSource.keep': 'Keep',
   'desktop.imageWindow.title': 'Image — Agent Hub',
 } as const;

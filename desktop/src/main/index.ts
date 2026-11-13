@@ -14,6 +14,7 @@ import { PROTOCOL, launchAction, type DeepLink } from '../core/deepLink.js';
 import { SIGN_IN_GRACE_MS, displayConnState, trayView } from '../core/trayView.js';
 import { DesktopAuth } from './auth.js';
 import { ConfigStore } from './configStore.js';
+import { applyInstallSource } from './installSource.js';
 import { log } from './files.js';
 import { createHubClient, readSessionCookie } from './hubConnection.js';
 import { Notifier } from './notifications.js';
@@ -144,8 +145,11 @@ function main(): void {
   const firstAction = launchAction(process.argv);
   if (firstAction.kind === 'link') pendingLink = firstAction.link;
 
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
     config = new ConfigStore();
+    // The dialog of the installer source speaks the system language: the locale is set before it.
+    await applyLocale();
+    applyInstallSource(config);
     const cfg = config.effective;
     log(`start ${app.getVersion()} hub=${cfg.hubUrl} packaged=${app.isPackaged}`);
 
@@ -155,7 +159,6 @@ function main(): void {
       app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [app.getAppPath()]);
     }
 
-    void applyLocale();
     notifier = new Notifier(id => openSession(id));
     const sess = hubSession();
     win = new AppWindow({

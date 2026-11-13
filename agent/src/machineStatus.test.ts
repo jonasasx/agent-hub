@@ -68,10 +68,10 @@ describe('checkProtectedDirs (Requirement: macOS — «Mac без полного
 describe('hello 1.5 fields (protocol 1.9, version of agent/package.json)', () => {
   it('carries agent hello fields for protocol 1.17 and supported features', () => {
     const h = buildHello({ vaultRoot: null, status: { claude: { login: 'missing', version: null }, protectedDirs: 'n/a' } });
-    expect(h.protocol).toBe('1.18');
+    expect(h.protocol).toBe('1.19');
     expect(h.capabilities).toContain('fs.list-dirs');
     expect(h.capabilities).toContain('mcp.import.v2');
-    expect(h.agentVersion).toBe('0.8.17');
+    expect(h.agentVersion).toBe('0.8.18');
     expect(h.claude).toEqual({ login: 'missing', version: null });
     expect(h.protectedDirs).toBe('n/a');
     expect(h.arch).toBe(process.arch);

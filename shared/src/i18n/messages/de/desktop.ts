@@ -52,5 +52,9 @@ export default {
   'desktop.updates.errNoFeed': 'der Update-Feed ist auf dem Hub nicht konfiguriert',
   'desktop.updates.errOffline': 'der Hub ist nicht erreichbar',
   'desktop.updates.errUnknown': 'unbekannter Fehler',
+  'desktop.installSource.message': 'Das Installationsprogramm wurde von {hub} heruntergeladen. App mit diesem Hub verbinden?',
+  'desktop.installSource.detail': 'Die App ist jetzt mit {current} verbunden.',
+  'desktop.installSource.connect': 'Verbinden',
+  'desktop.installSource.keep': 'Beibehalten',
   'desktop.imageWindow.title': 'Bild — Agent Hub',
 } satisfies Dict;

@@ -6,6 +6,16 @@
   WriteRegStr HKCU "Software\Classes\agenthub" "URL Protocol" ""
   WriteRegStr HKCU "Software\Classes\agenthub\DefaultIcon" "" "$INSTDIR\${APP_EXECUTABLE_FILENAME},0"
   WriteRegStr HKCU "Software\Classes\agenthub\shell\open\command" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1"'
+  ; Change desktop-download, D3: the path of this installer for the first start — its name and Zone.Identifier tell
+  ; the hub it was downloaded from. An update installs from the updater cache and binds nothing.
+  ${ifNot} ${isUpdated}
+    CreateDirectory "$APPDATA\Agent Hub"
+    FileOpen $0 "$APPDATA\Agent Hub\installer-source.txt" w
+    ${if} $0 != ""
+      FileWriteUTF16LE /BOM $0 "$EXEPATH"
+      FileClose $0
+    ${endIf}
+  ${endIf}
 !macroend
 
 !macro customUnInstall

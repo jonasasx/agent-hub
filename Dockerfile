@@ -43,13 +43,23 @@ COPY e2e/package.json e2e/
 COPY desktop/package.json desktop/
 RUN npm ci --no-audit --no-fund --omit=dev --workspace hub --workspace shared --include-workspace-root  && mkdir -p hub/node_modules
 
+# ---------- desktop update feed: the installer of the release desktop-v<desktop version> (change desktop-download, D6) ----------
+# No release or no network: the stage leaves /feed empty and the hub shows no download button.
+FROM ${NODE_IMAGE} AS desktop-feed
+ARG DESKTOP_RELEASE_REPO=jonasasx/agent-hub
+WORKDIR /src
+COPY desktop/package.json desktop/
+COPY scripts/fetch-desktop-release.mjs scripts/
+RUN node scripts/fetch-desktop-release.mjs "$DESKTOP_RELEASE_REPO" /feed
+
 # ---------- runtime ----------
 FROM ${NODE_IMAGE}
 ENV NODE_ENV=production \
     PORT=8080 \
     WEB_DIST_DIR=/app/web/dist \
     AGENT_DIST_DIR=/app/agent-release \
-    INSTALLERS_DIR=/app/installers
+    INSTALLERS_DIR=/app/installers \
+    DESKTOP_UPDATES_DIR=/app/desktop-updates
 WORKDIR /app
 COPY --from=deps /app/node_modules node_modules
 # Hub dependencies npm nests when the root slot holds another version (undici: root has the dev copy of jsdom).
@@ -64,6 +74,7 @@ COPY --from=build /src/web/dist web/dist
 COPY --from=build /src/agent/release agent-release
 # install.sh / install.ps1 templates (__HUB_URL__ is substituted when served)
 COPY deploy/agent installers
+COPY --from=desktop-feed /feed desktop-updates
 USER node
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

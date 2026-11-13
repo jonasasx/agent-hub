@@ -52,5 +52,9 @@ export default {
   'desktop.updates.errNoFeed': 'ฮับยังไม่ได้ตั้งค่าฟีดอัปเดต',
   'desktop.updates.errOffline': 'เชื่อมต่อกับฮับไม่ได้',
   'desktop.updates.errUnknown': 'ข้อผิดพลาดที่ไม่ทราบสาเหตุ',
+  'desktop.installSource.message': 'ดาวน์โหลดตัวติดตั้งจาก {hub} เชื่อมต่อแอปกับฮับนี้หรือไม่',
+  'desktop.installSource.detail': 'ขณะนี้แอปเชื่อมต่อกับ {current}',
+  'desktop.installSource.connect': 'เชื่อมต่อ',
+  'desktop.installSource.keep': 'คงไว้',
   'desktop.imageWindow.title': 'รูปภาพ — Agent Hub',
 } satisfies Dict;

@@ -51,11 +51,14 @@ import { fsListPayload, fsReadChunkPayload, fsReadPayload } from './files.js';
  * 1.17 (change `mcp-hub-only`, design D8): negotiated mcp.import.v2 — import from Codex, Claude plugins and all projects
  * (`projectRoots` in mcp.import.preview), `projectIds` honoured by the agent, static `oauthClientId`.
  * 1.18 (change `agent-project-tools`, design D1): ops `projects`, `project_create`, `project_update` in peers.request.
+ * 1.19 (change `session-machine-context`, design D1): the hub name of the session's machine `machineName` in session.start/resume.
  * Minor versions talk to each other (D3); images need 1.2 on the agent, subscriptions 1.4, self-update 1.5, limits 1.6,
  * MCP management 1.7, MCP sign-out 1.8, session peers 1.9, providers other than Claude 1.10, negotiated fs.list-dirs 1.13, fs.browse 1.14,
  * the project catalogue in the session context 1.15, file download 1.16.
  */
-export const PROTOCOL_VERSION = '1.18';
+export const PROTOCOL_VERSION = '1.19';
+/** The first protocol version whose agents take `machineName` in session.start/resume (session-machine-context D1). */
+export const MACHINE_NAME_PROTOCOL = '1.19';
 /** The first protocol version whose agents give sessions the project catalogue tools (agent-project-tools D5). */
 export const PROJECT_TOOLS_PROTOCOL = '1.18';
 /** The first protocol version whose agents declare `mcp.import.v2` and filter servers by `projectIds` (mcp-hub-only D8). */
@@ -707,6 +710,8 @@ export const projectCatalogEntry = z.object({
 });
 export type ProjectCatalogEntry = z.infer<typeof projectCatalogEntry>;
 export const projectCatalog = z.array(projectCatalogEntry).max(PROJECT_CATALOG_MAX);
+/** The hub name of a runner for the session's instructions (session-machine-context D1). */
+export const machineName = z.string().min(1).max(200);
 
 export const sessionStartPayload = z.object({
   sessionId,
@@ -715,6 +720,8 @@ export const sessionStartPayload = z.object({
   projectId: z.guid().optional(),
   /** 1.15: the user's project catalogue; the agent always adds it to the session's instructions (empty — nothing). */
   projectCatalog: projectCatalog.optional(),
+  /** 1.19: the hub name of the session's machine; the agent always adds it to the session's instructions. */
+  machineName: machineName.optional(),
   permissionMode: permissionModeSchema,
   model: nonEmpty,
   prompt: z.string(),
@@ -732,6 +739,8 @@ export const sessionResumePayload = z.object({
   projectId: z.guid().optional(),
   /** 1.15: the user's project catalogue; the agent always adds it to the session's instructions (empty — nothing). */
   projectCatalog: projectCatalog.optional(),
+  /** 1.19: the hub name of the session's machine; the agent always adds it to the session's instructions. */
+  machineName: machineName.optional(),
   permissionMode: permissionModeSchema,
   /** Absent: the user's default model on that machine (sessions started outside the hub). Optional since M2 (agents of M1 do not handle resume). */
   model: nonEmpty.optional(),

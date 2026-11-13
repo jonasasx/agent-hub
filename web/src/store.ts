@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import type {
   BackgroundTaskView,
   Device,
+  DesktopInfo,
   EnrollStage,
   HubEvent,
   HubSubagentView,
@@ -56,7 +57,7 @@ export type Modal =
  * «Настройки» (change `multi-user`): `/settings/<tab>`; «Пользователи» — only for role admin. claude-subscriptions P12:
  * «Подписки» and «Расход» for every user, absent when the hub has no subscriptions API.
  */
-export type SettingsTab = 'machines' | 'subscriptions' | 'usage' | 'users' | 'security' | 'notifications' | 'language';
+export type SettingsTab = 'machines' | 'subscriptions' | 'usage' | 'users' | 'security' | 'notifications' | 'language' | 'desktop';
 
 /** A runner of the user that can run sessions: connected at least once and not disabled. */
 export const usableRunner = (r: RunnerView) => r.state !== 'pending' && r.state !== 'disabled';
@@ -125,6 +126,8 @@ interface State {
   subsError: boolean;
   /** claude-subscriptions P12: the subscription whose token form «Настройки → Подписки» opens (from the `auth` note). */
   settingsTokenFor: string | null;
+  /** desktop-download: GET /api/desktop/info; null — not loaded yet (the «Приложение» tab stays hidden). */
+  desktopInfo: DesktopInfo | null;
   pendingSwitch: PendingSwitch | null;
   /**
    * subscription-limits: GET /api/subscriptions/limits; null — not loaded or the hub has no limits API (404): no block,
@@ -194,6 +197,7 @@ export const useStore = create<State>()((set, get) => ({
   subsMissing: false,
   subsError: false,
   settingsTokenFor: null,
+  desktopInfo: null,
   pendingSwitch: null,
   limits: null,
   limitsSkew: 0,

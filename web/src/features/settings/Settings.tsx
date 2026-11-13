@@ -8,16 +8,18 @@
  */
 import { useEffect } from 'react';
 import type { MessageKey } from '@agent-hub/shared';
+import { api } from '../../api/client';
 import { useT } from '../../i18n';
 import { useStore, type SettingsTab } from '../../store';
 import { SubscriptionsPage, UsagePage } from '../subscriptions/SubscriptionsPage';
+import { DesktopPage } from './DesktopPage';
 import { LanguagePage } from './LanguagePage';
 import { MachinesPage } from './MachinesPage';
 import { NotificationsPage } from './NotificationsPage';
 import { SecurityPage } from './SecurityPage';
 import { UsersPage } from './UsersPage';
 
-const TABS: { id: SettingsTab; label: MessageKey; admin?: boolean; subs?: boolean }[] = [
+const TABS: { id: SettingsTab; label: MessageKey; admin?: boolean; subs?: boolean; desktop?: boolean }[] = [
   { id: 'machines', label: 'settings.tab.machines' },
   { id: 'subscriptions', label: 'settings.tab.subscriptions', subs: true },
   { id: 'usage', label: 'settings.tab.usage', subs: true },
@@ -25,6 +27,7 @@ const TABS: { id: SettingsTab; label: MessageKey; admin?: boolean; subs?: boolea
   { id: 'security', label: 'settings.tab.security' },
   { id: 'notifications', label: 'settings.tab.notifications' },
   { id: 'language', label: 'settings.tab.language' },
+  { id: 'desktop', label: 'settings.tab.desktop', desktop: true },
 ];
 
 type SettingsEntry = { ahSettings: SettingsTab };
@@ -75,6 +78,16 @@ export function Settings() {
   const isAdmin = useStore(s => s.auth.kind === 'signed_in' && s.auth.me.user.role === 'admin');
   const hasSubs = useStore(s => s.subs !== null);
   const subsMissing = useStore(s => s.subsMissing);
+  const desktopInfo = useStore(s => s.desktopInfo);
+  const open = tab !== null;
+  // desktop-download D8: asked each time settings open, a hub may get its installer after the page loaded
+  useEffect(() => {
+    if (!open) return;
+    api.desktopInfo().then(
+      info => useStore.setState({ desktopInfo: info }),
+      () => useStore.setState({ desktopInfo: { available: false } }),
+    );
+  }, [open]);
   useEffect(() => {
     const onPop = () => {
       const target = settingsFromPath(location.pathname);
@@ -89,8 +102,8 @@ export function Settings() {
   if (!tab) return null;
   const isSubs = tab === 'subscriptions' || tab === 'usage';
   // hidden while the list is not loaded yet; «Страница не найдена» only once the hub said 404
-  const tabs = TABS.filter(x => (!x.admin || isAdmin) && (!x.subs || hasSubs));
-  const forbidden = (tab === 'users' && !isAdmin) || (isSubs && subsMissing);
+  const tabs = TABS.filter(x => (!x.admin || isAdmin) && (!x.subs || hasSubs) && (!x.desktop || !!desktopInfo?.available));
+  const forbidden = (tab === 'users' && !isAdmin) || (isSubs && subsMissing) || (tab === 'desktop' && desktopInfo?.available === false);
   return (
     <div className="pane settings" role="region" aria-label={t('settings.title')}>
       <div className="set-top">
@@ -124,6 +137,8 @@ export function Settings() {
           <SecurityPage />
         ) : tab === 'notifications' ? (
           <NotificationsPage />
+        ) : tab === 'desktop' ? (
+          <DesktopPage />
         ) : (
           <LanguagePage />
         )}

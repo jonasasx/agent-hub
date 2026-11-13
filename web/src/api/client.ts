@@ -179,6 +179,7 @@ export const api = {
   /** GET /api/voice/talk — the ElevenLabs conversation link and the hub's token (change voice-conversation, D1). */
   voiceTalk: (sessionId: string) => request<VoiceTalkResponse>(`/api/voice/talk?session=${enc(sessionId)}`),
   setLocale: (locale: Locale | null) => request<void>('/api/preferences/locale', json('PUT', { locale })),
+  desktopInfo: () => request<import('@agent-hub/shared').DesktopInfo>('/api/desktop/info'),
   sidebar: (cron = false) => request<SidebarResponse>(`/api/sidebar?cron=${cron ? 1 : 0}`),
   /** keycloak-auth D7: `redirect` — the provider's end_session_endpoint, or `/`. */
   logout: () => request<LogoutResponse>('/auth/logout', { method: 'POST' }),

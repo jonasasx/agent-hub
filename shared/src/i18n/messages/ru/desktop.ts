@@ -50,5 +50,9 @@ export default {
   'desktop.updates.errNoFeed': 'лента обновлений на хабе не настроена',
   'desktop.updates.errOffline': 'нет связи с хабом',
   'desktop.updates.errUnknown': 'неизвестная ошибка',
+  'desktop.installSource.message': 'Установщик скачан с хаба {hub}. Подключить приложение к нему?',
+  'desktop.installSource.detail': 'Сейчас приложение подключено к {current}.',
+  'desktop.installSource.connect': 'Подключить',
+  'desktop.installSource.keep': 'Оставить',
   'desktop.imageWindow.title': 'Изображение — Agent Hub',
 } as const;

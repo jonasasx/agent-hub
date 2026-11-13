@@ -1,5 +1,6 @@
 // Session manager logic against a scripted SDK (fast; the real SDK is covered by manager.sdk.test.ts).
 import { randomUUID } from 'node:crypto';
+import { hostname } from 'node:os';
 import type { CanUseTool, Options, PermissionResult, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { HubMessage, PayloadOf } from '@agent-hub/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -7,6 +8,7 @@ import { createLogger } from '../log.js';
 import { AsyncQueue } from './asyncQueue.js';
 import { TurnTracker } from '../turns.js';
 import { McpGateway } from '../mcp/gateway.js';
+import { renderMachineContext } from '../machineContext.js';
 import {
   HUB_SYSTEM_PROMPT_APPEND,
   PEERS_SYSTEM_PROMPT_APPEND,
@@ -1093,11 +1095,29 @@ describe('agent-hub tools of a session (session-peers D1, D7)', () => {
     }
   });
 
+  // session-machine-context D2: the machine line right after the hub part, with the hub name when the hub sends it
+  it('the machine of the session in the prompt: the hub name and the hostname; the hostname only without a name', async () => {
+    const t = setup({ extra: { peers, hubProtocol: () => '1.19' } });
+    await t.mgr.handle(cmd('session.start', { sessionId: randomUUID(), cwd: CWD, permissionMode: 'default', model: 'haiku', prompt: 'hi', promptUuid: randomUUID(), machineName: 'X1' }));
+    const append = (t.queries[0]!.options.systemPrompt as { append: string }).append;
+    expect(
+      append.startsWith(`${HUB_SYSTEM_PROMPT_APPEND}
+
+${renderMachineContext('X1')}
+
+${PEERS_SYSTEM_PROMPT_APPEND}`),
+    ).toBe(true);
+    expect(append).toContain(`"X1"`);
+    expect(append).toContain(hostname());
+  });
+
   it('a hub below 1.9, an unknown protocol (offline) or no client: no server, the old prompt', async () => {
     for (const extra of [{ peers, hubProtocol: () => '1.8' }, { peers, hubProtocol: () => null }, { hubProtocol: () => '1.9' }, {}]) {
       const { q } = await start(extra);
       expect(q.options.mcpServers).toBeUndefined();
-      expect((q.options.systemPrompt as { append: string }).append).toBe(HUB_SYSTEM_PROMPT_APPEND);
+      expect((q.options.systemPrompt as { append: string }).append).toBe(`${HUB_SYSTEM_PROMPT_APPEND}
+
+${renderMachineContext(undefined)}`);
     }
   });
 

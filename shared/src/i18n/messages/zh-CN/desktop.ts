@@ -52,5 +52,9 @@ export default {
   'desktop.updates.errNoFeed': '中枢上未配置更新源',
   'desktop.updates.errOffline': '无法连接到中枢',
   'desktop.updates.errUnknown': '未知错误',
+  'desktop.installSource.message': '安装程序下载自 {hub}。要将应用连接到此中心吗?',
+  'desktop.installSource.detail': '应用当前连接到 {current}。',
+  'desktop.installSource.connect': '连接',
+  'desktop.installSource.keep': '保留',
   'desktop.imageWindow.title': '图片 — Agent Hub',
 } satisfies Dict;

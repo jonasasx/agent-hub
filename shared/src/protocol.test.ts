@@ -229,7 +229,7 @@ describe('protocol version', () => {
     expect(parseHubMessage(JSON.stringify(envelope('fs.read_chunk', { ...chunk, offset: -1 }, { id: 'c4' }))).ok).toBe(false);
   });
   it('is 1.15 with close codes 4401/4409/4426; subscriptions need 1.4, agent.update 1.5, limits 1.6, MCP 1.7, MCP sign-out 1.8, Codex subscriptions 1.11', () => {
-    expect(PROTOCOL_VERSION).toBe('1.18');
+    expect(PROTOCOL_VERSION).toBe('1.19');
     expect(isCompatibleProtocol('1.11')).toBe(true); // project launch adds only optional HTTP fields; agent commands remain 1.12-compatible
     expect(MCP_PROTOCOL).toBe('1.7');
     expect(MCP_AUTH_CONTROLS_PROTOCOL).toBe('1.8');

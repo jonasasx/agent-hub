@@ -164,6 +164,18 @@ describe('CodexProvider', () => {
     expect((await turn('turn-3', ['частично'], 'interrupted')).resultText).toBeUndefined();
   });
 
+  // session-machine-context D2: the machine line in developerInstructions at start and at resume
+  it('the machine of the session in the instructions at start and resume', async () => {
+    const t = setup({ hubProtocol: '1.19' });
+    const sessionId = randomUUID();
+    const base = { sessionId, cwd: t.cwd, permissionMode: 'default', model: 'gpt-test', provider: 'codex' };
+    await t.p.handle(cmd('session.start', { ...base, prompt: '', promptUuid: randomUUID(), machineName: 'HP' }));
+    expect(String(t.servers.at(-1)!.calls('thread/start')[0]!.developerInstructions)).toContain('"HP" in Agent Hub');
+    await t.p.handle(cmd('session.stop', { sessionId, reason: 'sleep' }));
+    await t.p.handle(cmd('session.resume', { ...base, machineName: 'HP-2' }));
+    expect(String(t.servers.at(-1)!.calls('thread/resume')[0]!.developerInstructions)).toContain('"HP-2" in Agent Hub');
+  });
+
   it('hub 1.11: no session_spawn and no resultText', async () => {
     const t = setup({ hubProtocol: '1.11' });
     const { server } = await started(t);

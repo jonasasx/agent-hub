@@ -22,6 +22,17 @@ export class ConfigStore {
     return effectiveConfig(this.stored, process.env);
   }
 
+  /** The address in the file, without the `AGENTHUB_URL` override. */
+  get storedHubUrl(): string {
+    return this.stored.hubUrl;
+  }
+
+  /** The hub of the installer (change desktop-download, D4); the caller validated the origin. */
+  setHubUrl(hubUrl: string): void {
+    this.stored = { ...this.stored, hubUrl };
+    writeText(userFile('config.json'), serializeConfig(this.stored));
+  }
+
   update(patch: Partial<Omit<StoredConfig, 'hubUrl'>>): void {
     this.stored = { ...this.stored, ...patch };
     writeText(userFile('config.json'), serializeConfig(this.stored));

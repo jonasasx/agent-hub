@@ -33,6 +33,7 @@ import type {
 import {
   IMAGES_PROTOCOL,
   PROJECT_CATALOG_PROTOCOL,
+  MACHINE_NAME_PROTOCOL,
   protocolAtLeast,
   PROVIDER_LABELS,
   UI_PERMISSION_MODES,
@@ -134,6 +135,12 @@ const ROOT_BYPASS_STDERR = /cannot be used with root\/sudo privileges/;
 /** push-voice-fixes D3: a late «hidden» comes within seconds; older turns read on a visible tab are forgotten. */
 const READ_ON_VISIBLE_KEEP_MS = 60_000;
 export const ROOT_BYPASS_NOTE: I18nText = { key: 'hub.sessions.rootBypassNote' };
+
+/** session-machine-context D1: the hub name of the session's machine for an agent ≥1.19; nothing for older agents. */
+export function machineNameFor(runner: Pick<RunnerRow, 'name' | 'protocol_version'> | null | undefined): { machineName?: string } {
+  if (!runner?.name || !protocolAtLeast(runner.protocol_version, MACHINE_NAME_PROTOCOL)) return {};
+  return { machineName: runner.name.slice(0, 200) };
+}
 
 /** A raw process error as a note: the root refusal becomes advice, anything else is kept. */
 export function readableProcessError(raw: string): I18nText | null {
@@ -703,6 +710,7 @@ export class SessionService {
       cwd,
       ...(b.catalogProjectId && protocolAtLeast(runner.protocol_version, '1.13') ? { projectId: b.catalogProjectId } : {}),
       ...(projectCatalog ? { projectCatalog } : {}),
+      ...machineNameFor(runner),
       permissionMode: b.permissionMode,
       model: b.model,
       prompt: b.prompt,
@@ -1987,6 +1995,7 @@ export class SessionService {
         cwd: s.cwd,
         ...(project?.project_id && protocolAtLeast(runner?.protocol_version, '1.13') ? { projectId: project.project_id } : {}),
         ...(projectCatalog ? { projectCatalog } : {}),
+        ...machineNameFor(runner),
         permissionMode: s.permission_mode as UiPermissionMode,
         // A session started outside the hub has no model here: the user's default on that machine applies.
         ...(s.model ? { model: s.model } : {}),

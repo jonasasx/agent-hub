@@ -52,5 +52,9 @@ export default {
   'desktop.updates.errNoFeed': 'o feed de atualizações não está configurado no hub',
   'desktop.updates.errOffline': 'não foi possível acessar o hub',
   'desktop.updates.errUnknown': 'erro desconhecido',
+  'desktop.installSource.message': 'O instalador foi baixado de {hub}. Conectar o aplicativo a este hub?',
+  'desktop.installSource.detail': 'O aplicativo está conectado agora a {current}.',
+  'desktop.installSource.connect': 'Conectar',
+  'desktop.installSource.keep': 'Manter',
   'desktop.imageWindow.title': 'Imagem — Agent Hub',
 } satisfies Dict;

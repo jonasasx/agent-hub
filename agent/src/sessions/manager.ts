@@ -45,6 +45,7 @@ import type { RegistrySnapshot } from '../mcp/registryCache.js';
 import type { McpGateway } from '../mcp/gateway.js';
 import type { McpDraftClient } from '../mcp/draftClient.js';
 import { serversForProject } from '../mcp/projectPolicy.js';
+import { renderMachineContext } from '../machineContext.js';
 import { renderProjectCatalog } from '../projectContext.js';
 
 /** limits.event of a session (subscription-limits L1): at least this often with no change, and quiet at most this often. */
@@ -235,9 +236,13 @@ function userMessage(sessionId: string, text: string, uuid: string, images: Arra
 /** The system prompt of hub sessions (D19): the hub shows images that the model reads with Read. */
 export const HUB_SYSTEM_PROMPT_APPEND = 'To show the user an image, read the file with the Read tool: the hub will show it in the chat.';
 
-/** The text appended to Claude Code's system prompt: the hub, the peers and spawn tools when on, the project catalogue (catalog-db-session-context D3). */
-export function systemPromptAppend(peersOn: boolean, spawnOn: boolean, catalog: string, projectsOn = false): string {
+/**
+ * The text appended to Claude Code's system prompt: the hub, the machine (session-machine-context D2), the peers and
+ * spawn tools when on, the project catalogue (catalog-db-session-context D3).
+ */
+export function systemPromptAppend(peersOn: boolean, spawnOn: boolean, catalog: string, projectsOn = false, machine = ''): string {
   const parts = [HUB_SYSTEM_PROMPT_APPEND];
+  if (machine) parts.push(machine);
   if (peersOn) parts.push(PEERS_SYSTEM_PROMPT_APPEND);
   if (peersOn && spawnOn) parts.push(SPAWN_SYSTEM_PROMPT_APPEND);
   if (peersOn && projectsOn) parts.push(PROJECTS_SYSTEM_PROMPT_APPEND);
@@ -889,7 +894,7 @@ export class SessionManager {
       systemPrompt: {
         type: 'preset',
         preset: 'claude_code',
-        append: systemPromptAppend(peersOn, spawnOn, renderProjectCatalog(p.projectCatalog), projectsOn),
+        append: systemPromptAppend(peersOn, spawnOn, renderProjectCatalog(p.projectCatalog), projectsOn, renderMachineContext(p.machineName)),
       },
       // session-peers D1: the tools of the other sessions, in this process, with this session as the caller
       ...(!registryMode && peersOn ? { mcpServers: { [PEERS_SERVER_NAME]: agentHub! } } : {}),

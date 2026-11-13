@@ -52,5 +52,9 @@ export default {
   'desktop.updates.errNoFeed': 'ハブで更新フィードが設定されていません',
   'desktop.updates.errOffline': 'ハブに接続できません',
   'desktop.updates.errUnknown': '不明なエラー',
+  'desktop.installSource.message': 'インストーラーは {hub} からダウンロードされました。アプリをこのハブに接続しますか?',
+  'desktop.installSource.detail': '現在アプリは {current} に接続されています。',
+  'desktop.installSource.connect': '接続',
+  'desktop.installSource.keep': 'そのまま',
   'desktop.imageWindow.title': '画像 — Agent Hub',
 } satisfies Dict;

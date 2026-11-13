@@ -297,6 +297,8 @@ describe('isolation of users (integration)', () => {
     'GET /auth/desktop/callback': { url: '/auth/desktop/callback' },
     'POST /auth/desktop/exchange': { url: '/auth/desktop/exchange', body: {} },
     'GET /api/desktop/updates/:file': { url: '/api/desktop/updates/latest.yml' },
+    'GET /api/desktop/info': { url: '/api/desktop/info', list: true },
+    'GET /api/desktop/download': { url: '/api/desktop/download' },
     'GET /agent/latest.json': { url: '/agent/latest.json' },
     'GET /agent/:file': { url: '/agent/agent-0.1.0.tgz' },
     'GET /install.sh': { url: '/install.sh' },
