@@ -27,8 +27,14 @@ export default {
   'settings.language.saveFailedText': 'Não foi possível salvar a escolha no seu perfil: o idioma foi alterado somente neste dispositivo.',
   'settings.desktop.title': 'Aplicativo para desktop',
   'settings.desktop.hint':
-    'Agent Hub para Windows: sessões em uma janela própria, notificações e atalho global. O instalador está vinculado a este hub: após a instalação, o aplicativo se conecta aqui.',
+    'Aplicativo desktop do Agent Hub: sessões em uma janela separada, notificações e um atalho global. Os arquivos de Windows e Linux são vinculados a este hub: depois de instalar, o aplicativo se conecta aqui.',
   'settings.desktop.download': 'Baixar para Windows',
+  'settings.desktop.downloadLinux': 'Baixar para Linux (AppImage)',
+  'settings.desktop.downloadMac': 'Baixar para macOS (dmg)',
+  'settings.desktop.macHint':
+    'A versão para macOS não é assinada: na primeira execução, clique com o botão direito no aplicativo e escolha Abrir. Ela não se atualiza sozinha, baixe um novo dmg nesta página. Depois de instalar, conecte o aplicativo a este hub com o botão abaixo.',
+  'settings.desktop.connect': 'Conectar o aplicativo instalado a este hub',
+  'settings.desktop.connectHint': 'Abre o aplicativo instalado e propõe conectá-lo a este hub.',
   'settings.desktop.version': 'Versão {version} · {size}',
   'settings.security.title': 'Segurança',
   'settings.security.manageSignIn': 'Gerenciar login',

@@ -5,7 +5,11 @@ import { useStore } from '../../store';
 import { mockFetch, resetStore } from '../../test/factories';
 import { Settings } from './Settings';
 
-const INFO = { available: true, version: '0.1.8', size: 104857600, fileName: 'Agent-Hub-Setup-0.1.8 [agents.example.org].exe' };
+const WIN = { platform: 'win', size: 104857600, fileName: 'Agent-Hub-Setup-0.1.8 [agents.example.org].exe' };
+const LINUX = { platform: 'linux', size: 110000000, fileName: 'Agent-Hub-0.1.8 [agents.example.org].AppImage' };
+const MAC = { platform: 'mac', size: 120000000, fileName: 'Agent-Hub-0.1.8.dmg' };
+const INFO = { available: true, version: '0.1.8', size: WIN.size, fileName: WIN.fileName, downloads: [WIN] };
+const INFO_ALL = { ...INFO, downloads: [WIN, LINUX, MAC] };
 
 describe('Settings → Приложение', () => {
   beforeEach(() => resetStore());
@@ -17,9 +21,25 @@ describe('Settings → Приложение', () => {
     render(<Settings />);
     expect(await screen.findByRole('button', { name: 'Приложение' })).toHaveAttribute('aria-current', 'page');
     const link = await screen.findByRole('link', { name: 'Скачать для Windows' });
-    expect(link).toHaveAttribute('href', '/api/desktop/download');
-    expect(link).toHaveAttribute('download', INFO.fileName);
+    expect(link).toHaveAttribute('href', '/api/desktop/download?platform=win');
+    expect(link).toHaveAttribute('download', WIN.fileName);
     expect(screen.getByText(/Версия 0\.1\.8/)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Linux|macOS/ })).toBeNull();
+    expect(screen.queryByTestId('desktop-connect')).toBeNull();
+  });
+
+  it('Linux и macOS: buttons per platform, the Gatekeeper hint and the connect link', async () => {
+    mockFetch({ '/api/desktop/info': () => ({ status: 200, body: INFO_ALL }) });
+    useStore.setState({ settings: 'desktop' });
+    render(<Settings />);
+    const linux = await screen.findByRole('link', { name: 'Скачать для Linux (AppImage)' });
+    expect(linux).toHaveAttribute('href', '/api/desktop/download?platform=linux');
+    expect(linux).toHaveAttribute('download', LINUX.fileName);
+    const mac = screen.getByRole('link', { name: 'Скачать для macOS (dmg)' });
+    expect(mac).toHaveAttribute('href', '/api/desktop/download?platform=mac');
+    expect(mac).toHaveAttribute('download', MAC.fileName);
+    expect(screen.getByText(/не подписана/)).toBeInTheDocument();
+    expect(screen.getByTestId('desktop-connect')).toHaveAttribute('href', `agenthub://connect?hub=${encodeURIComponent(window.location.origin)}`);
   });
 
   it('Установщика нет: no tab, /settings/desktop is «Страница не найдена»', async () => {

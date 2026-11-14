@@ -74,3 +74,19 @@ describe('update feed', () => {
     expect(section('publish')).toContain('    url: https://hub.example.com/api/desktop/updates/');
   });
 });
+
+// Change desktop-platforms: Linux (AppImage x64) and macOS (universal dmg, ad-hoc signature).
+describe('Linux and macOS targets', () => {
+  it('AppImage x64 with the hub-recognised file name', () => {
+    expect(section('linux')).toContain('      arch: [x64]');
+    expect(section('linux').some(l => l.includes('target: AppImage'))).toBe(true);
+    expect(section('appImage')).toContain('  artifactName: Agent-Hub-${version}.${ext}');
+  });
+  it('dmg is universal and ad-hoc signed (Apple Silicon rejects an unsigned app)', () => {
+    expect(section('mac').some(l => l.includes('target: dmg'))).toBe(true);
+    expect(section('mac')).toContain('      arch: [universal]');
+    expect(section('mac')).toContain('  identity: "-"');
+    expect(section('mac')).toContain('  hardenedRuntime: false');
+    expect(section('dmg')).toContain('  artifactName: Agent-Hub-${version}.${ext}');
+  });
+});

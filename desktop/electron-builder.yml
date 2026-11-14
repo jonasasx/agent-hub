@@ -1,4 +1,5 @@
-# Installer of Agent Hub desktop (design D16): NSIS, Windows x64, per-user, no code signing.
+# Installers of Agent Hub desktop (design D16): NSIS (Windows x64, per-user), AppImage (Linux x64), dmg (macOS universal).
+# No code signing; macOS gets an ad-hoc signature (Apple Silicon refuses an unsigned app as «damaged»).
 appId: io.github.jonasasx.agenthub
 productName: Agent Hub
 # The one-click per-user installer names the install directory after the package name (APP_FILENAME =
@@ -49,6 +50,26 @@ nsis:
   differentialPackage: true
   # The install identity (uninstall key, update in place) of the builds made before the appId was renamed.
   guid: 996bb611-20e0-510c-94b1-7ea71797d9c4
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  icon: assets/app.png
+  category: Development
+  executableName: agent-hub
+appImage:
+  artifactName: Agent-Hub-${version}.${ext}
+mac:
+  target:
+    - target: dmg
+      arch: [universal]
+  icon: assets/app.png
+  category: public.app-category.developer-tools
+  identity: "-"
+  hardenedRuntime: false
+  gatekeeperAssess: false
+dmg:
+  artifactName: Agent-Hub-${version}.${ext}
 protocols:
   - name: Agent Hub
     schemes: [agenthub]

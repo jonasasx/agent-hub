@@ -1675,5 +1675,17 @@ export interface FsDownloadProbe {
   mtimeMs: number;
 }
 
-/** GET /api/desktop/info (change desktop-download, D7): the installer of the update feed, `fileName` with the hub tag. */
-export type DesktopInfo = { available: false } | { available: true; version: string; size: number; fileName: string };
+export const DESKTOP_PLATFORMS = ['win', 'linux', 'mac'] as const;
+export type DesktopPlatform = (typeof DESKTOP_PLATFORMS)[number];
+
+export interface DesktopDownload {
+  platform: DesktopPlatform;
+  size: number;
+  fileName: string;
+}
+
+/**
+ * GET /api/desktop/info (changes desktop-download D7, desktop-platforms D3): the installers of the update feed, `fileName`
+ * with the hub tag. `version`, `size` and `fileName` describe the Windows installer; `downloads` lists every platform.
+ */
+export type DesktopInfo = { available: false } | { available: true; version: string; size: number; fileName: string; downloads: DesktopDownload[] };

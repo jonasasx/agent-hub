@@ -26,8 +26,15 @@ export default {
   'settings.language.saveFailedTitle': '言語を保存できませんでした',
   'settings.language.saveFailedText': '選択内容をプロフィールに保存できませんでした。言語はこのデバイスでのみ変更されます。',
   'settings.desktop.title': 'デスクトップアプリ',
-  'settings.desktop.hint': 'Windows 版 Agent Hub：専用ウィンドウでのセッション、通知、グローバルショートカット。インストーラーはこのハブに紐付いており、インストール後アプリはここに接続します。',
+  'settings.desktop.hint':
+    'Agent Hub デスクトップアプリ：セッションを別ウィンドウで表示し、通知とグローバルホットキーを備えます。Windows と Linux のファイルはこのハブに紐づいており、インストール後にアプリはここへ接続します。',
   'settings.desktop.download': 'Windows 版をダウンロード',
+  'settings.desktop.downloadLinux': 'Linux 版をダウンロード（AppImage）',
+  'settings.desktop.downloadMac': 'macOS 版をダウンロード（dmg）',
+  'settings.desktop.macHint':
+    'macOS 版は署名されていません。初回起動時はアプリを右クリックして「開く」を選んでください。自動更新はされないため、新しい dmg はこのページからダウンロードしてください。インストール後、下のボタンでアプリをこのハブに接続します。',
+  'settings.desktop.connect': 'インストール済みアプリをこのハブに接続',
+  'settings.desktop.connectHint': 'インストール済みのアプリを開き、このハブへの接続を提案します。',
   'settings.desktop.version': 'バージョン {version} · {size}',
   'settings.security.title': 'セキュリティ',
   'settings.security.manageSignIn': 'サインインの管理',

@@ -1,8 +1,8 @@
 {
   "name": "@agent-hub/desktop",
   "productName": "Agent Hub",
-  "version": "0.1.8",
-  "description": "Agent Hub desktop client for Windows",
+  "version": "0.1.9",
+  "description": "Agent Hub desktop client",
   "author": "Ivan Volynkin",
   "private": true,
   "type": "module",
@@ -11,6 +11,9 @@
     "build": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs && electron .",
     "dist": "node scripts/build.mjs && electron-builder --win nsis --x64 --publish never",
+    "dist:win": "node scripts/build.mjs && electron-builder --win nsis --x64 --publish never",
+    "dist:linux": "node scripts/build.mjs && electron-builder --linux AppImage --x64 --publish never",
+    "dist:mac": "node scripts/build.mjs && electron-builder --mac dmg --universal --publish never",
     "icons": "node scripts/gen-tray-icons.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

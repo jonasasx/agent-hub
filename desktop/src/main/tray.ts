@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { HOTKEY_CHOICES, hotkeyMenuLabel } from '../core/hotkey.js';
 import { menuStateKey, type TrayMenuState, type TrayView } from '../core/trayView.js';
 import { dt } from '../core/i18n.js';
+import { autostartSupported, trayIconFile } from './platform.js';
 
 export type { TrayMenuState };
 
@@ -36,7 +37,7 @@ export class AppTray {
   }
 
   private image(name: string) {
-    return nativeImage.createFromPath(join(this.assetsDir, 'tray', `${name}.ico`));
+    return nativeImage.createFromPath(join(this.assetsDir, 'tray', trayIconFile(name)));
   }
 
   render(view: TrayView, menu: TrayMenuState): void {
@@ -70,10 +71,13 @@ export class AppTray {
       m.windowVisible ? { label: dt('desktop.tray.hideWindow'), click: () => a.hideWindow() } : { label: dt('desktop.tray.showWindow'), click: () => a.showWindow() },
     ];
     if (m.signedOut) items.push({ label: dt('desktop.tray.signIn'), click: () => a.signIn() });
+    const autostart: MenuItemConstructorOptions[] = autostartSupported
+      ? [{ label: dt('desktop.tray.autostart'), type: 'checkbox', checked: m.autostart, click: item => a.setAutostart(item.checked) }]
+      : [];
     items.push(
       { type: 'separator' },
       { label: hotkeyMenuLabel(m.hotkey, m.hotkeyRegistered), submenu: hotkeys },
-      { label: dt('desktop.tray.autostart'), type: 'checkbox', checked: m.autostart, click: item => a.setAutostart(item.checked) },
+      ...autostart,
       m.updateReady ? { label: dt('desktop.tray.restartUpdate'), click: () => a.installUpdate() } : { label: dt('desktop.tray.checkUpdates'), click: () => a.checkUpdates() },
       { type: 'separator' },
       { label: dt('desktop.tray.quit'), click: () => a.quit() },

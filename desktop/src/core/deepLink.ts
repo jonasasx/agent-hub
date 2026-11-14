@@ -3,13 +3,15 @@
  * Requirements: Один экземпляр и deep links; Приём кода приложением; Автозапуск.
  */
 
+import { validateHubUrl } from './config.js';
+
 export const PROTOCOL = 'agenthub';
 export const MAX_LINK_LENGTH = 2048;
 export const HIDDEN_FLAG = '--hidden';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export type DeepLink = { kind: 'session'; id: string } | { kind: 'auth'; code: string; state: string };
+export type DeepLink = { kind: 'session'; id: string } | { kind: 'auth'; code: string; state: string } | { kind: 'connect'; hub: string };
 
 export function parseDeepLink(raw: string): DeepLink | null {
   if (typeof raw !== 'string' || raw.length === 0 || raw.length > MAX_LINK_LENGTH) return null;
@@ -28,6 +30,11 @@ export function parseDeepLink(raw: string): DeepLink | null {
     const id = m?.[1];
     if (!id || !UUID_RE.test(id) || u.search || u.hash) return null;
     return { kind: 'session', id: id.toLowerCase() };
+  }
+  if (u.host === 'connect') {
+    if (u.pathname !== '' && u.pathname !== '/') return null;
+    const hub = validateHubUrl(u.searchParams.get('hub'));
+    return hub ? { kind: 'connect', hub } : null;
   }
   if (u.host === 'auth') {
     if (u.pathname !== '' && u.pathname !== '/') return null;

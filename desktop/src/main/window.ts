@@ -11,6 +11,7 @@ import { shouldHideOnToggle, type TrayIconName } from '../core/trayView.js';
 import { parseWindowState, restoreWindowState, type WindowState } from '../core/windowState.js';
 import { log, readText, userFile, writeText } from './files.js';
 import { openImageWindow } from './imageWindow.js';
+import { appIconFile, isMac, isWin, trayIconFile } from './platform.js';
 
 export const PARTITION = 'persist:agenthub';
 
@@ -68,7 +69,8 @@ export class AppWindow {
       screen.getAllDisplays().map(d => d.workArea),
       primary,
     );
-    Menu.setApplicationMenu(null);
+    // macOS needs an edit menu for Cmd+C/V/X and a window menu for Cmd+W/M; elsewhere the menu bar is off.
+    Menu.setApplicationMenu(isMac ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }]) : null);
     this.win = new BrowserWindow({
       x: st.x,
       y: st.y,
@@ -78,7 +80,7 @@ export class AppWindow {
       minHeight: 360,
       show: false,
       title: 'Agent Hub',
-      icon: nativeImage.createFromPath(join(o.assetsDir, 'app.ico')),
+      icon: nativeImage.createFromPath(join(o.assetsDir, appIconFile)),
       autoHideMenuBar: true,
       backgroundColor: '#f6f6f4',
       webPreferences: {
@@ -227,8 +229,10 @@ export class AppWindow {
     void this.win.loadURL(toDataUrl(html)).catch((e: Error) => log(`page: ${e.message}`));
   }
 
+  /** The taskbar overlay exists on Windows only; elsewhere the badge count of the app is used (index.ts). */
   setOverlay(icon: TrayIconName | null, text: string): void {
-    this.win.setOverlayIcon(icon ? nativeImage.createFromPath(join(this.o.assetsDir, 'tray', `${icon}.ico`)) : null, text);
+    if (!isWin) return;
+    this.win.setOverlayIcon(icon ? nativeImage.createFromPath(join(this.o.assetsDir, 'tray', trayIconFile(icon))) : null, text);
   }
 
   private goOffline(url: string): void {

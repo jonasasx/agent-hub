@@ -3,19 +3,20 @@
  * The window shows the prod web of the hub; native features (tray counter, notifications, hotkey, autostart,
  * deep links, sign-in through the browser, updates) live here. No preload, the page cannot call the app.
  */
-import { app, globalShortcut } from 'electron';
+import { app, dialog, globalShortcut } from 'electron';
 import { join } from 'node:path';
 import type { Locale, SidebarResponse } from '@agent-hub/shared';
 import { conflictMessage } from '../core/hotkey.js';
-import { currentLocale, resolveLocale, setLocale } from '../core/i18n.js';
+import { currentLocale, dt, resolveLocale, setLocale } from '../core/i18n.js';
 import { HubState } from '../core/hubState.js';
 import type { HubClient, HubConnState } from '../core/hubClient.js';
-import { PROTOCOL, launchAction, type DeepLink } from '../core/deepLink.js';
+import { PROTOCOL, launchAction, parseDeepLink, type DeepLink } from '../core/deepLink.js';
 import { SIGN_IN_GRACE_MS, displayConnState, trayView } from '../core/trayView.js';
 import { DesktopAuth } from './auth.js';
 import { ConfigStore } from './configStore.js';
 import { applyInstallSource } from './installSource.js';
 import { log } from './files.js';
+import { autostartSupported, isWin } from './platform.js';
 import { createHubClient, readSessionCookie } from './hubConnection.js';
 import { Notifier } from './notifications.js';
 import { AppTray } from './tray.js';
@@ -31,7 +32,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 function main(): void {
-  app.setAppUserModelId(APP_ID);
+  if (isWin) app.setAppUserModelId(APP_ID);
   const assetsDir = app.isPackaged ? join(process.resourcesPath, 'assets') : join(app.getAppPath(), 'assets');
   const userAgent = `AgentHubDesktop/${app.getVersion()}`;
 
@@ -62,6 +63,8 @@ function main(): void {
       locale: currentLocale(),
     });
     win.setOverlay(view.overlay, view.overlayText);
+    // Windows shows the count as the taskbar overlay; the dock (macOS) and the launcher (Linux) take the badge count.
+    if (!isWin) app.setBadgeCount(state.waitingCount());
   };
 
   // Language: the profile choice of the hub (`/api/me`), before it is known and without a choice — the system language.
@@ -80,8 +83,31 @@ function main(): void {
     else win.openHubPath(`/s/${id}`);
   };
 
+  // agenthub://connect?hub=… (change desktop-platforms, D6): a link from a web page binds the app to that hub, after a question.
+  const connectHub = (hub: string) => {
+    win.show();
+    if (hub === config.effective.hubUrl) return;
+    const answer = dialog.showMessageBoxSync(win.win, {
+      type: 'question',
+      title: 'Agent Hub',
+      message: dt('desktop.connect.message', { hub }),
+      detail: dt('desktop.connect.detail', { current: config.effective.hubUrl }),
+      buttons: [dt('desktop.installSource.connect'), dt('desktop.installSource.keep')],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (answer !== 0) return;
+    log(`connect: hub ${hub}`);
+    config.setHubUrl(hub);
+    win.quitting = true;
+    app.relaunch();
+    app.exit(0);
+  };
+
   const handleLink = (link: DeepLink) => {
     if (link.kind === 'session') return openSession(link.id);
+    if (link.kind === 'connect') return connectHub(link.hub);
     void auth.onAuthLink(link.code, link.state).catch((e: Error) => log(`auth link: ${e.message}`));
   };
 
@@ -116,7 +142,7 @@ function main(): void {
 
   const applyAutostart = (on: boolean) => {
     // Only the installed exe goes into HKCU\…\Run (dev would register electron.exe).
-    if (!app.isPackaged) return;
+    if (!app.isPackaged || !autostartSupported) return;
     app.setLoginItemSettings({ openAtLogin: on, path: process.execPath, args: ['--hidden'], name: 'Agent Hub' });
   };
 
@@ -141,7 +167,15 @@ function main(): void {
     updater?.stop();
   });
 
-  // macOS-style open-url never fires on Windows; links arrive through argv only.
+  // macOS delivers links through open-url (also while the app is starting); Windows and Linux through argv.
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    const link = parseDeepLink(url);
+    if (!link) return log('deep link ignored (invalid)');
+    if (!win) pendingLink = link;
+    else handleLink(link);
+  });
+  app.on('activate', () => win?.show());
   const firstAction = launchAction(process.argv);
   if (firstAction.kind === 'link') pendingLink = firstAction.link;
 
@@ -254,7 +288,7 @@ function main(): void {
     if (link?.kind === 'session') win.openHubPath(`/s/${link.id}`);
     else win.openHubPath('/');
     if (firstAction.kind !== 'hidden') win.show();
-    if (link?.kind === 'auth') handleLink(link);
+    if (link && link.kind !== 'session') handleLink(link);
     else if (firstAction.kind === 'ignoredLink') log('deep link ignored (invalid)');
 
     hub.start();

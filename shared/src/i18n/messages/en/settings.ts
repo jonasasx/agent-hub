@@ -26,8 +26,15 @@ export default {
   'settings.language.saveFailedTitle': 'Language not saved',
   'settings.language.saveFailedText': 'The choice could not be saved to your profile: the language is changed on this device only.',
   'settings.desktop.title': 'Desktop app',
-  'settings.desktop.hint': 'Agent Hub for Windows: sessions in a separate window, notifications and a global hotkey. The installer is tied to this hub: after installation the app connects here.',
+  'settings.desktop.hint':
+    'Agent Hub desktop app: sessions in a separate window, notifications and a global hotkey. The Windows and Linux files are tied to this hub: after installation the app connects here.',
   'settings.desktop.download': 'Download for Windows',
+  'settings.desktop.downloadLinux': 'Download for Linux (AppImage)',
+  'settings.desktop.downloadMac': 'Download for macOS (dmg)',
+  'settings.desktop.macHint':
+    'The macOS build is not signed: on first launch right-click the app and choose Open. It does not update itself, download a new dmg from this page. After installing, use the button below to connect the app to this hub.',
+  'settings.desktop.connect': 'Connect the installed app to this hub',
+  'settings.desktop.connectHint': 'Opens the installed app and offers to connect it to this hub.',
   'settings.desktop.version': 'Version {version} · {size}',
   'settings.security.title': 'Security',
   'settings.security.manageSignIn': 'Manage sign-in',

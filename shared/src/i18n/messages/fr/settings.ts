@@ -27,8 +27,14 @@ export default {
   'settings.language.saveFailedText': 'Le choix n’a pas pu être enregistré dans votre profil : la langue n’est modifiée que sur cet appareil.',
   'settings.desktop.title': 'Application de bureau',
   'settings.desktop.hint':
-    'Agent Hub pour Windows : sessions dans une fenêtre dédiée, notifications et raccourci global. Le programme d’installation est lié à ce hub : après l’installation, l’application s’y connecte.',
+    "Application de bureau Agent Hub : sessions dans une fenêtre séparée, notifications et raccourci global. Les fichiers Windows et Linux sont liés à ce hub : après l'installation, l'application s'y connecte.",
   'settings.desktop.download': 'Télécharger pour Windows',
+  'settings.desktop.downloadLinux': 'Télécharger pour Linux (AppImage)',
+  'settings.desktop.downloadMac': 'Télécharger pour macOS (dmg)',
+  'settings.desktop.macHint':
+    "La version macOS n'est pas signée : au premier lancement, faites un clic droit sur l'application et choisissez Ouvrir. Elle ne se met pas à jour seule, téléchargez un nouveau dmg depuis cette page. Après l'installation, connectez l'application à ce hub avec le bouton ci-dessous.",
+  'settings.desktop.connect': "Connecter l'application installée à ce hub",
+  'settings.desktop.connectHint': "Ouvre l'application installée et propose de la connecter à ce hub.",
   'settings.desktop.version': 'Version {version} · {size}',
   'settings.security.title': 'Sécurité',
   'settings.security.manageSignIn': 'Gérer la connexion',

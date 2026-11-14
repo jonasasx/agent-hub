@@ -28,8 +28,15 @@ export default {
   'settings.language.saveFailedTitle': 'Язык не сохранён',
   'settings.language.saveFailedText': 'Не удалось сохранить выбор в профиле: язык изменён только на этом устройстве.',
   'settings.desktop.title': 'Приложение для компьютера',
-  'settings.desktop.hint': 'Agent Hub для Windows: сессии в отдельном окне, уведомления и глобальная горячая клавиша. Установщик привязан к этому хабу: после установки приложение подключится сюда.',
+  'settings.desktop.hint':
+    'Десктопное приложение Agent Hub: сессии в отдельном окне, уведомления и глобальная горячая клавиша. Файлы для Windows и Linux привязаны к этому хабу: после установки приложение подключается сюда.',
   'settings.desktop.download': 'Скачать для Windows',
+  'settings.desktop.downloadLinux': 'Скачать для Linux (AppImage)',
+  'settings.desktop.downloadMac': 'Скачать для macOS (dmg)',
+  'settings.desktop.macHint':
+    'Сборка для macOS не подписана: при первом запуске нажмите на приложение правой кнопкой и выберите «Открыть». Само оно не обновляется, новый dmg скачивайте на этой странице. После установки подключите приложение к этому хабу кнопкой ниже.',
+  'settings.desktop.connect': 'Подключить установленное приложение к этому хабу',
+  'settings.desktop.connectHint': 'Откроет установленное приложение и предложит подключить его к этому хабу.',
   'settings.desktop.version': 'Версия {version} · {size}',
   'settings.security.title': 'Безопасность',
   'settings.security.manageSignIn': 'Управление входом',

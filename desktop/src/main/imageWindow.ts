@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { dt } from '../core/i18n.js';
 import { decideNavigation } from '../core/navigation.js';
 import { log } from './files.js';
+import { appIconFile } from './platform.js';
 import { PARTITION } from './window.js';
 
 const WIDTH = 1000;
@@ -29,7 +30,7 @@ export function openImageWindow(url: string, hubOrigin: string, assetsDir: strin
     width: Math.min(WIDTH, area.width),
     height: Math.min(HEIGHT, area.height),
     title: dt('desktop.imageWindow.title'),
-    icon: nativeImage.createFromPath(join(assetsDir, 'app.ico')),
+    icon: nativeImage.createFromPath(join(assetsDir, appIconFile)),
     autoHideMenuBar: true,
     backgroundColor: '#0e0e0e',
     webPreferences: {

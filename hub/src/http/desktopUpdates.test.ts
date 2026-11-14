@@ -120,6 +120,8 @@ describe('/api/desktop/info and /api/desktop/download (integration)', () => {
     mkdirSync(half);
     writeFileSync(join(feed, 'latest.yml'), LATEST);
     writeFileSync(join(feed, 'Agent-Hub-Setup-0.1.1.exe'), Buffer.from('0123456789abcdefghij'));
+    writeFileSync(join(feed, 'Agent-Hub-0.1.1.AppImage'), Buffer.from('appimage-bytes'));
+    writeFileSync(join(feed, 'Agent-Hub-0.1.1.dmg'), Buffer.from('dmg'));
     // latest.yml points to an installer that is not there.
     writeFileSync(join(half, 'latest.yml'), LATEST);
     t = await startTestHub({ env: { DESKTOP_UPDATES_DIR: feed, EXTRA_PUBLIC_URLS: SECOND } });
@@ -151,7 +153,38 @@ describe('/api/desktop/info and /api/desktop/download (integration)', () => {
   it('info: version, size and the tagged name', async () => {
     const r = await get(t, '/api/desktop/info', { host: 'agents.test.example', ...https });
     expect(r.statusCode).toBe(200);
-    expect(r.json()).toEqual({ available: true, version: '0.1.1', size: 20, fileName: 'Agent-Hub-Setup-0.1.1 [agents.test.example].exe' });
+    expect(r.json()).toEqual({
+      available: true,
+      version: '0.1.1',
+      size: 20,
+      fileName: 'Agent-Hub-Setup-0.1.1 [agents.test.example].exe',
+      downloads: [
+        { platform: 'win', size: 20, fileName: 'Agent-Hub-Setup-0.1.1 [agents.test.example].exe' },
+        { platform: 'linux', size: 14, fileName: 'Agent-Hub-0.1.1 [agents.test.example].AppImage' },
+        { platform: 'mac', size: 3, fileName: 'Agent-Hub-0.1.1.dmg' },
+      ],
+    });
+  });
+
+  it('Скачивание Linux и macOS: AppImage с меткой хаба, dmg без метки', async () => {
+    const linux = await get(t, '/api/desktop/download?platform=linux', { host: 'agents.test.example', ...https });
+    expect(linux.statusCode).toBe(200);
+    expect(linux.body).toBe('appimage-bytes');
+    expect(linux.headers['content-disposition']).toContain('filename="Agent-Hub-0.1.1 [agents.test.example].AppImage"');
+    const mac = await get(t, '/api/desktop/download?platform=mac', { host: 'agents.test.example', ...https });
+    expect(mac.statusCode).toBe(200);
+    expect(mac.body).toBe('dmg');
+    expect(mac.headers['content-disposition']).toContain('filename="Agent-Hub-0.1.1.dmg"');
+  });
+
+  it('Платформа по умолчанию — Windows, неизвестная — 404', async () => {
+    expect((await get(t, '/api/desktop/download?platform=win', https)).body).toBe('0123456789abcdefghij');
+    expect((await get(t, '/api/desktop/download?platform=amiga', https)).statusCode).toBe(404);
+  });
+
+  it('Лента отдаёт AppImage, но не dmg', async () => {
+    expect((await get(t, '/api/desktop/updates/Agent-Hub-0.1.1.AppImage')).statusCode).toBe(200);
+    expect((await get(t, '/api/desktop/updates/Agent-Hub-0.1.1.dmg')).statusCode).toBe(404);
   });
 
   it('Второй публичный адрес: its host and port in the name', async () => {

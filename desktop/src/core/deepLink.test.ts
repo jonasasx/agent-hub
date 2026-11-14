@@ -36,6 +36,19 @@ describe('parseDeepLink', () => {
   });
 });
 
+describe('agenthub://connect', () => {
+  it('a valid hub origin → connect', () => {
+    expect(parseDeepLink('agenthub://connect?hub=https%3A%2F%2Fhub.example.com')).toEqual({ kind: 'connect', hub: 'https://hub.example.com' });
+    expect(parseDeepLink('agenthub://connect/?hub=https%3A%2F%2Fhub.example.com%3A8443')).toEqual({ kind: 'connect', hub: 'https://hub.example.com:8443' });
+  });
+  it('no hub, an invalid hub or an extra path → null', () => {
+    expect(parseDeepLink('agenthub://connect')).toBeNull();
+    expect(parseDeepLink('agenthub://connect?hub=javascript%3Aalert(1)')).toBeNull();
+    expect(parseDeepLink('agenthub://connect?hub=http%3A%2F%2Fhub.example.com')).toBeNull();
+    expect(parseDeepLink('agenthub://connect/x?hub=https%3A%2F%2Fhub.example.com')).toBeNull();
+  });
+});
+
 describe('single-instance argv', () => {
   it('finds the link among Chromium/Electron arguments', () => {
     const argv = ['C:\\Program Files\\Agent Hub\\Agent Hub.exe', '--allow-file-access-from-files', `agenthub://s/${ID}`];

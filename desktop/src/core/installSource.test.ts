@@ -10,6 +10,8 @@ describe('hubFromInstaller', () => {
     expect(hubFromInstaller('Agent-Hub-Setup-0.1.8 [hub.example.com_8443].exe', null)).toBe('https://hub.example.com:8443');
     expect(hubFromInstaller('C:\\Users\\u\\Downloads\\Agent-Hub-Setup-0.1.8 [Hub.Example.com].exe', null)).toBe('https://hub.example.com');
     expect(hubFromInstaller('Agent-Hub-Setup-0.1.8 [hub.example.com] (1).exe', null)).toBe('https://hub.example.com');
+    expect(hubFromInstaller('/home/u/Downloads/Agent-Hub-0.1.9 [hub.example.com_8443].AppImage', null)).toBe('https://hub.example.com:8443');
+    expect(hubFromInstaller('Agent-Hub-0.1.9.AppImage', null)).toBeNull();
   });
 
   it('the tag wins over Zone.Identifier', () => {

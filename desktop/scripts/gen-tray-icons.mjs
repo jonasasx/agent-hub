@@ -2,9 +2,10 @@
 // tray-signedout (.ico 16/20/24/32 px) and app.ico (16…256 px). No dependencies: app.ico is the PWA icon
 // (web/public/icons/icon-512.png, decoded here and downscaled by area averaging), tray shapes are rasterised with 4×4
 // supersampling and glyphs come from a 5×7 pixel font; tray-0 (no sessions waiting) is the same PWA icon. The .ico holds
-// 32-bit BMP entries (readable by Windows, Electron and NSIS). Run: npm run icons -w desktop. The output is committed.
+// 32-bit BMP entries (readable by Windows, Electron and NSIS). macOS and Linux get PNG: tray/<name>.png (22 px) with
+// <name>@2x.png (44 px) and app.png (512 px, the PWA icon). Run: npm run icons -w desktop. The output is committed.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { inflateSync } from 'node:zlib';
+import { deflateSync, inflateSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 const out = fileURLToPath(new URL('../assets/', import.meta.url));
@@ -235,3 +236,47 @@ writeFileSync(
   ),
 );
 console.log(`icons written to ${out}`);
+
+/** 8-bit RGBA PNG of a square image. */
+function encodePng(size, rgba) {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = buf => {
+    let c = 0xffffffff;
+    for (const b of buf) c = crcTable[(c ^ b) & 255] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const head = Buffer.alloc(8);
+    head.writeUInt32BE(data.length, 0);
+    head.write(type, 4, 'ascii');
+    const tail = Buffer.alloc(4);
+    tail.writeUInt32BE(crc(Buffer.concat([head.subarray(4), data])), 0);
+    return Buffer.concat([head, data, tail]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  const raw = Buffer.alloc((size * 4 + 1) * size);
+  for (let y = 0; y < size; y++) rgba.copy(raw, y * (size * 4 + 1) + 1, y * size * 4, (y + 1) * size * 4);
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+}
+
+const TRAY_PNG = [22, 44];
+const trayPngName = (name, size) => `${out}tray/${name}${size === 44 ? '@2x' : ''}.png`;
+for (let n = 1; n <= 9; n++) {
+  for (const s of TRAY_PNG) writeFileSync(trayPngName(`tray-${n}`, s), encodePng(s, render(s, String(n), COLORS.count)));
+}
+for (const s of TRAY_PNG) {
+  writeFileSync(trayPngName('tray-9plus', s), encodePng(s, render(s, '9+', COLORS.count)));
+  writeFileSync(trayPngName('tray-offline', s), encodePng(s, render(s, '!', COLORS.offline)));
+  writeFileSync(trayPngName('tray-signedout', s), encodePng(s, render(s, '?', COLORS.signedout)));
+  writeFileSync(trayPngName('tray-0', s), encodePng(s, downscale(pwa, s)));
+}
+writeFileSync(`${out}app.png`, encodePng(512, pwa.px));
+console.log('png icons written');

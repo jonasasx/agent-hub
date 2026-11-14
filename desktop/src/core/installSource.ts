@@ -5,8 +5,8 @@
  */
 import { validateHubUrl } from './config.js';
 
-/** `[host]` or `[host_port]` before `.exe`; a browser may add ` (1)` for a second download of the same name. */
-const TAG = /\[([A-Za-z0-9.-]+)(?:_(\d{1,5}))?\](?: \(\d+\))?\.exe$/i;
+/** `[host]` or `[host_port]` before `.exe` or `.AppImage`; a browser may add ` (1)` for a second download of the same name. */
+const TAG = /\[([A-Za-z0-9.-]+)(?:_(\d{1,5}))?\](?: \(\d+\))?\.(?:exe|AppImage)$/i;
 
 const DOWNLOAD_PATH = '/api/desktop/download';
 

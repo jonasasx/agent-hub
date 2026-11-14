@@ -8,6 +8,7 @@ import electronUpdater from 'electron-updater';
 import { SingleFlight, type UpdateCheckResult, UPDATE_FIRST_CHECK_MS, UPDATE_INTERVAL_MS, manualCheckMessage, updateErrorText, updateFeedUrl, updateRequestHeaders } from '../core/updates.js';
 import { log } from './files.js';
 import { dt } from '../core/i18n.js';
+import { selfUpdateSupported } from './platform.js';
 
 export class Updater {
   private ready = false;
@@ -32,6 +33,10 @@ export class Updater {
   start(): void {
     if (!app.isPackaged) {
       log('updater: not packaged, checks disabled');
+      return;
+    }
+    if (!selfUpdateSupported) {
+      log('updater: self-update is not supported on this platform, checks disabled');
       return;
     }
     const au = this.au;
@@ -65,6 +70,10 @@ export class Updater {
   async check(manual: boolean): Promise<void> {
     if (!app.isPackaged) {
       if (manual) void dialog.showMessageBox({ type: 'info', title: 'Agent Hub', message: dt('desktop.updates.notPackaged', { version: app.getVersion() }) });
+      return;
+    }
+    if (!selfUpdateSupported) {
+      if (manual) void dialog.showMessageBox({ type: 'info', title: 'Agent Hub', message: dt('desktop.updates.manualDownload', { version: app.getVersion() }) });
       return;
     }
     let r = await this.flight.run(() => this.runCheck(manual));

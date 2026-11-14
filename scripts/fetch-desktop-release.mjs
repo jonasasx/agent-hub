@@ -3,8 +3,11 @@
 // until the next desktop version. With DESKTOP_FEED_OPTIONAL=1 it leaves <dir> without the feed and only warns — the hub
 // then shows no download button.
 //   [DESKTOP_FEED_OPTIONAL=1] node scripts/fetch-desktop-release.mjs <repo owner/name> <dir>
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
 const [repo, dir] = process.argv.slice(2);
@@ -16,16 +19,19 @@ if (!repo || !dir) {
 const pkgPath = fileURLToPath(new URL('../desktop/package.json', import.meta.url));
 const { version } = JSON.parse(await readFile(pkgPath, 'utf8'));
 const installer = `Agent-Hub-Setup-${version}.exe`;
-// latest.yml last: the hub reads the feed only when latest.yml names an installer that is present.
-const files = [installer, `${installer}.blockmap`, 'latest.yml'];
+const appImage = `Agent-Hub-${version}.AppImage`;
+// Change desktop-platforms: Windows and Linux self-update from the feed, the dmg is only downloaded (the hub does not serve
+// it through the feed). latest.yml last: the hub reads the feed only when latest.yml names an installer that is present.
+const files = [installer, `${installer}.blockmap`, appImage, `${appImage}.blockmap`, `Agent-Hub-${version}.dmg`, 'latest-linux.yml', 'latest.yml'];
 const base = `https://github.com/${repo}/releases/download/desktop-v${version}`;
 
 await mkdir(dir, { recursive: true });
 try {
   for (const f of files) {
     const res = await fetch(`${base}/${f}`, { signal: AbortSignal.timeout(1_200_000) });
-    if (!res.ok) throw new Error(`${base}/${f} -> ${res.status}`);
-    await writeFile(join(dir, f), Buffer.from(await res.arrayBuffer()));
+    if (!res.ok || !res.body) throw new Error(`${base}/${f} -> ${res.status}`);
+    // Streamed: the three installers are ~150 MB each.
+    await pipeline(Readable.fromWeb(res.body), createWriteStream(join(dir, f)));
     console.log(`desktop feed: ${f}`);
   }
 } catch (err) {
