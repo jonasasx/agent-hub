@@ -57,7 +57,6 @@ jobs:
             desktop/release/Agent-Hub-Setup-*.exe
             desktop/release/Agent-Hub-Setup-*.exe.blockmap
             desktop/release/Agent-Hub-*.AppImage
-            desktop/release/Agent-Hub-*.AppImage.blockmap
             desktop/release/Agent-Hub-*.dmg
             desktop/release/latest.yml
             desktop/release/latest-linux.yml
@@ -86,7 +85,7 @@ jobs:
         run: |
           ls -l
           for f in "Agent-Hub-Setup-${VERSION}.exe" "Agent-Hub-Setup-${VERSION}.exe.blockmap" "Agent-Hub-${VERSION}.AppImage" \
-            "Agent-Hub-${VERSION}.AppImage.blockmap" "Agent-Hub-${VERSION}.dmg" latest.yml latest-linux.yml; do
+            "Agent-Hub-${VERSION}.dmg" latest.yml latest-linux.yml; do
             test -f "$f"
           done
       - name: Create the release
@@ -97,4 +96,4 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --title "Agent Hub desktop ${VERSION}" \
             --notes "Desktop installers for Windows, Linux and macOS." \
             "Agent-Hub-Setup-${VERSION}.exe" "Agent-Hub-Setup-${VERSION}.exe.blockmap" "Agent-Hub-${VERSION}.AppImage" \
-            "Agent-Hub-${VERSION}.AppImage.blockmap" "Agent-Hub-${VERSION}.dmg" latest-linux.yml latest.yml
+            "Agent-Hub-${VERSION}.dmg" latest-linux.yml latest.yml

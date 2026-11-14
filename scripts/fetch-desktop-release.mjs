@@ -22,7 +22,7 @@ const installer = `Agent-Hub-Setup-${version}.exe`;
 const appImage = `Agent-Hub-${version}.AppImage`;
 // Change desktop-platforms: Windows and Linux self-update from the feed, the dmg is only downloaded (the hub does not serve
 // it through the feed). latest.yml last: the hub reads the feed only when latest.yml names an installer that is present.
-const files = [installer, `${installer}.blockmap`, appImage, `${appImage}.blockmap`, `Agent-Hub-${version}.dmg`, 'latest-linux.yml', 'latest.yml'];
+const files = [installer, `${installer}.blockmap`, appImage, `Agent-Hub-${version}.dmg`, 'latest-linux.yml', 'latest.yml'];
 const base = `https://github.com/${repo}/releases/download/desktop-v${version}`;
 
 await mkdir(dir, { recursive: true });
