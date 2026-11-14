@@ -25,6 +25,7 @@ export default {
   'machines.welcome.item2': 'нужна подписка Claude: если входа нет, установщик предложит войти;',
   'machines.welcome.item3': 'ваши машины и сессии видите только вы.',
   'machines.welcome.cta': 'Подключить машину',
+  'machines.welcome.desktop': 'Скачать приложение для компьютера',
   'machines.welcome.logout': 'Выйти',
   'machines.login.nameTaken': 'Подписка с таким именем уже есть',
   'machines.login.runnerOffline': 'Машина не в сети',

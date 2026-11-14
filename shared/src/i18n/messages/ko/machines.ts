@@ -25,6 +25,7 @@ export default {
   'machines.welcome.item2': 'Claude 구독이 필요합니다. 로그인되어 있지 않으면 설치 프로그램이 로그인을 안내합니다.',
   'machines.welcome.item3': '내 머신과 세션은 나만 볼 수 있습니다.',
   'machines.welcome.cta': '머신 연결',
+  'machines.welcome.desktop': '데스크톱 앱 다운로드',
   'machines.welcome.logout': '로그아웃',
   'machines.login.nameTaken': '같은 이름의 구독이 이미 있습니다',
   'machines.login.runnerOffline': '머신이 오프라인입니다',

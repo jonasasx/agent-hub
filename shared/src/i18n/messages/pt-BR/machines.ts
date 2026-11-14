@@ -25,6 +25,7 @@ export default {
   'machines.welcome.item2': 'é necessária uma assinatura do Claude: se você não estiver conectado, o instalador oferece o login;',
   'machines.welcome.item3': 'só você vê suas máquinas e sessões.',
   'machines.welcome.cta': 'Conectar uma máquina',
+  'machines.welcome.desktop': 'Baixar o aplicativo para desktop',
   'machines.welcome.logout': 'Sair',
   'machines.login.nameTaken': 'Já existe uma assinatura com este nome',
   'machines.login.runnerOffline': 'A máquina está offline',

@@ -772,6 +772,7 @@ select.mini { max-width: 18ch; } /* L9 */
 .welcome .card { width: 460px; }
 .welcome-list { margin: 0 0 20px; padding-left: 18px; color: var(--muted); font-size: 13px; display: grid; gap: 4px; }
 .welcome-cta { width: 100%; justify-content: center; }
+.welcome-desktop { margin: 12px 0 0 !important; font-size: 13px; text-align: center; }
 .welcome-foot { margin: 16px 0 0 !important; font-size: 12px; color: var(--faint) !important; text-align: center; overflow-wrap: anywhere; }
 
 .cmd-box { display: flex; gap: 8px; align-items: stretch; margin-top: 6px; min-width: 0; }

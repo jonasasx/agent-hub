@@ -25,6 +25,7 @@ export default {
   'machines.welcome.item2': 'un abonnement Claude est nécessaire : si vous n’êtes pas connecté, l’installateur propose de le faire ;',
   'machines.welcome.item3': 'vous seul voyez vos machines et vos sessions.',
   'machines.welcome.cta': 'Connecter une machine',
+  'machines.welcome.desktop': "Télécharger l'application de bureau",
   'machines.welcome.logout': 'Se déconnecter',
   'machines.login.nameTaken': 'Un abonnement portant ce nom existe déjà',
   'machines.login.runnerOffline': 'La machine est hors ligne',

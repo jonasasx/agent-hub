@@ -25,6 +25,7 @@ export default {
   'machines.welcome.item2': 'Claudeのサブスクリプションが必要です。サインインしていない場合は、インストーラーがサインインを案内します;',
   'machines.welcome.item3': 'マシンとセッションが見えるのは自分だけです。',
   'machines.welcome.cta': 'マシンを接続',
+  'machines.welcome.desktop': 'デスクトップアプリをダウンロード',
   'machines.welcome.logout': 'サインアウト',
   'machines.login.nameTaken': 'この名前のサブスクリプションはすでに存在します',
   'machines.login.runnerOffline': 'マシンはオフラインです',

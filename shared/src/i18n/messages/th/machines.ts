@@ -25,6 +25,7 @@ export default {
   'machines.welcome.item2': 'ต้องมีการสมัครใช้งาน Claude: หากยังไม่ได้ลงชื่อเข้าใช้ ตัวติดตั้งจะแจ้งให้ลงชื่อเข้าใช้',
   'machines.welcome.item3': 'มีเพียงคุณที่เห็นเครื่องและเซสชันของคุณ',
   'machines.welcome.cta': 'เชื่อมต่อเครื่อง',
+  'machines.welcome.desktop': 'ดาวน์โหลดแอปสำหรับคอมพิวเตอร์',
   'machines.welcome.logout': 'ออกจากระบบ',
   'machines.login.nameTaken': 'มีการสมัครใช้งานชื่อนี้อยู่แล้ว',
   'machines.login.runnerOffline': 'เครื่องออฟไลน์',

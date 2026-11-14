@@ -25,6 +25,7 @@ export default {
   'machines.welcome.item2': 'se requiere una suscripción de Claude: si no has iniciado sesión, el instalador te ofrece hacerlo;',
   'machines.welcome.item3': 'solo tú ves tus máquinas y sesiones.',
   'machines.welcome.cta': 'Conectar una máquina',
+  'machines.welcome.desktop': 'Descargar la aplicación de escritorio',
   'machines.welcome.logout': 'Cerrar sesión',
   'machines.login.nameTaken': 'Ya existe una suscripción con este nombre',
   'machines.login.runnerOffline': 'La máquina está sin conexión',

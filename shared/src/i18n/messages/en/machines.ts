@@ -23,6 +23,7 @@ export default {
   'machines.welcome.item2': 'a Claude subscription is required: if you are not signed in, the installer offers to sign in;',
   'machines.welcome.item3': 'only you see your machines and sessions.',
   'machines.welcome.cta': 'Connect a machine',
+  'machines.welcome.desktop': 'Download the desktop app',
   'machines.welcome.logout': 'Sign out',
   'machines.login.nameTaken': 'A subscription with this name already exists',
   'machines.login.runnerOffline': 'The machine is offline',

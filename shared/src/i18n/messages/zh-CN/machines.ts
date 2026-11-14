@@ -25,6 +25,7 @@ export default {
   'machines.welcome.item2': '需要 Claude 订阅：如果尚未登录，安装程序会提示你登录；',
   'machines.welcome.item3': '只有你能看到自己的机器和会话。',
   'machines.welcome.cta': '连接机器',
+  'machines.welcome.desktop': '下载桌面应用',
   'machines.welcome.logout': '退出登录',
   'machines.login.nameTaken': '已存在同名订阅',
   'machines.login.runnerOffline': '机器已离线',

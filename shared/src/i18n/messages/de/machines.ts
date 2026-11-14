@@ -25,6 +25,7 @@ export default {
   'machines.welcome.item2': 'ein Claude-Abonnement ist erforderlich: Sind Sie nicht angemeldet, bietet das Installationsprogramm die Anmeldung an;',
   'machines.welcome.item3': 'nur Sie sehen Ihre Rechner und Sitzungen.',
   'machines.welcome.cta': 'Rechner verbinden',
+  'machines.welcome.desktop': 'Desktop-App herunterladen',
   'machines.welcome.logout': 'Abmelden',
   'machines.login.nameTaken': 'Ein Abonnement mit diesem Namen existiert bereits',
   'machines.login.runnerOffline': 'Der Rechner ist offline',
