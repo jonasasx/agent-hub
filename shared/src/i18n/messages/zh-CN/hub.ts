@@ -225,6 +225,8 @@ export default {
   'hub.sessions.noteRestored': { other: '对话记录已从中枢中的副本恢复（{count} 行）' },
   'hub.sessions.noteResumed': '已恢复',
   'hub.sessions.noteResumedSub': '已恢复 · 订阅 {name}',
+  'hub.sessions.noteRestarted': '会话已重启',
+  'hub.sessions.restartTurnInProgress': '正在进行一轮对话：要中断并重启吗？',
   'hub.sessions.noteSleptPermission': '会话在等待授权时进入了休眠',
   'hub.sessions.noteTurnError': '本轮因错误而结束：{error}',
   'hub.sessions.outputPending': '完整输出尚未送达中枢：请稍后再试',

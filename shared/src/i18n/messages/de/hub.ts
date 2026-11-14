@@ -228,6 +228,8 @@ export default {
   },
   'hub.sessions.noteResumed': 'Fortgesetzt',
   'hub.sessions.noteResumedSub': 'Fortgesetzt · Abonnement {name}',
+  'hub.sessions.noteRestarted': 'Sitzung neu gestartet',
+  'hub.sessions.restartTurnInProgress': 'Ein Durchlauf läuft: unterbrechen und neu starten?',
   'hub.sessions.noteSleptPermission': 'Die Sitzung ist eingeschlafen, ohne auf die Berechtigung zu warten',
   'hub.sessions.noteTurnError': 'Der Durchlauf endete mit einem Fehler: {error}',
   'hub.sessions.outputPending': 'Die vollständige Ausgabe ist noch nicht im Hub angekommen: Versuchen Sie es später',

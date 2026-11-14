@@ -229,6 +229,8 @@ export default {
   },
   'hub.sessions.noteResumed': 'Reanudada',
   'hub.sessions.noteResumedSub': 'Reanudada · suscripción {name}',
+  'hub.sessions.noteRestarted': 'Sesión reiniciada',
+  'hub.sessions.restartTurnInProgress': 'Hay un turno en curso: ¿interrumpir y reiniciar?',
   'hub.sessions.noteSleptPermission': 'La sesión pasó a reposo sin esperar el permiso',
   'hub.sessions.noteTurnError': 'El turno terminó con un error: {error}',
   'hub.sessions.outputPending': 'La salida completa aún no ha llegado al hub: inténtalo más tarde',

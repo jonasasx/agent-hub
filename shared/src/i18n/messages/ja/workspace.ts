@@ -127,6 +127,7 @@ export default {
   'workspace.sidebar.usage': '使用状況',
   'workspace.sidebar.users': 'ユーザー',
   'workspace.sidebar.security': 'セキュリティ',
+  'workspace.sidebar.desktopApp': 'アプリをダウンロード',
   'workspace.sidebar.signOut': 'サインアウト',
   'workspace.sidebar.resetLayout': 'ウィンドウレイアウトをリセット',
   'workspace.sidebar.listLoading': '一覧を読み込み中',

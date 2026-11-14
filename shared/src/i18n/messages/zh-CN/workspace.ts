@@ -127,6 +127,7 @@ export default {
   'workspace.sidebar.usage': '额度',
   'workspace.sidebar.users': '用户',
   'workspace.sidebar.security': '安全',
+  'workspace.sidebar.desktopApp': '下载应用',
   'workspace.sidebar.signOut': '退出登录',
   'workspace.sidebar.resetLayout': '重置窗口布局',
   'workspace.sidebar.listLoading': '正在加载列表',

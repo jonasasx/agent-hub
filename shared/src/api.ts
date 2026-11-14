@@ -1339,6 +1339,19 @@ export interface SwitchSubscriptionResponse {
   session: SessionView;
 }
 
+/**
+ * POST /api/sessions/:id/restart → 202 {session} (change session-restart). Stops the session's process and resumes it
+ * with the same transcript, model, subscription, permission mode, project and folder. While a turn or background work
+ * runs — 409 turn_in_progress unless `interrupt`. Errors: 409 turn_in_progress | runner_offline, 423 read_only.
+ */
+export const restartSessionRequestSchema = z.object({
+  interrupt: z.boolean().optional(),
+});
+export type RestartSessionRequest = z.infer<typeof restartSessionRequestSchema>;
+export interface RestartSessionResponse {
+  session: SessionView;
+}
+
 // ---------- subscription limits (change subscription-limits, design L6) ----------
 // Requirements: Снимок лимитов подписки; Состояния «нет данных»; Ручное обновление; Изоляция лимитов по пользователям.
 

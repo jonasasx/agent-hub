@@ -230,6 +230,8 @@ export default {
   } as PluralMessage,
   'hub.sessions.noteResumed': 'Поднята через resume',
   'hub.sessions.noteResumedSub': 'Поднята через resume · подписка {name}',
+  'hub.sessions.noteRestarted': 'Сессия перезапущена',
+  'hub.sessions.restartTurnInProgress': 'Идёт ход: прервать и перезапустить?',
   'hub.sessions.noteSleptPermission': 'Сессия уснула, не дождавшись разрешения',
   'hub.sessions.noteTurnError': 'Ход завершился с ошибкой: {error}',
   'hub.sessions.outputPending': 'Полный вывод ещё не дошёл до хаба — попробуйте позже',

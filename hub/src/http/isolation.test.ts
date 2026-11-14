@@ -345,6 +345,7 @@ describe('isolation of users (integration)', () => {
     'POST /api/sessions/:id/messages': { url: `/api/sessions/${o.session}/messages`, body: { text: 'hi', clientUuid: randomUUID() } },
     'POST /api/sessions/:id/wake': { url: `/api/sessions/${o.session}/wake`, body: {} },
     'POST /api/sessions/:id/interrupt': { url: `/api/sessions/${o.session}/interrupt`, body: {} },
+    'POST /api/sessions/:id/restart': { url: `/api/sessions/${o.session}/restart`, body: {} },
     'PATCH /api/sessions/:id': { url: `/api/sessions/${o.session}`, body: { permissionMode: 'plan' } },
     'POST /api/sessions/:id/permissions/:requestId': { url: `/api/sessions/${o.session}/permissions/${o.request}`, body: { decision: 'allow' } },
     'GET /api/layout': { url: '/api/layout?device=desktop', list: true },

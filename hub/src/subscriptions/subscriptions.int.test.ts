@@ -747,6 +747,111 @@ describe('subscriptions (integration)', () => {
     expect(lastCmd('session.resume', s.id)!.subscription).toEqual({ id: B.view.id, token: B.token });
   });
 
+  it('session-restart: a waiting session — stop → resume with the same subscription, model, mode and folder; the note «Session restarted»', async () => {
+    const s = await created({ subscriptionId: B.view.id, permissionMode: 'acceptEdits' });
+    result(s.id);
+    await waitStatus(s.id, 'waiting');
+    const choice = (await list()).lastChoiceId;
+    const mark = got.length;
+    const r = await api('POST', `/api/sessions/${s.id}/restart`, {});
+    expect(r.statusCode, r.body).toBe(202);
+    expect((r.json() as { session: SessionView }).session.subscription).toEqual({ id: B.view.id, name: 'Pro рабочая' });
+    expect(
+      got
+        .slice(mark)
+        .filter(m => m.payload.sessionId === s.id)
+        .map(m => m.type),
+    ).toEqual(['session.stop', 'session.resume']);
+    const resume = lastCmd('session.resume', s.id)!;
+    expect(resume).toMatchObject({ cwd: lastCmd('session.start', s.id)!.cwd, model: 'haiku', permissionMode: 'acceptEdits', subscription: { id: B.view.id, token: B.token } });
+    expect(resume.prompt).toBeUndefined();
+    expect((await notes(s.id)).filter(n => n.kind === 'resume').map(shown)).toEqual(['Session restarted']);
+    expect((await notes(s.id)).filter(n => n.kind === 'subscription_switch')).toEqual([]);
+    expect((await list()).lastChoiceId).toBe(choice);
+    expect((await getS(s.id)).status).toBe('waiting');
+  });
+
+  it('session-restart: a running turn → 409 turn_in_progress, the process untouched; with interrupt — interrupt → stop → resume without a prompt', async () => {
+    const s = await created({ subscriptionId: A.view.id, prompt: `сделай ${randomUUID()}` });
+    const busy = await api('POST', `/api/sessions/${s.id}/restart`, {});
+    expect(busy.statusCode).toBe(409);
+    expect(busy.json()).toMatchObject({ error: 'turn_in_progress' });
+    expect(cmds('session.stop', s.id)).toEqual([]);
+    expect(cmds('session.interrupt', s.id)).toEqual([]);
+    const mark = got.length;
+    const r = await api('POST', `/api/sessions/${s.id}/restart`, { interrupt: true });
+    expect(r.statusCode, r.body).toBe(202);
+    expect(
+      got
+        .slice(mark)
+        .filter(m => m.payload.sessionId === s.id)
+        .map(m => m.type),
+    ).toEqual(['session.interrupt', 'session.stop', 'session.resume']);
+    const resume = lastCmd('session.resume', s.id)!;
+    expect(resume.prompt).toBeUndefined();
+    expect(resume.subscription).toEqual({ id: A.view.id, token: A.token });
+  });
+
+  it('session-restart: the folder is gone → 423 before the stop, the running turn and the process stay as they were', async () => {
+    const s = await created({ subscriptionId: A.view.id, prompt: `сделай ${randomUUID()}` });
+    cwdGone = true;
+    try {
+      const r = await api('POST', `/api/sessions/${s.id}/restart`, { interrupt: true });
+      expect(r.statusCode).toBe(423);
+    } finally {
+      cwdGone = false;
+    }
+    expect(cmds('session.interrupt', s.id)).toEqual([]);
+    expect(cmds('session.stop', s.id)).toEqual([]);
+    expect(cmds('session.resume', s.id)).toEqual([]);
+    expect((await getS(s.id)).status).toBe('working');
+  });
+
+  it('session-restart: the machine login stays the machine login; a sleeping session is only resumed', async () => {
+    const m = await created({ subscriptionId: null });
+    result(m.id);
+    await waitStatus(m.id, 'waiting');
+    expect((await api('POST', `/api/sessions/${m.id}/restart`, {})).statusCode).toBe(202);
+    const resume = lastCmd('session.resume', m.id)!;
+    expect(resume.subscription).toBeUndefined();
+    expect((await getS(m.id)).subscription).toBeNull();
+    agentSend(hp, 'session.exited', { sessionId: m.id, code: 0, reason: 'stopped' });
+    await waitStatus(m.id, 'sleeping');
+    const mark = got.length;
+    expect((await api('POST', `/api/sessions/${m.id}/restart`, {})).statusCode).toBe(202);
+    expect(
+      got
+        .slice(mark)
+        .filter(x => x.payload.sessionId === m.id)
+        .map(x => x.type),
+    ).toEqual(['session.resume']);
+  });
+
+  it('session-restart: a retired subscription → the default one; offline machine → 409 runner_offline; read-only → 423', async () => {
+    const R = await add('Временная');
+    const s = await created({ subscriptionId: R.view.id });
+    result(s.id);
+    await waitStatus(s.id, 'waiting');
+    expect((await api('PATCH', `/api/subscriptions/${R.view.id}`, { retired: true })).statusCode).toBe(200);
+    expect((await api('POST', `/api/sessions/${s.id}/restart`, {})).statusCode).toBe(202);
+    const def = (await list()).defaultId;
+    expect(def).not.toBe(R.view.id);
+    expect((lastCmd('session.resume', s.id)!.subscription as { id: string }).id).toBe(def);
+    const off = (
+      await t.tdb.pool.query(
+        `INSERT INTO sessions (user_id, runner_id, claude_session_id, cwd, source, status, is_hub_managed) VALUES ($1, 'x1', gen_random_uuid(), 'C:\\w', 'hub', 'sleeping', true) RETURNING id`,
+        [userId],
+      )
+    ).rows[0].id as string;
+    const o = await api('POST', `/api/sessions/${off}/restart`, {});
+    expect(o.statusCode).toBe(409);
+    expect(o.json()).toMatchObject({ error: 'runner_offline' });
+    await t.tdb.pool.query(`UPDATE sessions SET read_only_reason = 'cron' WHERE id = $1`, [s.id]);
+    const stops = cmds('session.stop', s.id).length;
+    expect((await api('POST', `/api/sessions/${s.id}/restart`, {})).statusCode).toBe(423);
+    expect(cmds('session.stop', s.id)).toHaveLength(stops);
+  });
+
   it('5.1 no answer, no WS message to a browser and no line of the hub log carried a token (only tokenHint)', async () => {
     await waitFor(() => ui.received.length > 0);
     const all = [...seen, ...ui.received.map(m => JSON.stringify(m)), ...ui2.received.map(m => JSON.stringify(m)), ...logs].join('\n');

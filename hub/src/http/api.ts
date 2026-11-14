@@ -26,6 +26,7 @@ import {
   providerSchema,
   extraProviderSchema,
   wakeRequestSchema,
+  restartSessionRequestSchema,
   projectSuggestionAnswerSchema,
   resolveSessionRefsSchema,
   type SessionRefView,
@@ -682,6 +683,12 @@ export function registerApi(
 
   app.post('/api/sessions/:id/interrupt', async (req, reply) => {
     return reply.code(202).send({ session: await sessions.interrupt(req.user!.id, (req.params as { id: string }).id) });
+  });
+
+  /** Stop the process and resume at once with the same settings. Requirement: Перезапуск сессии из меню. */
+  app.post('/api/sessions/:id/restart', async (req, reply) => {
+    const b = parse(restartSessionRequestSchema, req.body ?? {});
+    return reply.code(202).send({ session: await sessions.restart(req.user!.id, (req.params as { id: string }).id, b) });
   });
 
   app.patch('/api/sessions/:id', async req => {

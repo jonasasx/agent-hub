@@ -228,6 +228,8 @@ export default {
   } as PluralMessage,
   'hub.sessions.noteResumed': 'Resumed',
   'hub.sessions.noteResumedSub': 'Resumed · subscription {name}',
+  'hub.sessions.noteRestarted': 'Session restarted',
+  'hub.sessions.restartTurnInProgress': 'A turn is in progress: interrupt and restart?',
   'hub.sessions.noteSleptPermission': 'The session fell asleep without waiting for permission',
   'hub.sessions.noteTurnError': 'The turn ended with an error: {error}',
   'hub.sessions.outputPending': 'The full output has not reached the hub yet: try later',

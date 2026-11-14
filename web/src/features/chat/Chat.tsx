@@ -48,6 +48,7 @@ import { switchSubscription } from '../subscriptions/actions';
 import { McpButton, McpMenuItem, McpPanelHost } from '../mcp/McpViews';
 import { ICON_FOLDER_BTN } from '../files/fileIcons';
 import { openFilesForSession } from '../files/open';
+import { requestRestart } from './restart';
 
 /**
  * Current time for «уснёт через N мин» (D11, M2.1): N = ceil((sleepsAt − now) / 1 min), so the component re-renders
@@ -223,8 +224,9 @@ function IdleControl({ s }: { s: SessionView }) {
 }
 
 /**
- * Mode and model behind «⋯» — shown instead of the inline selects in a narrow pane (container query) and in the
- * phone top bar (UI review H1, M10).
+ * «⋯» of the session: «Перезапустить сессию» always (change session-restart, design D4); fork, MCP, mode and model in
+ * `.menu-narrow` — only in a narrow pane (container query) and in the phone top bar, where the inline selects are
+ * hidden (UI review H1, M10).
  */
 export function ModeModelMenu({ s }: { s: SessionView }) {
   const t = useT();
@@ -232,6 +234,8 @@ export function ModeModelMenu({ s }: { s: SessionView }) {
   const box = useRef<HTMLSpanElement>(null);
   useMenu(open, box, () => setOpen(false));
   const ro = useStore(st => isReadOnly(s, runnerIndex(st.runners)));
+  const offline = useStore(st => displayStatus(s, runnerIndex(st.runners)) === 'offline');
+  const restartWhy = offline ? t('chat.restart.offline') : ro ? t('chat.restart.readOnly') : undefined;
   return (
     <span className="ctl-more" ref={box}>
       <button type="button" className="icon-btn" aria-haspopup="menu" aria-expanded={open} aria-label={t('chat.menu.label')} title={t('chat.menu.label')} onClick={() => setOpen(!open)}>
@@ -242,29 +246,45 @@ export function ModeModelMenu({ s }: { s: SessionView }) {
           <button
             type="button"
             role="menuitem"
-            className="btn menu-fork"
+            className="btn menu-restart"
+            disabled={ro}
+            title={restartWhy}
             onClick={() => {
               setOpen(false);
-              useStore.setState({ modal: { type: 'fork', sessionId: s.id } });
+              requestRestart(s);
             }}
           >
-            {t('chat.menu.fork')}
+            {t('chat.restart.menu')}
           </button>
-          <McpMenuItem s={s} onPick={() => setOpen(false)} />
-          {/* UI review C1: a pick closes the menu, so «Идёт ход: прервать и переключить?» is not under it */}
-          <ModeModelSelects s={s} disabled={ro} onSubscriptionPicked={() => setOpen(false)} />
-          {!ro && (
-            <label className="phone-only">
-              {t('chat.idle.menu')}
-              <select className="mini" aria-label={t('chat.idle.menu')} value={String(s.effectiveIdleTimeoutMin)} onChange={e => void patchSession(s.id, { idleTimeoutMin: Number(e.target.value) })}>
-                {IDLE_TIMEOUT_CHOICES.map(m => (
-                  <option key={m} value={m}>
-                    {m === 0 ? t('chat.idle.never') : t('chat.idle.choice', { label: idleLabel(m) })}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
+          {restartWhy && <span className="hint sub-why">{restartWhy}</span>}
+          <div className="menu-narrow">
+            <button
+              type="button"
+              role="menuitem"
+              className="btn menu-fork"
+              onClick={() => {
+                setOpen(false);
+                useStore.setState({ modal: { type: 'fork', sessionId: s.id } });
+              }}
+            >
+              {t('chat.menu.fork')}
+            </button>
+            <McpMenuItem s={s} onPick={() => setOpen(false)} />
+            {/* UI review C1: a pick closes the menu, so «Идёт ход: прервать и переключить?» is not under it */}
+            <ModeModelSelects s={s} disabled={ro} onSubscriptionPicked={() => setOpen(false)} />
+            {!ro && (
+              <label className="phone-only">
+                {t('chat.idle.menu')}
+                <select className="mini" aria-label={t('chat.idle.menu')} value={String(s.effectiveIdleTimeoutMin)} onChange={e => void patchSession(s.id, { idleTimeoutMin: Number(e.target.value) })}>
+                  {IDLE_TIMEOUT_CHOICES.map(m => (
+                    <option key={m} value={m}>
+                      {m === 0 ? t('chat.idle.never') : t('chat.idle.choice', { label: idleLabel(m) })}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
         </div>
       )}
     </span>

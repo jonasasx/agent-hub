@@ -384,7 +384,9 @@ select.mini { max-width: 18ch; } /* L9 */
 /* H1: narrow or low panes — mode and model behind «⋯», one-line sleep banner, compact project line */
 .leaf { container: leaf / size; } /* the leaf gets its size from the split, so height queries work too */
 .ctl-inline { display: contents; }
-.ctl-more { display: none; position: relative; }
+.ctl-more { display: inline-flex; position: relative; }
+/* session-restart D4: fork, MCP, mode and model repeat the head's controls — only where those are hidden */
+.ctl-more .menu-narrow { display: none; }
 .ctl-more .menu { position: absolute; right: 0; top: 100%; margin-top: 6px; min-width: 220px; display: flex; flex-direction: column; gap: 8px; padding: 10px; }
 .ctl-more .menu label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
 .ctl-more .menu select { max-width: none; width: 100%; }
@@ -394,7 +396,7 @@ select.mini { max-width: 18ch; } /* L9 */
 @container leaf (max-width: 520px) or (max-height: 520px) {
   .head-controls .ctl-inline { display: none; }
   .head-controls .fork-btn { display: none; }
-  .ctl-more { display: inline-flex; }
+  .ctl-more .menu-narrow { display: contents; }
   /* one row of chips: «⋯» moves to the title row, «Файлы» and the subagents button get short */
   /* the label stays the button's name for a screen reader (.sr-only) */
   .head-controls .fx-files-btn .btn-label { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -419,7 +421,7 @@ select.mini { max-width: 18ch; } /* L9 */
   .qs-foot { display: none; } /* C3 */
   .chat-head { display: none; } /* M10: status, mode and model live in the top bar on the phone */
   .mbar .mt { display: flex; align-items: center; gap: 6px; }
-  .mbar .ctl-more { display: inline-flex; }
+  .mbar .ctl-more .menu-narrow { display: contents; }
   /* H8: touch targets ≥ 40px */
   .icon-btn { width: 40px; height: 40px; }
   .sec-h button, .more, .classline .idle-btn { min-height: 40px; }
@@ -616,9 +618,13 @@ select.mini { max-width: 18ch; } /* L9 */
 .proj-btn.asking { border-style: dashed; border-color: var(--line-strong); color: var(--muted); background: transparent; }
 .proj-btn.archived { opacity: .75; }
 .classline .archived-note { color: var(--muted); }
-.proj-ask { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 1 1 100%; min-width: 0; }
-.proj-ask .b-text { min-width: 0; overflow-wrap: anywhere; flex: 1 1 100%; }
-.proj-ask .btn { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-ask { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; flex: 1 1 16em; min-width: 0; order: 1; }
+/* a narrow pane: the question moves to its own row under the project pill */
+.classline:has(.proj-ask) { flex-wrap: wrap; row-gap: 6px; }
+.classline .proj-ask .btn { padding: 0 9px; }
+.classline .proj-ask .btn.primary { max-width: 20em; }
+.proj-ask .btn { max-width: 100%; min-width: 0; }
+.proj-ask .btn-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .classline > span:has(> .idle-btn) { flex: none; white-space: nowrap; }
 
 /* ---------- phone chat, compact (Ivan, M4a): the feed gets ≥ 75% of 390×844 ---------- */
@@ -657,7 +663,7 @@ select.mini { max-width: 18ch; } /* L9 */
 
 /* ---------- fork (M4b, 4.15) ---------- */
 .fork-btn { white-space: nowrap; }
-.menu .menu-fork { justify-content: flex-start; }
+.menu .menu-fork, .menu .menu-restart { justify-content: flex-start; }
 .fork-modal { width: 640px; }
 .fork-modal .check { display: flex; gap: 8px; align-items: center; font-size: 13px; min-height: 40px; }
 .fork-modal .check input { width: 18px; height: 18px; }
@@ -697,6 +703,7 @@ select.mini { max-width: 18ch; } /* L9 */
 .sub-btn .sub-ico { color: var(--muted); }
 /* QA subagents 1: the phone's info line wraps instead of pushing the page wider than the screen */
 .classline.phone-info { flex-wrap: wrap; row-gap: 4px; }
+.classline.phone-info .proj-ask { flex: 1 1 100%; }
 /* the evidence takes what is left and shortens (basis 0), so the line wraps only when the pills and the button alone
    do not fit — one line in the usual case (phone.compact) */
 .classline.phone-info .evidence { flex: 1 1 0; min-width: 4em; }

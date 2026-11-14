@@ -1185,6 +1185,52 @@ describe('McpGateway', () => {
     expect(wrong.status).toBe(401);
   });
 
+  it('keeps session bearers while a server is out of the snapshot (OAuth sign-in) and after stopServer; revokeSession still revokes', async () => {
+    gateway = new McpGateway(createLogger({ level: 'error', write: () => undefined }));
+    await gateway.start();
+    const serverId = randomUUID();
+    const sessionId = randomUUID();
+    const cfg = (revision: number) => ({
+      id: serverId,
+      name: 'relogin',
+      enabled: true,
+      transport: 'stdio' as const,
+      mode: 'machine-shared' as const,
+      command: process.execPath,
+      args: [
+        '-e',
+        ["process.stdin.on('data', d => {", '  const q = JSON.parse(d.toString());', "  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: q.id, result: { ok: true } }) + '\\n');", '});'].join(
+          ' ',
+        ),
+      ],
+      machineScope: { allMachines: true, machineIds: [] },
+      projectIds: [],
+      revision,
+      secrets: [],
+    });
+    gateway.setRegistry({ protocol: '1.13', revision: 1, generatedAt: 1, registryEnabled: true, servers: [cfg(1)] });
+    const bearer = gateway.authorize(serverId, sessionId);
+    const call = () =>
+      fetch(`${gateway!.url}?server=${serverId}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${bearer}`, 'x-agent-session': sessionId, 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
+      });
+    expect((await call()).status).toBe(200);
+    // the hub drops the server from the snapshot while the user signs in again
+    gateway.setRegistry({ protocol: '1.13', revision: 2, generatedAt: 2, registryEnabled: true, servers: [] });
+    expect((await call()).status).toBe(404);
+    // it comes back under a new revision: the bearer the live session holds still works
+    gateway.setRegistry({ protocol: '1.13', revision: 3, generatedAt: 3, registryEnabled: true, servers: [cfg(2)] });
+    const back = await call();
+    expect(back.status).toBe(200);
+    expect(await back.text()).toContain('"ok":true');
+    gateway.stopServer(serverId);
+    expect((await call()).status).toBe(200);
+    gateway.revokeSession(sessionId);
+    expect((await call()).status).toBe(401);
+  });
+
   it('validates stdio MCP servers with initialize and tools/list', async () => {
     const statuses: unknown[] = [];
     gateway = new McpGateway(createLogger({ level: 'error', write: () => undefined }), status => statuses.push(status));

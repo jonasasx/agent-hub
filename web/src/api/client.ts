@@ -45,6 +45,8 @@ import type {
   SubscriptionsResponse,
   SwitchSubscriptionRequest,
   SwitchSubscriptionResponse,
+  RestartSessionRequest,
+  RestartSessionResponse,
   UploadResponse,
   RefreshLimitsResponse,
   SubscriptionLimitsResponse,
@@ -283,6 +285,7 @@ export const api = {
   subscriptionUsage: (from: string, to: string) => request<SubscriptionUsageResponse>(`/api/subscriptions/usage?from=${enc(from)}&to=${enc(to)}`),
   /** Switch the subscription of a session (202); for a session without a live process — only the last choice. */
   switchSubscription: (id: string, body: SwitchSubscriptionRequest) => request<SwitchSubscriptionResponse>(`/api/sessions/${enc(id)}/subscription`, json('POST', body)),
+  restartSession: (id: string, body: RestartSessionRequest) => request<RestartSessionResponse>(`/api/sessions/${enc(id)}/restart`, json('POST', body)),
 
   // mcp-management: actions answer 202 with the view; results come as WS session.mcp / mcp.auth
   mcp: (id: string) => request<McpSessionView>(`/api/sessions/${enc(id)}/mcp`),

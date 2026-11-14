@@ -127,6 +127,7 @@ export default {
   'workspace.sidebar.usage': 'การใช้งาน',
   'workspace.sidebar.users': 'ผู้ใช้',
   'workspace.sidebar.security': 'ความปลอดภัย',
+  'workspace.sidebar.desktopApp': 'ดาวน์โหลดแอป',
   'workspace.sidebar.signOut': 'ออกจากระบบ',
   'workspace.sidebar.resetLayout': 'รีเซ็ตเลย์เอาต์หน้าต่าง',
   'workspace.sidebar.listLoading': 'กำลังโหลดรายการ',

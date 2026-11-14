@@ -132,6 +132,7 @@ export default {
   'workspace.sidebar.usage': 'Расход',
   'workspace.sidebar.users': 'Пользователи',
   'workspace.sidebar.security': 'Безопасность',
+  'workspace.sidebar.desktopApp': 'Скачать приложение',
   'workspace.sidebar.signOut': 'Выйти',
   'workspace.sidebar.resetLayout': 'Сбросить раскладку окон',
   'workspace.sidebar.listLoading': 'Загрузка списка',

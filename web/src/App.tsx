@@ -28,6 +28,7 @@ import { loadLimits } from './features/limits/actions';
 import { openMcpPanel, reloadMcp } from './features/mcp/actions';
 import { LimitCard } from './features/limits/LimitCard';
 import { SwitchConfirm } from './features/subscriptions/SwitchConfirm';
+import { RestartConfirm } from './features/chat/RestartConfirm';
 import { trackCtrlKey } from './features/ui/a11y';
 import { Lightbox } from './features/images/ImagePreview';
 import { startPhoneHistory } from './features/workspace/phoneHistory';
@@ -354,6 +355,7 @@ export function App() {
           {modal?.type === 'search' && <QuickSearch onClose={closeModal} />}
           {modal?.type === 'fork' && <ForkModal key={modal.sessionId} sessionId={modal.sessionId} initialMode={modal.mode} onClose={closeModal} />}
           <SwitchConfirm />
+          <RestartConfirm />
           <LimitCard />
           <Lightbox />
           {phone ? <PhoneWindow /> : <DropOverlay />}

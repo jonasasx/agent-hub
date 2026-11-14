@@ -48,6 +48,7 @@ export type SessionRow = Selectable<SessionsTable> & {
   active_subscriptions?: string | number | null;
   runner_protocol?: string | null;
   catalog_project_color?: ColorKey | null;
+  catalog_project_archived?: boolean | null;
   hidden_project?: boolean;
   catalog_project_id?: string | null;
   catalog_project_name?: string | null;
@@ -138,7 +139,7 @@ export function toSessionView(r: SessionRow, defaults: TimeoutDefaults, projects
     isDriveImport: r.is_drive_import,
     readOnlyReason: r.read_only_reason,
     project: catalogProject
-      ? { id: catalogProject.id, title: catalogProject.name, colorKey: r.catalog_project_color ?? 'none', path: '' }
+      ? { id: catalogProject.id, title: catalogProject.name, colorKey: r.catalog_project_color ?? 'none', path: '', ...(r.catalog_project_archived ? { archived: true } : {}) }
       : projectRef(projects, r.hidden_project ? null : r.project_id),
     ...(catalogProject ? { catalogProject, catalogProjectSource: r.catalog_project_source, catalogProjectReason: r.catalog_project_reason } : {}),
     ...(r.project_suggestion ? { projectSuggestion: r.project_suggestion } : {}),
@@ -222,6 +223,9 @@ export function selectSessions(db: Db) {
       sql<boolean>`EXISTS (SELECT 1 FROM hidden_project_groups h WHERE h.user_id=s.user_id AND h.project_id=s.project_id)`.as('hidden_project'),
       sql<ColorKey | null>`(SELECT cp.color_key FROM session_projects sp JOIN catalog_projects cp ON cp.id=sp.project_id AND cp.user_id=sp.user_id WHERE sp.session_id=s.id AND sp.user_id=s.user_id)`.as(
         'catalog_project_color',
+      ),
+      sql<boolean | null>`(SELECT cp.archived FROM session_projects sp JOIN catalog_projects cp ON cp.id=sp.project_id AND cp.user_id=sp.user_id WHERE sp.session_id=s.id AND sp.user_id=s.user_id)`.as(
+        'catalog_project_archived',
       ),
       sql<string | null>`(SELECT p.tool_name FROM permission_requests p WHERE p.session_id = s.id AND p.resolved_at IS NULL ORDER BY p.created_at LIMIT 1)`.as('pending_tool'),
       // claude-subscriptions (P8): the head of the tab

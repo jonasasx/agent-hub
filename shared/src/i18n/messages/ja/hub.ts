@@ -225,6 +225,8 @@ export default {
   'hub.sessions.noteRestored': { other: 'ハブ内のコピーからトランスクリプトを復元しました ({count}行)' },
   'hub.sessions.noteResumed': '再開しました',
   'hub.sessions.noteResumedSub': '再開しました · サブスクリプション{name}',
+  'hub.sessions.noteRestarted': 'セッションを再起動しました',
+  'hub.sessions.restartTurnInProgress': 'ターンを実行中です。中断して再起動しますか?',
   'hub.sessions.noteSleptPermission': '許可を待たずにセッションがスリープしました',
   'hub.sessions.noteTurnError': 'ターンがエラーで終了しました: {error}',
   'hub.sessions.outputPending': '完全な出力がまだハブに届いていません。しばらくしてからお試しください',

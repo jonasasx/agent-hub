@@ -175,8 +175,9 @@ export class McpGateway {
       if (next.get(id)?.revision !== old.revision) {
         this.secretValues.delete(id);
         this.clearRetries(id);
+        // session bearers survive: a server leaves the snapshot while the user signs in again (OAuth) and comes back;
+        // without it in the registry handle() answers 404. Bearers end with revoke/revokeSession (design D5).
         this.stopProcesses(id);
-        if (!next.has(id)) this.tokens.delete(id);
       }
     this.config = next;
     for (const [id, delivery] of this.pendingSecretDeliveries) {
@@ -398,7 +399,6 @@ export class McpGateway {
   }
   stopServer(serverId: string): void {
     this.clearRetries(serverId);
-    this.tokens.delete(serverId);
     this.stopProcesses(serverId);
     this.emitStatus({ serverId, status: 'stopped', observedAt: Date.now() });
   }

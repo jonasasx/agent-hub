@@ -127,6 +127,7 @@ export default {
   'workspace.sidebar.usage': '사용량',
   'workspace.sidebar.users': '사용자',
   'workspace.sidebar.security': '보안',
+  'workspace.sidebar.desktopApp': '앱 다운로드',
   'workspace.sidebar.signOut': '로그아웃',
   'workspace.sidebar.resetLayout': '창 배치 초기화',
   'workspace.sidebar.listLoading': '목록을 불러오는 중',

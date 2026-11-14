@@ -1451,18 +1451,63 @@ export class SessionService {
     return this.upsert(id);
   }
 
+  /**
+   * POST /api/sessions/:id/restart: stop the process and resume the session at once with the same transcript, model,
+   * subscription, permission mode, project and folder (the path of a subscription switch). A busy session → 409
+   * turn_in_progress unless `interrupt`. Requirement: Перезапуск сессии из меню.
+   */
+  async restart(userId: string, id: string, b: { interrupt?: boolean | undefined }): Promise<SessionView> {
+    const plan = await this.withSession(userId, id, async s => {
+      this.assertWritable(s);
+      const { conn, runner } = await this.onlineRunner(userId, s.runner_id);
+      const live = s.process_alive && isLiveStatus(s.status);
+      if (live && busyForSwitch(s) && !b.interrupt) throw new HttpError(409, 'turn_in_progress', { key: 'hub.sessions.restartTurnInProgress' });
+      // checked before anything stops: an unreadable token or a gone folder leaves the process as it was
+      const cred = await this.restartCred(userId, runner, s);
+      if (s.provider !== 'claude') assertProviderReady(runner, s.provider, !!cred);
+      await this.assertResumable(conn, s);
+      await this.stopLive(s, userId, b.interrupt === true, 'The session is being restarted');
+      return { s, cred };
+    });
+    await this.queue.run(sessionKey(plan.s.runner_id, plan.s.claude_session_id), async () => {
+      const s = await this.get(userId, id);
+      // a message from another tab already resumed it between the stop and this step: no second process
+      if (s.process_alive && isLiveStatus(s.status)) return;
+      const { conn } = await this.onlineRunner(userId, s.runner_id);
+      await this.resume(conn, s, { force: true, subscription: plan.cred });
+      await this.emitEvents(s, [await addNote(this.o.db, s.id, 'resume', { key: 'hub.sessions.noteRestarted' })]);
+    });
+    return this.upsert(id);
+  }
+
+  /** The subscription of a restart: the session's own while active, none for the machine login, else the default one. */
+  private async restartCred(userId: string, runner: RunnerRow, s: SessionRow): Promise<SubscriptionCredFull | null> {
+    if (!s.subscription_id) return null;
+    try {
+      return await this.credFor(userId, runner, s.subscription_id, s.provider);
+    } catch (err) {
+      if (!(err instanceof HttpError) || err.code !== 'subscription_unavailable') throw err;
+      return this.credFor(userId, runner, undefined, s.provider);
+    }
+  }
+
   /** Interrupt (if asked) and stop the live process; the agent sends its last results before cmd.ok. */
   private async switchStep1(s: SessionRow, userId: string, _to: SubscriptionMeta, o: { interrupt: boolean; repeatLast: boolean; auto: boolean; from: SubscriptionMeta | null }): Promise<void> {
+    await this.stopLive(s, userId, o.interrupt, 'The subscription is being switched');
+  }
+
+  /** Interrupt a running turn (if asked) and stop the live process; `reason` closes the open permission requests. */
+  private async stopLive(s: SessionRow, userId: string, interrupt: boolean, reason: string): Promise<void> {
     const live = s.process_alive && isLiveStatus(s.status);
     if (!live) return;
-    if (midTurn(s.status) && o.interrupt) await this.doInterrupt(s, userId);
+    if (midTurn(s.status) && interrupt) await this.doInterrupt(s, userId);
     const { conn } = await this.onlineRunner(userId, s.runner_id);
     try {
       await conn.request('session.stop', { sessionId: s.claude_session_id, reason: 'user' }, this.o.switchStopTimeoutMs ?? 30_000);
     } catch (err) {
       throw this.agentError(err);
     }
-    await this.closeOpenPermissions(s, 'The subscription is being switched');
+    await this.closeOpenPermissions(s, reason);
     await this.o.db.updateTable('sessions').set({ process_alive: false, status: 'sleeping', slept_at: this.now() }).where('id', '=', s.id).execute();
   }
 
@@ -1937,16 +1982,8 @@ export class SessionService {
   }
 
   /** Resume a sleeping/closed session on its machine (D8 «Resume»). */
-  private async resume(
-    conn: AgentConnection,
-    s: SessionRow,
-    o: { prompt?: string; promptUuid?: string; force: boolean; attachments?: Attachment[]; subscription?: SubscriptionCredFull | null; onLaunch?: (err?: unknown) => void },
-  ): Promise<void> {
-    const guardMs = this.o.externalWriteGuardMin * 60_000;
-    if (!o.force && s.last_external_write_at && this.now().getTime() - s.last_external_write_at.getTime() < guardMs) {
-      const runner = await getRunner(this.o.db, s.runner_id);
-      throw new HttpError(409, 'concurrent_external', { key: 'hub.sessions.concurrentExternal', params: { name: runner?.name ?? s.runner_id } });
-    }
+  /** The checks of a resume that need no row change: a folder in the runner's OS that still exists, an allowed mode. */
+  private async assertResumable(conn: AgentConnection, s: SessionRow): Promise<{ cwd: string; runner: RunnerRow | undefined }> {
     if (!s.cwd) throw new HttpError(423, 'read_only', { key: 'hub.sessions.readOnlyNoCwd' });
     // The directory comes from the transcript: only an absolute local path of the runner's OS goes to the agent.
     const runner = await getRunner(this.o.db, s.runner_id);
@@ -1958,6 +1995,20 @@ export class SessionService {
       await this.upsert(s.id);
       throw new HttpError(423, 'read_only', { key: 'hub.sessions.readOnlyCwdGone' });
     }
+    return { cwd: s.cwd, runner };
+  }
+
+  private async resume(
+    conn: AgentConnection,
+    s: SessionRow,
+    o: { prompt?: string; promptUuid?: string; force: boolean; attachments?: Attachment[]; subscription?: SubscriptionCredFull | null; onLaunch?: (err?: unknown) => void },
+  ): Promise<void> {
+    const guardMs = this.o.externalWriteGuardMin * 60_000;
+    if (!o.force && s.last_external_write_at && this.now().getTime() - s.last_external_write_at.getTime() < guardMs) {
+      const runner = await getRunner(this.o.db, s.runner_id);
+      throw new HttpError(409, 'concurrent_external', { key: 'hub.sessions.concurrentExternal', params: { name: runner?.name ?? s.runner_id } });
+    }
+    const { cwd, runner } = await this.assertResumable(conn, s);
     // agent-providers D3: a Codex session resumes from the Codex thread on its machine; the mirror is not restored
     if (s.provider === 'claude') await this.restoreIfMissing(conn, s, runner);
     // claude-subscriptions P6: resume without a form — the default subscription (the last choice does not change);
@@ -1992,7 +2043,7 @@ export class SessionService {
       'session.resume',
       {
         sessionId: s.claude_session_id,
-        cwd: s.cwd,
+        cwd,
         ...(project?.project_id && protocolAtLeast(runner?.protocol_version, '1.13') ? { projectId: project.project_id } : {}),
         ...(projectCatalog ? { projectCatalog } : {}),
         ...machineNameFor(runner),

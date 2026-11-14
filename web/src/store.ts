@@ -69,6 +69,11 @@ export interface PendingSwitch {
   repeatLast: boolean;
 }
 
+/** A restart of the session waiting for «Прервать и перезапустить» (change session-restart, design D1). */
+export interface PendingRestart {
+  sessionId: string;
+}
+
 export const projectKey = (id: string | null) => id ?? 'none';
 
 interface State {
@@ -129,6 +134,7 @@ interface State {
   /** desktop-download: GET /api/desktop/info; null — not loaded yet (the «Приложение» tab stays hidden). */
   desktopInfo: DesktopInfo | null;
   pendingSwitch: PendingSwitch | null;
+  pendingRestart: PendingRestart | null;
   /**
    * subscription-limits: GET /api/subscriptions/limits; null — not loaded or the hub has no limits API (404): no block,
    * no chip.
@@ -199,6 +205,7 @@ export const useStore = create<State>()((set, get) => ({
   settingsTokenFor: null,
   desktopInfo: null,
   pendingSwitch: null,
+  pendingRestart: null,
   limits: null,
   limitsSkew: 0,
   limitCard: null,

@@ -298,12 +298,12 @@ describe('«Подписка» in the tab head', () => {
     const s = session({ status: 'working', processAlive: true, subscription: { id: SUB_A, name: 'Max личная' }, subscriptionMode: 'subscription' });
     mockFetch({ 'POST /api/sessions/': () => ({ status: 409, body: { error: 'turn_in_progress' } }) });
     showChat(s);
-    await userEvent.click(screen.getAllByRole('button', { name: 'Режим прав и модель' })[0]!);
-    const menu = screen.getByRole('menu', { name: 'Режим прав и модель' });
+    await userEvent.click(screen.getAllByRole('button', { name: 'Меню сессии' })[0]!);
+    const menu = screen.getByRole('menu', { name: 'Меню сессии' });
     const sel = within(menu).getByLabelText('Подписка') as HTMLSelectElement;
     expect([...sel.options].map(o => o.textContent)).toEqual(['Max личная', expect.stringMatching(/^Pro рабочая · до \d\d:\d\d$/)]);
     await userEvent.selectOptions(sel, SUB_B);
-    expect(screen.queryByRole('menu', { name: 'Режим прав и модель' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menu', { name: 'Меню сессии' })).not.toBeInTheDocument();
     expect(await screen.findByRole('alertdialog', { name: 'Идёт ход: прервать и переключить?' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Прервать и переключить' })).toHaveClass('btn', 'danger');
     expect(screen.getByRole('button', { name: 'Отмена' })).toHaveFocus();
@@ -313,8 +313,8 @@ describe('«Подписка» in the tab head', () => {
     base();
     useStore.setState({ runners: R14.map(r => (r.id === 'x1' ? { ...r, online: false } : r)) });
     showChat(session({ processAlive: false, status: 'sleeping' }));
-    await userEvent.click(screen.getAllByRole('button', { name: 'Режим прав и модель' })[0]!);
-    const menu = screen.getByRole('menu', { name: 'Режим прав и модель' });
+    await userEvent.click(screen.getAllByRole('button', { name: 'Меню сессии' })[0]!);
+    const menu = screen.getByRole('menu', { name: 'Меню сессии' });
     expect(within(menu).getByLabelText(/^Подписка/)).toBeDisabled();
     expect(menu.querySelector('.sub-why')).toHaveTextContent(/не в сети|только для чтения/);
   });

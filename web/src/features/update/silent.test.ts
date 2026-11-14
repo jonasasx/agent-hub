@@ -50,6 +50,7 @@ describe('canReloadSilently — each condition of D4', () => {
     ['the token form opened from a note', () => useStore.setState({ settingsTokenFor: 'sub1' }), 'tokenForm'],
     ['a resume waiting for «Продолжить всё равно»', () => useStore.setState({ pendingResume: { s1: { kind: 'wake' } } }), 'resume'],
     ['a subscription switch waiting for confirmation', () => useStore.setState({ pendingSwitch: { sessionId: 's1', subscriptionId: 'x', repeatLast: false } }), 'switch'],
+    ['a session restart waiting for confirmation', () => useStore.setState({ pendingRestart: { sessionId: 's1' } }), 'restart'],
     ['input in a component (answer, rename, invite)', () => setUnsaved('k1', true), 'form'],
   ];
   for (const [name, set, reason] of cases) {

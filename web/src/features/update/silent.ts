@@ -7,7 +7,7 @@ import { useAttachments } from '../images/attachments';
 import { useVoice } from '../voice/voice';
 import { useUnsaved } from './unsaved';
 
-export type UnsavedReason = 'draft' | 'attachments' | 'unconfirmed' | 'voice' | 'modal' | 'tokenForm' | 'resume' | 'switch' | 'form';
+export type UnsavedReason = 'draft' | 'attachments' | 'unconfirmed' | 'voice' | 'modal' | 'tokenForm' | 'resume' | 'switch' | 'restart' | 'form';
 
 /** What would be lost now, one entry per condition of D4 (empty — nothing). */
 export function unsavedReasons(): UnsavedReason[] {
@@ -22,6 +22,7 @@ export function unsavedReasons(): UnsavedReason[] {
   if (s.settingsTokenFor !== null) out.push('tokenForm');
   if (Object.values(s.pendingResume).some(p => p !== undefined)) out.push('resume');
   if (s.pendingSwitch !== null) out.push('switch');
+  if (s.pendingRestart !== null) out.push('restart');
   if (Object.keys(useUnsaved.getState().keys).length > 0) out.push('form');
   return out;
 }
@@ -40,6 +41,7 @@ export function useHasUnsavedInput(): boolean {
   useStore(s => s.settingsTokenFor);
   useStore(s => s.pendingResume);
   useStore(s => s.pendingSwitch);
+  useStore(s => s.pendingRestart);
   useAttachments(s => s.byKey);
   useAttachments(s => s.optimistic);
   useVoice(s => s.active);

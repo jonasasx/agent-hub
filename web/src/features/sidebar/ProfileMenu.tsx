@@ -2,7 +2,7 @@
  * The profile menu: versions and the entries that lead to the settings. In the left rail (desktop) and in the top bar of
  * the phone shell (UI review L7: sign-out lives here, not next to the theme switch).
  */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMenu } from '../ui/a11y';
 import { useStore, type SettingsTab } from '../../store';
 import { openSettings } from '../settings/Settings';
@@ -13,6 +13,8 @@ import { desktopVersion } from '../update/desktopVersion';
 import { useDock } from '../toolwindows/useDock';
 import { IconDots } from '../toolwindows/icons';
 import { useT } from '../../i18n';
+import { api } from '../../api/client';
+import { isDesktopApp } from '../voice/recorder';
 
 /**
  * Versions at the bottom of the profile menu (change client-versions, spec «Версии в меню профиля»): the client, the hub
@@ -53,6 +55,16 @@ export function ProfileMenu({ onLogout, variant = 'top' }: { onLogout: () => voi
   const hasSubs = useStore(s => s.subs !== null);
   // shown while the builds differ, whatever «Позже» said (design D5)
   const updatable = useUpdate(s => s.available && s.hub !== null);
+  // change desktop-menu-entry: the way to «Настройки → Приложение»; hidden in the app itself
+  const desktopInfo = useStore(s => s.desktopInfo);
+  const canDownload = !!desktopInfo?.available && !isDesktopApp();
+  useEffect(() => {
+    if (!open || desktopInfo !== null || isDesktopApp()) return;
+    api.desktopInfo().then(
+      info => useStore.setState({ desktopInfo: info }),
+      () => useStore.setState({ desktopInfo: { available: false } }),
+    );
+  }, [open, desktopInfo]);
   const go = (tab: SettingsTab) => {
     setOpen(false);
     openSettings(tab);
@@ -122,6 +134,11 @@ export function ProfileMenu({ onLogout, variant = 'top' }: { onLogout: () => voi
           <button type="button" role="menuitem" onClick={() => go('security')}>
             {t('workspace.sidebar.security')}
           </button>
+          {canDownload && (
+            <button type="button" role="menuitem" onClick={() => go('desktop')}>
+              {t('workspace.sidebar.desktopApp')}
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"

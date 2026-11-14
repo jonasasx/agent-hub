@@ -1,12 +1,13 @@
 // Component tests of the chat (task 2.11) rendered from real `.jsonl` lines (fixtures/real-session.jsonl).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { HubEvent, SessionView } from '../../api/types';
 import { useStore } from '../../store';
 import { RUNNERS, mockFetch, resetStore, session } from '../../test/factories';
 import { handleServerMessage } from '../workspace/actions';
 import { Chat } from './Chat';
+import { RestartConfirm } from './RestartConfirm';
 import { fixtureEvents } from './fixtures';
 import { ApiError } from '../../api/client';
 import type { Recording } from '../voice/recorder';
@@ -184,8 +185,8 @@ describe('Chat: UI review 2.15', () => {
     const s = session();
     const calls = mockFetch({ 'PATCH /api/sessions/': init => ({ status: 200, body: { ...s, ...JSON.parse(String(init!.body)) } }) });
     show(s, []);
-    await userEvent.click(screen.getByRole('button', { name: 'Режим прав и модель' }));
-    const menu = screen.getByRole('menu', { name: 'Режим прав и модель' });
+    await userEvent.click(screen.getByRole('button', { name: 'Меню сессии' }));
+    const menu = screen.getByRole('menu', { name: 'Меню сессии' });
     await userEvent.selectOptions(within(menu).getByRole('combobox', { name: 'Режим прав' }), 'plan');
     expect(calls[0]!.body).toEqual({ permissionMode: 'plan' });
   });
@@ -195,6 +196,93 @@ describe('Chat: UI review 2.15', () => {
     show(s, []);
     await userEvent.click(screen.getByRole('button', { name: '⑂ Форк' }));
     expect(useStore.getState().modal).toEqual({ type: 'fork', sessionId: s.id });
+  });
+
+  describe('«Перезапустить сессию» (change session-restart)', () => {
+    const restartCalls = (calls: Array<{ url: string; body: unknown }>) => calls.filter(c => c.url.endsWith('/restart')).map(c => c.body);
+    const openRestart = async () => {
+      await userEvent.click(screen.getByRole('button', { name: 'Меню сессии' }));
+      return within(screen.getByRole('menu', { name: 'Меню сессии' })).getByRole('menuitem', { name: 'Перезапустить сессию' });
+    };
+
+    it('a waiting session restarts at once: the request has no interrupt, no dialog', async () => {
+      const s = session();
+      const calls = mockFetch({ 'POST /api/sessions/': () => ({ status: 202, body: { session: { ...s, status: 'sleeping' } } }) });
+      show(s, []);
+      render(<RestartConfirm />);
+      await userEvent.click(await openRestart());
+      await vi.waitFor(() => expect(restartCalls(calls)).toEqual([{}]));
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+      expect(screen.queryByRole('menu', { name: 'Меню сессии' })).not.toBeInTheDocument();
+    });
+
+    it('a second click while the first restart is in flight sends nothing', async () => {
+      const s = session();
+      let release!: () => void;
+      const gate = new Promise<void>(r => (release = r));
+      const calls = mockFetch({ 'POST /api/sessions/': () => ({ status: 202, body: { session: s } }) });
+      show(s, []);
+      const answer = globalThis.fetch;
+      vi.stubGlobal('fetch', async (...a: Parameters<typeof fetch>) => {
+        await gate;
+        return answer(...a);
+      });
+      await userEvent.click(await openRestart());
+      await userEvent.click(await openRestart());
+      release();
+      await vi.waitFor(() => expect(useStore.getState().pendingRestart).toBeNull());
+      expect(restartCalls(calls)).toEqual([{}]);
+    });
+
+    it('a running turn asks first: «Отмена» sends nothing, «Прервать и перезапустить» sends interrupt', async () => {
+      const s = session({ status: 'working' });
+      const calls = mockFetch({ 'POST /api/sessions/': () => ({ status: 202, body: { session: s } }) });
+      show(s, []);
+      render(<RestartConfirm />);
+      await userEvent.click(await openRestart());
+      const dialog = screen.getByRole('alertdialog', { name: 'Идёт ход: прервать и перезапустить?' });
+      expect(dialog).toHaveTextContent(`«${s.title}» сейчас выполняет ход`);
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Отмена' }));
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+      expect(restartCalls(calls)).toEqual([]);
+      await userEvent.click(await openRestart());
+      await userEvent.click(screen.getByRole('button', { name: 'Прервать и перезапустить' }));
+      await vi.waitFor(() => expect(restartCalls(calls)).toEqual([{ interrupt: true }]));
+      await vi.waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    });
+
+    it('background work gets «Работает в фоне: остановить и перезапустить?»', async () => {
+      const s = session({ subagents: { working: 2, total: 2 } } as Partial<SessionView>);
+      mockFetch({});
+      show(s, []);
+      render(<RestartConfirm />);
+      await userEvent.click(await openRestart());
+      expect(screen.getByRole('alertdialog', { name: 'Работает в фоне: остановить и перезапустить?' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Остановить и перезапустить' })).toBeInTheDocument();
+    });
+
+    it('a turn that started after the menu opened: the hub’s 409 opens the same dialog', async () => {
+      const s = session();
+      const calls = mockFetch({ 'POST /api/sessions/': () => ({ status: 409, body: { error: 'turn_in_progress' } }) });
+      show(s, []);
+      render(<RestartConfirm />);
+      await userEvent.click(await openRestart());
+      expect(await screen.findByRole('alertdialog', { name: 'Идёт ход: прервать и перезапустить?' })).toBeInTheDocument();
+      expect(restartCalls(calls)).toEqual([{}]);
+    });
+
+    it('a refused restart is a toast; a read-only session has the item disabled with the reason', async () => {
+      const s = session();
+      mockFetch({ 'POST /api/sessions/': () => ({ status: 409, body: { error: 'runner_offline' } }) });
+      show(s, []);
+      await userEvent.click(await openRestart());
+      await vi.waitFor(() => expect(useStore.getState().toasts.at(-1)).toMatchObject({ title: 'Сессия не перезапущена', text: 'Машина не в сети' }));
+      cleanup();
+      show(session({ status: 'closed', isCron: true, readOnlyReason: 'cron', source: 'cron' }), []);
+      const item = await openRestart();
+      expect(item).toBeDisabled();
+      expect(screen.getByRole('menu', { name: 'Меню сессии' })).toHaveTextContent('Сессия доступна только для чтения');
+    });
   });
 });
 

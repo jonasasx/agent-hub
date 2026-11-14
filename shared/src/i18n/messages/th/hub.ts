@@ -225,6 +225,8 @@ export default {
   'hub.sessions.noteRestored': { other: 'กู้คืนทรานสคริปต์จากสำเนาบนฮับแล้ว ({count} บรรทัด)' },
   'hub.sessions.noteResumed': 'ทำงานต่อแล้ว',
   'hub.sessions.noteResumedSub': 'ทำงานต่อแล้ว · การสมัครใช้งาน {name}',
+  'hub.sessions.noteRestarted': 'รีสตาร์ตเซสชันแล้ว',
+  'hub.sessions.restartTurnInProgress': 'กำลังรันเทิร์นอยู่: หยุดแล้วรีสตาร์ตหรือไม่?',
   'hub.sessions.noteSleptPermission': 'เซสชันพักไปโดยไม่รอสิทธิ์',
   'hub.sessions.noteTurnError': 'เทิร์นสิ้นสุดด้วยข้อผิดพลาด: {error}',
   'hub.sessions.outputPending': 'ผลลัพธ์ทั้งหมดยังไปไม่ถึงฮับ: ลองใหม่ภายหลัง',

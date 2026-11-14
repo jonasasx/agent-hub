@@ -71,7 +71,7 @@ describe('hello 1.5 fields (protocol 1.9, version of agent/package.json)', () =>
     expect(h.protocol).toBe('1.19');
     expect(h.capabilities).toContain('fs.list-dirs');
     expect(h.capabilities).toContain('mcp.import.v2');
-    expect(h.agentVersion).toBe('0.8.18');
+    expect(h.agentVersion).toBe('0.8.19');
     expect(h.claude).toEqual({ login: 'missing', version: null });
     expect(h.protectedDirs).toBe('n/a');
     expect(h.arch).toBe(process.arch);

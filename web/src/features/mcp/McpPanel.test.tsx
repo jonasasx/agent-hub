@@ -526,7 +526,7 @@ describe('the tree mark, the phone and the chat head', () => {
     render(<Chat session={s} paneId="p1" />);
     const head = document.querySelector('.head-controls') as HTMLElement;
     expect(await within(head).findByRole('button', { name: 'MCP: проблемных серверов 2' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Режим прав и модель' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Меню сессии' }));
     await userEvent.click(screen.getByRole('menuitem', { name: /MCP-серверы · проблем 2/ }));
     expect(panel()).toBeInTheDocument();
   });

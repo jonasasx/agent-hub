@@ -97,7 +97,7 @@ function Picker({ s, pinned, hubOptions, onDone }: { s: SessionView; pinned: boo
   if (dir && query && !real.some(p => p.title.toLowerCase() === query.toLowerCase())) {
     tail.push({ key: 'create', kind: 'create', id: query, title: tr('projects.suggest.createNamed', { name: query }), colorKey: 'none', path: '', tag: '', archived: false });
   }
-  if (dir && current !== 'none') {
+  if (dir) {
     tail.push({ key: 'none', kind: 'none', id: 'none', title: tr('projects.none'), colorKey: 'none', path: '', tag: '', archived: false });
   }
   if (tail.length) sections.push({ title: null, rows: tail });
@@ -240,7 +240,7 @@ function AskControls({ s, onCatalog }: { s: SessionView; onCatalog: () => void }
   };
   return (
     <div className="proj-ask" role="status">
-      <span className="b-text">
+      <span className="sr-only">
         {options.length ? tr('projects.suggest.unsure') : tr('projects.suggest.none')}
         {error && <span role="alert"> {error}</span>}
       </span>
@@ -272,8 +272,15 @@ function AskControls({ s, onCatalog }: { s: SessionView; onCatalog: () => void }
       ) : (
         <>
           {proposed && (
-            <button type="button" className="btn primary" disabled={busy} onClick={create}>
-              {tr('projects.suggest.createNamed', { name: proposed })}
+            <button
+              type="button"
+              className="btn primary"
+              disabled={busy}
+              title={tr('projects.suggest.createNamed', { name: proposed })}
+              aria-label={tr('projects.suggest.createNamed', { name: proposed })}
+              onClick={create}
+            >
+              <span className="btn-label">+ {proposed}</span>
             </button>
           )}
           <button

@@ -127,6 +127,7 @@ export default {
   'workspace.sidebar.usage': 'Nutzung',
   'workspace.sidebar.users': 'Benutzer',
   'workspace.sidebar.security': 'Sicherheit',
+  'workspace.sidebar.desktopApp': 'App herunterladen',
   'workspace.sidebar.signOut': 'Abmelden',
   'workspace.sidebar.resetLayout': 'Fensteranordnung zurücksetzen',
   'workspace.sidebar.listLoading': 'Liste wird geladen',

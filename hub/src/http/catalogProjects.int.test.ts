@@ -289,6 +289,7 @@ describe('projects-catalog HTTP (integration)', () => {
     expect((await api('PATCH', `/api/catalog/projects/${id}`, { archived: true })).statusCode).toBe(200);
     expect((await api('GET', '/api/catalog/projects')).json<Array<{ id: string }>>().some(project => project.id === id)).toBe(false);
     expect((await api('GET', `/api/catalog/projects/${id}/sessions`)).json()).toMatchObject({ total: 1, sessions: [expect.objectContaining({ id: sessionId })] });
+    expect((await api('GET', `/api/sessions/${sessionId}`)).json()).toMatchObject({ project: { id, archived: true } });
   });
 
   it('starts a project session in the default folder plus the project folder, ignores a client cwd and links the session', async () => {

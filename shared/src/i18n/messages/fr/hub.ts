@@ -229,6 +229,8 @@ export default {
   },
   'hub.sessions.noteResumed': 'Reprise',
   'hub.sessions.noteResumedSub': 'Reprise · abonnement {name}',
+  'hub.sessions.noteRestarted': 'Session redémarrée',
+  'hub.sessions.restartTurnInProgress': 'Un tour est en cours : interrompre et redémarrer ?',
   'hub.sessions.noteSleptPermission': 'La session s’est mise en veille sans attendre l’autorisation',
   'hub.sessions.noteTurnError': 'Le tour s’est terminé par une erreur : {error}',
   'hub.sessions.outputPending': 'La sortie complète n’est pas encore parvenue au hub : réessayez plus tard',

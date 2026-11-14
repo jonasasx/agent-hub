@@ -225,6 +225,8 @@ export default {
   'hub.sessions.noteRestored': { other: '허브의 사본에서 대화 기록을 복원했습니다 ({count}줄)' },
   'hub.sessions.noteResumed': '재개됨',
   'hub.sessions.noteResumedSub': '재개됨 · 구독 {name}',
+  'hub.sessions.noteRestarted': '세션을 다시 시작했습니다',
+  'hub.sessions.restartTurnInProgress': '턴이 진행 중입니다. 중단하고 다시 시작할까요?',
   'hub.sessions.noteSleptPermission': '세션이 권한 응답을 기다리지 않고 절전 상태가 되었습니다',
   'hub.sessions.noteTurnError': '턴이 오류로 끝났습니다: {error}',
   'hub.sessions.outputPending': '전체 출력이 아직 허브에 도착하지 않았습니다. 나중에 다시 시도하세요',
