@@ -25,7 +25,8 @@ describe('Settings → Приложение', () => {
     expect(link).toHaveAttribute('download', WIN.fileName);
     expect(screen.getByText(/Версия 0\.1\.8/)).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Linux|macOS/ })).toBeNull();
-    expect(screen.queryByTestId('desktop-connect')).toBeNull();
+    expect(screen.getByTestId('desktop-connect')).toBeInTheDocument();
+    expect(screen.queryByText(/не подписана/)).toBeNull();
   });
 
   it('Linux и macOS: buttons per platform, the Gatekeeper hint and the connect link', async () => {
@@ -40,6 +41,19 @@ describe('Settings → Приложение', () => {
     expect(mac).toHaveAttribute('download', MAC.fileName);
     expect(screen.getByText(/не подписана/)).toBeInTheDocument();
     expect(screen.getByTestId('desktop-connect')).toHaveAttribute('href', `agenthub://connect?hub=${encodeURIComponent(window.location.origin)}`);
+  });
+
+  it('Браузер на macOS: the macOS button is first and highlighted', async () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15');
+    mockFetch({ '/api/desktop/info': () => ({ status: 200, body: INFO_ALL }) });
+    useStore.setState({ settings: 'desktop' });
+    render(<Settings />);
+    await screen.findByTestId('desktop-download-mac');
+    const buttons = screen.getAllByTestId(/desktop-download-/);
+    expect(buttons.map(b => b.getAttribute('data-testid'))).toEqual(['desktop-download-mac', 'desktop-download-win', 'desktop-download-linux']);
+    expect(buttons[0]).toHaveClass('primary');
+    expect(buttons[1]).not.toHaveClass('primary');
+    vi.restoreAllMocks();
   });
 
   it('Установщика нет: no tab, /settings/desktop is «Страница не найдена»', async () => {

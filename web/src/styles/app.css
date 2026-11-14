@@ -603,9 +603,22 @@ select.mini { max-width: 18ch; } /* L9 */
 }
 @media (max-width: 760px) {
   .classline .proj-btn { min-height: 40px; }
-  .classline .proj-menu { position: fixed; left: 16px; right: 16px; top: auto; width: auto; min-width: 0; }
+  .classline .proj-menu { position: fixed; left: 0; right: 0; bottom: 0; top: auto; width: auto; min-width: 0; max-height: 80vh; border-radius: 14px 14px 0 0; z-index: 61; }
+  .proj-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 45%); z-index: 60; }
+  .proj-list { max-height: 50vh; }
   .proj-list button { min-height: 40px; }
 }
+.proj-sec { display: flex; flex-direction: column; }
+.proj-sec .m-title { padding: 6px 8px 2px; }
+.proj-list button.create .p-name { color: var(--accent); }
+.proj-foot { display: flex; align-items: center; gap: 10px; padding-top: 6px; border-top: 1px solid var(--line); }
+.proj-foot .hint { font-size: 11px; color: var(--muted); }
+.proj-btn.asking { border-style: dashed; border-color: var(--line-strong); color: var(--muted); background: transparent; }
+.proj-btn.archived { opacity: .75; }
+.classline .archived-note { color: var(--muted); }
+.proj-ask { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 1 1 100%; min-width: 0; }
+.proj-ask .b-text { min-width: 0; overflow-wrap: anywhere; flex: 1 1 100%; }
+.proj-ask .btn { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .classline > span:has(> .idle-btn) { flex: none; white-space: nowrap; }
 
 /* ---------- phone chat, compact (Ivan, M4a): the feed gets ≥ 75% of 390×844 ---------- */
@@ -1405,19 +1418,11 @@ select.mini:disabled, .modal select.input:disabled, .modal .input:disabled, .sub
 .project-option-heading { display:flex; align-items:center; gap:8px; min-width:0; }
 .project-option-heading b { min-width:0; }
 .project-option .project-option-heading .project-initial { color:var(--bg); font-size:11px; }
-.project-suggestion {
-  flex-wrap: wrap;
-}
 .classline .evidence-change { flex:none; padding:0 2px; border:0; background:none; color:var(--accent); font:inherit; font-size:12px; text-decoration:underline; cursor:pointer; }
 .project-suggestion-option { display:inline-flex; align-items:center; gap:6px; }
 .project-suggestion-option .pdot { width:8px; height:8px; border-radius:50%; flex:none; }
-.project-suggestion-create { display:flex; gap:6px; flex:1 1 240px; }
+.project-suggestion-create { display:flex; gap:6px; flex:1 1 240px; min-width:0; }
 .project-suggestion-create .input { flex:1 1 auto; min-width:0; }
-.project-suggestion .b-text {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  flex: 1 1 220px;
-}
 
 /* ---------- Tool windows (change tool-windows-file-explorer): ported from docs/prototypes/tool-windows.html, variant A ---------- */
 .app { position: relative; }

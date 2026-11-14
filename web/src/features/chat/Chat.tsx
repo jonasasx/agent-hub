@@ -1,5 +1,4 @@
 import { ProjectActions } from '../projects/ProjectActions';
-import { ProjectSuggestion } from '../projects/ProjectSuggestion';
 /**
  * Chat of one session (docs/prototype.html chat(), banner(), composer()).
  * Requirements (sessions): Обмен сообщениями; Карточка разрешения; Прерывание хода; Смена режима прав и модели на
@@ -970,7 +969,6 @@ export function Chat({ session: s, paneId }: { session: SessionView; paneId: str
       ) : (
         <>
           <Banner s={s} />
-          <ProjectSuggestion s={s} />
           <ClaudeLoginBanner s={s} />
           <ResumeWarning s={s} />
           <ClassLine s={s} />

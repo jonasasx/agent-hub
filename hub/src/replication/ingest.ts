@@ -36,7 +36,12 @@ export function isStoredLine(obj: Record<string, unknown>): boolean {
   // queued_command in 20 days) those repeat a user line or each other (18 of 345), and the registry reads them from
   // the unstored lines anyway; human, peer and coordinator messages are never repeated (review p. 6)
   const a = obj.attachment as { type?: unknown; origin?: { kind?: unknown } } | undefined;
-  return obj.type === 'attachment' && a?.type === 'queued_command' && a.origin?.kind !== 'task-notification';
+  return isQueuedCommand(obj) && a?.origin?.kind !== 'task-notification';
+}
+
+/** A `queued_command` attachment: a message delivered mid-turn. */
+function isQueuedCommand(obj: Record<string, unknown>): boolean {
+  return obj.type === 'attachment' && (obj.attachment as { type?: unknown } | undefined)?.type === 'queued_command';
 }
 
 /** agent-providers D4: the provider of a transcript by its folder under ~/.claude/projects. */
@@ -352,7 +357,11 @@ export class Replication {
     const ownedShas = new Set<string>();
     for (const x of parsed) {
       const obj = x.obj;
-      const ts = obj && typeof obj.timestamp === 'string' && !Number.isNaN(Date.parse(obj.timestamp)) ? new Date(obj.timestamp) : (prevTs ?? this.now());
+      const own = obj && typeof obj.timestamp === 'string' && !Number.isNaN(Date.parse(obj.timestamp)) ? new Date(obj.timestamp) : (prevTs ?? this.now());
+      // A message sent mid-turn keeps the time it was sent but is written where the model got it, after the lines of
+      // the turn that came meanwhile: the history pages go by time, so it takes the time of the line before it, else
+      // the chat draws it above those lines and a refreshed feed drops it to the bottom (bug from Ivan, 2026-11-14).
+      const ts = obj && isQueuedCommand(obj) && prevTs && prevTs > own ? prevTs : own;
       prevTs = ts;
       if (!obj || !session || !isStoredLine(obj)) continue;
       if (obj.type === 'assistant') dropThinkingSignatures(obj);

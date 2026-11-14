@@ -132,7 +132,9 @@ describe('projects (integration)', () => {
   });
 
   it('move and pin: only the catalogue and «Без проекта»; 422 on a legacy id; the sidebar and «ещё N» from the catalogue; Ctrl+K by the catalog name', async () => {
+    await t.tdb.pool.query(`UPDATE catalog_projects SET color_key = 'rose' WHERE id = $1`, [fleetOps]);
     const list = (await api('GET', '/api/projects')).json() as ProjectListItem[];
+    expect(list.find(p => p.id === fleetOps)?.colorKey).toBe('rose');
     expect(list.at(-1)).toEqual({ id: 'none', kind: 'none', title: 'No project', i18n: { key: 'hub.api.noProject' }, path: '', areaPath: null, colorKey: 'none', archived: false });
     expect(list.some(p => p.title === 'Vault' || p.title === '03-sms-bridge' || p.id === legacy)).toBe(false);
     expect(list.map(p => p.id)).toEqual(expect.arrayContaining([agentHub, fleetOps]));

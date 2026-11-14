@@ -41,7 +41,7 @@ try {
     console.warn(`WARNING: desktop feed desktop-v${version} not fetched, the hub has no download button: ${reason}`);
   } else {
     console.error(`desktop feed desktop-v${version} not fetched: ${reason}`);
-    console.error('Publish the release (desktop/scripts/publish-release.mjs) or build with --build-arg DESKTOP_FEED_OPTIONAL=1.');
+    console.error(`Push the tag desktop-v${version} to the mirror (.github/workflows/desktop.yml builds the release) or build with --build-arg DESKTOP_FEED_OPTIONAL=1.`);
     process.exitCode = 1;
   }
 }

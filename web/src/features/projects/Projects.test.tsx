@@ -88,7 +88,7 @@ describe('project line under the chat head (4.9)', () => {
   beforeEach(resetStore);
   afterEach(() => vi.unstubAllGlobals());
 
-  it('Основание классификации: «05-agent-hub ▾ · определено по путям: 3 правки…», menu «Перенести в…» and «Закрепить»; the second project is a label', async () => {
+  it('Основание классификации: «05-agent-hub ▾ · определено по путям: 3 правки…», the chip opens the picker; the second project is a label', async () => {
     const s = session({ project: HUB, projectSource: 'auto', projectEvidence: '3 правки в 05-agent-hub', ...{ secondaryProject: { ...SMS } } } as Partial<SessionView>);
     mockFetch({});
     chat(s);
@@ -97,19 +97,16 @@ describe('project line under the chat head (4.9)', () => {
     expect(screen.getByText('определено по путям: 3 правки в 05-agent-hub')).toBeInTheDocument();
     expect(screen.getByText('+ 03-sms-bridge')).toHaveAttribute('title', `Второй проект: ${SMS.path}`);
     await userEvent.click(btn);
-    const menu = screen.getByRole('menu', { name: 'Проект сессии' });
-    expect(
-      within(menu)
-        .getAllByRole('menuitem')
-        .map(b => b.textContent),
-    ).toEqual(['Перенести в…', 'Закрепить']);
-    expect(within(menu).getByRole('menuitem', { name: 'Перенести в…' })).toHaveFocus();
+    const picker = screen.getByRole('dialog');
+    expect(within(picker).getByRole('combobox', { name: 'Найти проект' })).toHaveFocus();
+    expect(within(picker).getByRole('button', { name: 'Закрепить' })).toBeInTheDocument();
+    expect(within(picker).getByText('Папка сессии не изменится')).toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(btn).toHaveFocus();
   });
 
-  it('a catalog project chosen by hand says «закреплено вручную», one from the classifier offers «изменить»', () => {
+  it('a catalog project chosen by hand says «закреплено вручную», one from the classifier offers «✓ Верно, закрепить»', () => {
     const pinned = session({ project: HUB, projectSource: 'none', catalogProject: { id: 'cook', name: 'Кулинария' }, catalogProjectSource: 'manual' } as Partial<SessionView>);
     mockFetch({});
     const view = chat(pinned);
@@ -119,10 +116,10 @@ describe('project line under the chat head (4.9)', () => {
     const auto = session({ project: HUB, catalogProject: { id: 'hub', name: 'agent-hub' }, catalogProjectSource: 'auto', catalogProjectReason: 'classifier' } as Partial<SessionView>);
     chat(auto);
     expect(screen.getByText('Определено по первому сообщению')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'изменить' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '✓ Верно, закрепить' })).toBeInTheDocument();
   });
 
-  it('Перенос закрепляется: «Перенести в…» searches the directory, Enter sends PUT …/project, the line says «закреплено вручную»', async () => {
+  it('Перенос закрепляется: the picker searches the directory, Enter sends PUT …/project, the line says «закреплено вручную»', async () => {
     const s = session({ project: LEDGER, projectSource: 'auto', projectEvidence: '1 чтение в 01-ledger' });
     const calls = mockFetch({
       '/api/projects': () => ({ status: 200, body: DIR }),
@@ -130,13 +127,14 @@ describe('project line under the chat head (4.9)', () => {
     });
     chat(s);
     await userEvent.click(screen.getByRole('button', { name: 'Проект: 01-ledger' }));
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Перенести в…' }));
     const q = screen.getByRole('combobox', { name: 'Найти проект' });
     expect(q).toHaveFocus();
     expect(await screen.findByRole('option', { name: /Без проекта/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /^04-twenty-crm/ })).toHaveTextContent('архив');
     await userEvent.type(q, 'sms');
-    expect(within(screen.getByRole('listbox', { name: 'Проекты' })).getAllByRole('option')).toHaveLength(1);
+    const found = within(screen.getByRole('listbox', { name: 'Проекты' })).getAllByRole('option');
+    expect(found[0]).toHaveTextContent('03-sms-bridge');
+    expect(found.map(o => o.textContent)).toEqual(expect.arrayContaining([expect.stringContaining('Создать проект «sms»')]));
     await userEvent.keyboard('{Enter}');
     const put = calls.find(c => c.method === 'PUT')!;
     expect(put.url).toBe(`/api/sessions/${s.id}/project`);
@@ -154,13 +152,13 @@ describe('project line under the chat head (4.9)', () => {
     });
     chat(s);
     await userEvent.click(screen.getByRole('button', { name: 'Проект: 01-ledger' }));
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Закрепить' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Закрепить' }));
     expect(calls.at(-1)).toMatchObject({ method: 'POST', url: `/api/sessions/${s.id}/pin` });
     expect(await screen.findByText('закреплено вручную')).toBeInTheDocument();
     act(() => handleServerMessage({ type: 'toast', kind: 'project_pinned' as never, sessionId: s.id, text: `${s.title} → 01-ledger` }));
     expect(useStore.getState().toasts.at(-1)).toMatchObject({ title: 'Проект закреплён' });
     await userEvent.click(screen.getByRole('button', { name: 'Проект: 01-ledger, закреплён' }));
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Открепить' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Открепить' }));
     expect(calls.at(-1)).toMatchObject({ method: 'DELETE', url: `/api/sessions/${s.id}/pin` });
     expect(await screen.findByText('определено по путям: 2 правки в 01-ledger')).toBeInTheDocument();
   });
@@ -173,10 +171,78 @@ describe('project line under the chat head (4.9)', () => {
     });
     chat(s);
     await userEvent.click(screen.getByRole('button', { name: /Проект: 01-ledger/ }));
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Перенести в…' }));
     await userEvent.click(await screen.findByRole('option', { name: /Vault/ }));
     await vi.waitFor(() => expect(useStore.getState().toasts.at(-1)).toMatchObject({ title: 'Сессия не перенесена', text: 'Проекта нет в справочнике' }));
     expect(useStore.getState().projectDir).toBeNull();
+  });
+
+  it('Перенос из пикера: тост «Отменить»; прежний автоматический проект возвращается и открепляется, хаб-тост не дублируется', async () => {
+    const s = session({ project: LEDGER, projectSource: 'auto', projectEvidence: '1 чтение в 01-ledger' });
+    const moved = { ...s, project: SMS, projectSource: 'manual' as const };
+    const calls = mockFetch({
+      '/api/projects': () => ({ status: 200, body: DIR }),
+      'PUT /api/sessions/': () => ({ status: 200, body: moved }),
+      'DELETE /api/sessions/': () => ({ status: 200, body: s }),
+    });
+    chat(s);
+    await userEvent.click(screen.getByRole('button', { name: 'Проект: 01-ledger' }));
+    await userEvent.click(await screen.findByRole('option', { name: /03-sms-bridge/ }));
+    await vi.waitFor(() => expect(useStore.getState().toasts.at(-1)).toMatchObject({ title: 'Сессия перенесена', text: '03-sms-bridge' }));
+    const count = useStore.getState().toasts.length;
+    act(() => handleServerMessage({ type: 'toast', kind: 'project_pinned' as never, sessionId: s.id, text: 'x' }));
+    expect(useStore.getState().toasts).toHaveLength(count);
+    await act(async () => useStore.getState().toasts.at(-1)!.action!.run());
+    const sent = calls.filter(c => c.method === 'PUT' || c.method === 'DELETE').map(c => `${c.method} ${c.url} ${JSON.stringify(c.body ?? null)}`);
+    expect(sent).toEqual([
+      `PUT /api/sessions/${s.id}/project ${JSON.stringify({ projectId: 'p-sms' })}`,
+      `PUT /api/sessions/${s.id}/project ${JSON.stringify({ projectId: 'p-ledger' })}`,
+      `DELETE /api/sessions/${s.id}/pin null`,
+    ]);
+  });
+
+  it('Отмена закреплённого переноса только возвращает проект; неудачный перенос не оставляет метку и не даёт тоста «Отменить»', async () => {
+    const s = session({ project: LEDGER, projectSource: 'manual' });
+    let fail = true;
+    const calls = mockFetch({
+      '/api/projects': () => ({ status: 200, body: DIR }),
+      'PUT /api/sessions/': () => (fail ? { status: 500, body: { error: 'boom' } } : { status: 200, body: { ...s, project: SMS } }),
+    });
+    chat(s);
+    await userEvent.click(screen.getByRole('button', { name: /Проект: 01-ledger/ }));
+    await userEvent.click(await screen.findByRole('option', { name: /03-sms-bridge/ }));
+    await vi.waitFor(() => expect(useStore.getState().toasts.at(-1)).toMatchObject({ title: 'Сессия не перенесена' }));
+    act(() => handleServerMessage({ type: 'toast', kind: 'project_pinned' as never, sessionId: s.id, text: 'x' }));
+    expect(useStore.getState().toasts.at(-1)).toMatchObject({ title: 'Проект закреплён' });
+    fail = false;
+    await userEvent.click(screen.getByRole('button', { name: /Проект: 01-ledger/ }));
+    await userEvent.click(await screen.findByRole('option', { name: /03-sms-bridge/ }));
+    await vi.waitFor(() => expect(useStore.getState().toasts.at(-1)).toMatchObject({ title: 'Сессия перенесена' }));
+    await act(async () => useStore.getState().toasts.at(-1)!.action!.run());
+    expect(calls.filter(c => c.method === 'DELETE')).toHaveLength(0);
+    expect(calls.filter(c => c.method === 'PUT').at(-1)!.body).toEqual({ projectId: 'p-ledger' });
+  });
+
+  it('«✓ Верно, закрепить»: POST …/pin, тост «Отменить» открепляет', async () => {
+    const s = session({ project: HUB, catalogProject: { id: 'hub', name: 'agent-hub' }, catalogProjectSource: 'auto', catalogProjectReason: 'classifier' } as Partial<SessionView>);
+    const calls = mockFetch({
+      'POST /api/sessions/': () => ({ status: 200, body: { ...s, catalogProjectSource: 'manual' } }),
+      'DELETE /api/sessions/': () => ({ status: 200, body: s }),
+    });
+    chat(s);
+    await userEvent.click(screen.getByRole('button', { name: '✓ Верно, закрепить' }));
+    await vi.waitFor(() => expect(useStore.getState().toasts.at(-1)?.action).toBeDefined());
+    expect(calls.at(-1)).toMatchObject({ method: 'POST', url: `/api/sessions/${s.id}/pin` });
+    await act(async () => useStore.getState().toasts.at(-1)!.action!.run());
+    expect(calls.at(-1)).toMatchObject({ method: 'DELETE', url: `/api/sessions/${s.id}/pin` });
+  });
+
+  it('проект в архиве: приглушённый чип, «проект в архиве» и «Выбрать другой…» открывает пикер', async () => {
+    const s = session({ project: { ...HUB, archived: true }, catalogProject: { id: 'hub', name: 'agent-hub' }, catalogProjectSource: 'manual' } as Partial<SessionView>);
+    mockFetch({ '/api/projects': () => ({ status: 200, body: DIR }) });
+    chat(s);
+    expect(screen.getByText('проект в архиве')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Выбрать другой…' }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 });
 

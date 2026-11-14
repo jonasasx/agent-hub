@@ -811,12 +811,72 @@ useLocale.subscribe((s, prev) => {
 });
 
 /** «Перенести в…»: move = pin (`project_source = manual`); the hub sends the toast «Проект закреплён». */
-export async function moveToProject(sid: string, projectId: string): Promise<void> {
+export async function moveToProject(sid: string, projectId: string): Promise<boolean> {
   try {
     applySession(await api.setProject(sid, projectId));
+    return true;
   } catch (err) {
     if (err instanceof ApiError && err.code === 'unknown_project') set({ projectDir: null }); // the directory changed under us
     toastError(t('workspace.actions.sessionNotMoved'), err, t('workspace.actions.hubNoAnswerAgain'));
+    return false;
+  }
+}
+
+// sessions whose move is under way or just got the toast with «Отменить»: the «project_pinned» toast of the hub for the same move is dropped
+const undoToastAt = new Map<string, number>();
+
+function markUndo(sid: string): void {
+  undoToastAt.set(sid, Date.now());
+}
+
+function pushUndoToast(sid: string, title: string, text: string, undo: () => void): void {
+  markUndo(sid);
+  get().pushToast({ title, text, color: 'var(--accent)', action: { label: t('projects.line.undo'), run: undo } });
+}
+
+/** «Отменить»: back to the previous project, then the previous way of linking (an automatic one is unpinned again). */
+async function undoMove(sid: string, before: string, wasPinned: boolean): Promise<void> {
+  markUndo(sid);
+  if (!(await moveToProject(sid, before))) {
+    undoToastAt.delete(sid);
+    return;
+  }
+  if (!wasPinned) await setPinned(sid, false);
+}
+
+/** The move of the project line: the toast «Сессия перенесена в … · Отменить» returns the previous project and pin. */
+export async function moveWithUndo(s: SessionView, projectId: string, name: string, wasPinned: boolean): Promise<boolean> {
+  const before = s.project.id ?? 'none';
+  markUndo(s.id);
+  const moved = await moveToProject(s.id, projectId);
+  if (!moved) {
+    undoToastAt.delete(s.id);
+    return false;
+  }
+  pushUndoToast(s.id, t('projects.line.moved'), name, () => void undoMove(s.id, before, wasPinned));
+  return true;
+}
+
+/** «✓ Верно, закрепить»: pins the detected project; «Отменить» unpins it again. */
+export async function confirmProject(s: SessionView): Promise<void> {
+  const name = hubText(s.project.title, s.project.i18n);
+  markUndo(s.id);
+  const next = await pinSilently(s.id);
+  if (!next) {
+    undoToastAt.delete(s.id);
+    return;
+  }
+  pushUndoToast(s.id, t('workspace.actions.toastProjectPinned'), name, () => void setPinned(s.id, false));
+}
+
+async function pinSilently(sid: string): Promise<SessionView | null> {
+  try {
+    const next = await api.pin(sid);
+    applySession(next);
+    return next;
+  } catch (err) {
+    toastError(t('workspace.actions.projectNotPinned'), err, t('workspace.actions.hubNoAnswerAgain'));
+    return null;
   }
 }
 
@@ -1203,6 +1263,7 @@ export function handleServerMessage(m: UiServerMessage) {
             : kind === 'project_pinned'
               ? t('workspace.actions.toastProjectPinned')
               : t('workspace.actions.toastNotification'));
+      if (kind === 'project_pinned' && m.sessionId && Date.now() - (undoToastAt.get(m.sessionId) ?? 0) < 5000) return;
       get().pushToast({ title, text: hubText(m.text ?? '', m.i18n) });
       return;
     }

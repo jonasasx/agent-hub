@@ -106,6 +106,7 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
       '050_mcp_hub_only',
       '051_background_owner',
       '052_codex_subscription_logins',
+      '053_queued_command_ts',
     ]);
     const second = await migrate(t.pool);
     expect(second).toEqual([]);
@@ -292,6 +293,54 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
     }
   });
 
+  it('053_queued_command_ts: a queued message takes the time of the line before it; down restores the time it was sent', async () => {
+    const fixture = await createTestDb();
+    try {
+      const q = (text: string, values: unknown[] = []) => fixture.pool.query(text, values);
+      const uid = (await q(`INSERT INTO users(email) VALUES ('m053@test.local') RETURNING id`)).rows[0].id;
+      await q(`INSERT INTO runners(id,user_id,name,home_dir) VALUES ('m053',$1,'M','/home/m')`, [uid]);
+      const sid = (await q(`INSERT INTO sessions(user_id,runner_id,claude_session_id,source,status) VALUES ($1,'m053','00000000-0000-4000-8000-000000000053','hub','closed') RETURNING id`, [uid]))
+        .rows[0].id;
+      const fid = (
+        await q(
+          `INSERT INTO transcript_files(user_id,session_id,runner_id,claude_session_id,rel_path,rel_key,kind,generation) VALUES ($2,$1,'m053','00000000-0000-4000-8000-000000000053','a.jsonl','a.jsonl','main',0) RETURNING id`,
+          [sid, uid],
+        )
+      ).rows[0].id;
+      const at = (s: number) => new Date(Date.UTC(2026, 10, 14, 6, 50, s)).toISOString();
+      const line = (no: number, type: string, s: number, payload: object) =>
+        q(`INSERT INTO events(file_id,generation,line_no,session_id,type,ts,payload) VALUES ($1,0,$2,$3,$4,$5,$6)`, [
+          fid,
+          no,
+          sid,
+          type,
+          at(s),
+          JSON.stringify({ type, timestamp: at(s), ...payload }),
+        ]);
+      const queued = (prompt: string) => ({ attachment: { type: 'queued_command', prompt } });
+      await line(1, 'user', 0, {});
+      await line(2, 'assistant', 40, {});
+      await line(3, 'attachment', 5, queued('Стой!'));
+      await line(4, 'attachment', 30, queued('Возьми из гитлаба'));
+      await line(5, 'attachment', 50, queued('позже ответа'));
+      await line(6, 'assistant', 45, {});
+      const times = async () => (await q(`SELECT line_no::int AS n, ts FROM events WHERE file_id = $1 ORDER BY line_no`, [fid])).rows.map(r => [r.n, new Date(r.ts).toISOString()]);
+      await q(await readFile(`${MIGRATIONS_DIR}/053_queued_command_ts.up.sql`, 'utf8'));
+      expect(await times()).toEqual([
+        [1, at(0)],
+        [2, at(40)],
+        [3, at(40)],
+        [4, at(40)],
+        [5, at(50)],
+        [6, at(45)],
+      ]);
+      await q(await readFile(`${MIGRATIONS_DIR}/053_queued_command_ts.down.sql`, 'utf8'));
+      expect((await times()).map(x => x[1])).toEqual([at(0), at(40), at(5), at(30), at(50), at(45)]);
+    } finally {
+      await fixture.drop();
+    }
+  });
+
   it('037-040 MCP registry migrations can be rolled down and up', async () => {
     const t37 = await createTestDb({ migrated: true });
     try {
@@ -422,6 +471,7 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
         '050_mcp_hub_only',
         '051_background_owner',
         '052_codex_subscription_logins',
+        '053_queued_command_ts',
       ]);
       expect((await q(`SELECT count(*)::int AS n FROM events`)).rows[0].n).toBe(3);
       expect((await q(`SELECT rel_key, runner_id, claude_session_id, acked_line::int AS l FROM transcript_files`)).rows[0]).toEqual({
@@ -500,6 +550,7 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
         '050_mcp_hub_only',
         '051_background_owner',
         '052_codex_subscription_logins',
+        '053_queued_command_ts',
       ]);
       expect((await q(`SELECT git_remote FROM sessions ORDER BY git_remote`)).rows.map(r => r.git_remote)).toEqual([
         'git@git.example.com:a/b.git',

@@ -479,9 +479,9 @@ export function registerApi(
 
   /** «Перенести в…» (single-project-classifier): the active catalog projects, then «Без проекта». */
   app.get('/api/projects', async (req): Promise<ProjectListItem[]> => {
-    const curated = await db.selectFrom('catalog_projects').select(['id', 'name']).where('user_id', '=', req.user!.id).where('archived', '=', false).orderBy('name').execute();
+    const curated = await db.selectFrom('catalog_projects').select(['id', 'name', 'color_key']).where('user_id', '=', req.user!.id).where('archived', '=', false).orderBy('name').execute();
     return [
-      ...curated.map((p): ProjectListItem => ({ id: p.id, kind: 'project', title: p.name, path: '', areaPath: null, colorKey: 'none', archived: false })),
+      ...curated.map((p): ProjectListItem => ({ id: p.id, kind: 'project', title: p.name, path: '', areaPath: null, colorKey: p.color_key as ColorKey, archived: false })),
       { id: 'none', kind: 'none', title: render({ key: 'hub.api.noProject' }, 'en'), i18n: { key: 'hub.api.noProject' }, path: '', areaPath: null, colorKey: 'none', archived: false },
     ];
   });

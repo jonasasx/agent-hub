@@ -44,12 +44,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb libfuse2 libgtk-3-0 libnss3 libasound2t64
-          chmod +x Agent-Hub-*.AppImage
+          # A tagged name binds the app to that hub (change desktop-platforms): the log must show the install source.
+          cp Agent-Hub-*.AppImage "Agent-Hub-smoke [test.example.com].AppImage"
+          chmod +x "Agent-Hub-smoke [test.example.com].AppImage"
           # Still running after 20 s (timeout exit code 124) means the app started and did not crash.
           code=0
-          timeout 20 xvfb-run -a ./Agent-Hub-*.AppImage --appimage-extract-and-run --no-sandbox || code=$?
+          timeout 20 xvfb-run -a "./Agent-Hub-smoke [test.example.com].AppImage" --appimage-extract-and-run --no-sandbox || code=$?
           echo "exit code: $code"
           test "$code" = 124
+          grep -h "installer source https://test.example.com" "$HOME/.config/Agent Hub/main.log"
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.artifact }}

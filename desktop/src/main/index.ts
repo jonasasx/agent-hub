@@ -84,24 +84,32 @@ function main(): void {
   };
 
   // agenthub://connect?hub=… (change desktop-platforms, D6): a link from a web page binds the app to that hub, after a question.
+  let connectDialogOpen = false;
   const connectHub = (hub: string) => {
     win.show();
-    if (hub === config.effective.hubUrl) return;
+    // A page can fire the link in a loop: one dialog at a time, the rest are dropped.
+    if (connectDialogOpen || hub === config.effective.hubUrl) return;
+    connectDialogOpen = true;
     const answer = dialog.showMessageBoxSync(win.win, {
       type: 'question',
       title: 'Agent Hub',
       message: dt('desktop.connect.message', { hub }),
       detail: dt('desktop.connect.detail', { current: config.effective.hubUrl }),
       buttons: [dt('desktop.installSource.connect'), dt('desktop.installSource.keep')],
-      defaultId: 0,
+      // The link comes from a web page: Enter must not connect to the hub it names.
+      defaultId: 1,
       cancelId: 1,
       noLink: true,
     });
+    connectDialogOpen = false;
     if (answer !== 0) return;
     log(`connect: hub ${hub}`);
     config.setHubUrl(hub);
     win.quitting = true;
-    app.relaunch();
+    // In an AppImage process.execPath is a squashfs mount that disappears on exit: start the file itself.
+    const appImage = process.env.APPIMAGE;
+    if (appImage) app.relaunch({ execPath: appImage, args: process.argv.slice(1) });
+    else app.relaunch();
     app.exit(0);
   };
 

@@ -289,6 +289,36 @@ describe('replication of all transcripts (integration)', () => {
     expect((await t.tdb.pool.query(`SELECT count(*)::int AS n FROM events WHERE session_id = $1`, [s.id])).rows[0].n).toBe(3);
   });
 
+  it('a message sent mid-turn stands in the history where it was delivered, not where it was sent (bug 2026-11-14)', async () => {
+    const sid = randomUUID();
+    const at = (s: number) => ({ sessionId: sid, cwd: VAULT, entrypoint: 'sdk-cli' as const, ts: new Date(Date.UTC(2026, 10, 14, 6, 50, s)).toISOString() });
+    const queued = (s: number, prompt: string) => ({ ...F.attachment(at(s)), attachment: { type: 'queued_command', prompt, commandMode: 'prompt' } });
+    const lines = [
+      F.userText(at(0), 'изучи стенд'),
+      F.assistantText(at(10), 'смотрю'),
+      { type: 'queue-operation', operation: 'remove', timestamp: at(40).ts, sessionId: sid },
+      queued(5, 'Стой!'),
+      queued(30, 'Возьми из гитлаба'),
+      F.assistantText(at(45), 'понял'),
+    ];
+    await chunk(sid, lines);
+    const s = (await sessionOf(sid))!;
+    const texts = (p: EventsPage) =>
+      p.events.map(e => {
+        if (e.kind !== 'line') return e.kind;
+        const a = e.line.attachment as { prompt?: string } | undefined;
+        const c = (e.line.message as { content?: unknown } | undefined)?.content;
+        return a?.prompt ?? (typeof c === 'string' ? c : ((c as Array<{ text?: string }>)[0]?.text ?? ''));
+      });
+    const all = (await api('GET', `/api/sessions/${s.id}/events`)).json() as EventsPage;
+    expect(texts(all)).toEqual(['изучи стенд', 'смотрю', 'Стой!', 'Возьми из гитлаба', 'понял']);
+    // the newest page ends where the file ends: the page boundary does not cut the queued messages out of their place
+    const last = (await api('GET', `/api/sessions/${s.id}/events?limit=3`)).json() as EventsPage;
+    expect(texts(last)).toEqual(['Стой!', 'Возьми из гитлаба', 'понял']);
+    // the line keeps the time the message was sent
+    expect((last.events[0] as { line: { timestamp: string } }).line.timestamp).toBe(at(5).ts);
+  });
+
   it('a terminal session written right now warns before resume (concurrent_external)', async () => {
     const sid = randomUUID();
     const o = { sessionId: sid, cwd: VAULT, entrypoint: 'cli' as const };

@@ -12,11 +12,23 @@ const DOWNLOAD_LABEL: Record<DesktopPlatform, 'settings.desktop.download' | 'set
   mac: 'settings.desktop.downloadMac',
 };
 
+/** Platform of the browser the page is opened in; the hub offers its installer first. */
+function browserPlatform(): DesktopPlatform | null {
+  const ua = `${navigator.userAgent} ${navigator.platform}`;
+  if (/Android|iPhone|iPad/i.test(ua)) return null;
+  if (/Win/i.test(ua)) return 'win';
+  if (/Mac/i.test(ua)) return 'mac';
+  if (/Linux|X11/i.test(ua)) return 'linux';
+  return null;
+}
+
 export function DesktopPage() {
   const t = useT();
   const info = useStore(s => s.desktopInfo);
   if (!info?.available) return null;
   const hasMac = info.downloads.some(d => d.platform === 'mac');
+  const own = browserPlatform();
+  const downloads = [...info.downloads].sort((a, b) => Number(b.platform === own) - Number(a.platform === own));
   return (
     <section aria-labelledby="set-desktop">
       <div className="set-head">
@@ -24,10 +36,10 @@ export function DesktopPage() {
       </div>
       <p className="hint">{t('settings.desktop.hint')}</p>
       <p>
-        {info.downloads.map(d => (
+        {downloads.map(d => (
           <a
             key={d.platform}
-            className="btn primary"
+            className={d.platform === own ? 'btn primary' : 'btn'}
             href={`/api/desktop/download?platform=${d.platform}`}
             download={d.fileName}
             data-testid={`desktop-download-${d.platform}`}
@@ -38,17 +50,13 @@ export function DesktopPage() {
         ))}
       </p>
       <p className="hint">{t('settings.desktop.version', { version: info.version, size: formatBytes(info.size) })}</p>
-      {hasMac && (
-        <>
-          <p className="hint">{t('settings.desktop.macHint')}</p>
-          <p>
-            <a className="btn" href={`agenthub://connect?hub=${encodeURIComponent(window.location.origin)}`} data-testid="desktop-connect">
-              {t('settings.desktop.connect')}
-            </a>
-          </p>
-          <p className="hint">{t('settings.desktop.connectHint')}</p>
-        </>
-      )}
+      {hasMac && <p className="hint">{t('settings.desktop.macHint')}</p>}
+      <p>
+        <a className="btn" href={`agenthub://connect?hub=${encodeURIComponent(window.location.origin)}`} data-testid="desktop-connect">
+          {t('settings.desktop.connect')}
+        </a>
+      </p>
+      <p className="hint">{t('settings.desktop.connectHint')}</p>
     </section>
   );
 }
