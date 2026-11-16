@@ -24,6 +24,7 @@ import { useDialog, useNow } from '../ui/a11y';
 import { openSettings } from '../settings/Settings';
 import { closeMcpPanel, loadMcp, logoutServer, mcpAction, openMcpPanel, refreshMcp, startMcpAuth, submitMcpCallback } from './actions';
 import { McpRegistry } from './McpRegistry';
+import { mcpGatewayMessage } from './mcpErrors';
 import {
   MCP_STATUS_LABEL,
   MCP_STATUS_TONE,
@@ -157,6 +158,11 @@ export function McpPanel({ s, onClose, paneMark }: { s: SessionView; onClose: ()
   const [err, setErr] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [registryOpen, setRegistryOpen] = useState(false);
+  const [focusServerId, setFocusServerId] = useState<string | undefined>(undefined);
+  const openRegistry = (serverId?: string) => {
+    setFocusServerId(serverId);
+    setRegistryOpen(true);
+  };
   const anchor = useAnchor(!phone, paneMark);
   useDialog(ref, () => {
     if (!registryOpen) onClose();
@@ -196,7 +202,7 @@ export function McpPanel({ s, onClose, paneMark }: { s: SessionView; onClose: ()
                 {refreshing ? t('mcp.panel.refreshing') : t('mcp.panel.refresh')}
               </button>
             )}
-            <button type="button" className="btn ghost" onClick={() => setRegistryOpen(true)}>
+            <button type="button" className="btn ghost" onClick={() => openRegistry()}>
               {t('mcp.panel.registry')}
             </button>
             <button type="button" className="icon-btn" aria-label={t('mcp.panel.close')} ref={closeRef} onClick={onClose}>
@@ -251,14 +257,14 @@ export function McpPanel({ s, onClose, paneMark }: { s: SessionView; onClose: ()
           {view && (
             <ul className="mcp-rows" aria-label={t('mcp.panel.serversLabel')}>
               {problemsFirst(view.servers).map(srv => (
-                <McpServerRow key={srv.name} s={s} view={view} srv={srv} machine={machine} phone={phone} />
+                <McpServerRow key={srv.name} s={s} view={view} srv={srv} machine={machine} phone={phone} onConfigure={openRegistry} />
               ))}
               {!view.servers.length && view.observedAt && <li className="mcp-empty">{t('mcp.panel.noServers')}</li>}
             </ul>
           )}
         </div>
       </div>
-      {registryOpen && <McpRegistry sessionId={s.id} onClose={() => setRegistryOpen(false)} />}
+      {registryOpen && <McpRegistry sessionId={s.id} focusServerId={focusServerId} onClose={() => setRegistryOpen(false)} />}
     </>,
     document.body,
   );
@@ -296,7 +302,21 @@ function useAnchor(on: boolean, paneMark?: RefObject<HTMLElement | null>): CSSPr
   return pos;
 }
 
-function McpServerRow({ s, view, srv, machine, phone }: { s: SessionView; view: McpSessionView; srv: McpServerView; machine: string; phone: boolean }) {
+function McpServerRow({
+  s,
+  view,
+  srv,
+  machine,
+  phone,
+  onConfigure,
+}: {
+  s: SessionView;
+  view: McpSessionView;
+  srv: McpServerView;
+  machine: string;
+  phone: boolean;
+  onConfigure: (serverId: string) => void;
+}) {
   const t = useT();
   const authError = useStore(st => st.mcpAuthErrors[authKey(s.id, srv.name)]);
   const [err, setErr] = useState<string | null>(null);
@@ -337,6 +357,9 @@ function McpServerRow({ s, view, srv, machine, phone }: { s: SessionView; view: 
   };
   // UI review H2: while an action is on the way the previous error is history, not an alarm
   const lastError = !err && srv.lastError ? hubText(srv.lastError, srv.lastErrorI18n) : null;
+  // Причина ошибки сервера реестра в панели сессии: the gateway's reason leads, Claude Code's text goes to «Подробности»
+  const gateway = srv.gateway ? mcpGatewayMessage(srv.gateway, machine) : null;
+  const details = gateway ? [gateway.details, srv.error, lastError].filter(Boolean).join('\n') : '';
   return (
     <li className={`mcp-row ${tone}`} aria-label={`${srv.name}: ${MCP_STATUS_LABEL[status]}`}>
       <div className="mcp-r-top">
@@ -353,7 +376,19 @@ function McpServerRow({ s, view, srv, machine, phone }: { s: SessionView; view: 
       )}
       {info && <div className="mcp-meta">{info}</div>}
       {srv.status === 'disabled' && <div className="mcp-meta">{disabledCaption(srv, view.projectRoot, machine)}</div>}
-      {srv.status === 'failed' && srv.error && <div className="mcp-err">{srv.error}</div>}
+      {gateway ? (
+        <>
+          <div className="mcp-err">{gateway.message}</div>
+          {details && (
+            <details className="mcp-details">
+              <summary>{t('mcp.row.details')}</summary>
+              <pre>{details}</pre>
+            </details>
+          )}
+        </>
+      ) : (
+        srv.status === 'failed' && srv.error && <div className="mcp-err">{srv.error}</div>
+      )}
       {pending && (
         <div className="mcp-pending" role="status">
           <span className="spinner" aria-hidden="true" /> {pending}
@@ -365,6 +400,7 @@ function McpServerRow({ s, view, srv, machine, phone }: { s: SessionView; view: 
         </div>
       )}
       {lastError &&
+        !gateway &&
         (srv.pendingAction ? (
           <div className="mcp-meta mcp-past">{t('mcp.row.pastError', { error: lastError })}</div>
         ) : (
@@ -378,8 +414,14 @@ function McpServerRow({ s, view, srv, machine, phone }: { s: SessionView; view: 
           {authError}
         </div>
       )}
+      {srv.gateway && (!view.available || srv.pendingAction === 'logout') && (
+        <div className="mcp-actions">
+          <ConfigureButton serverId={srv.gateway.serverId} onConfigure={onConfigure} />
+        </div>
+      )}
       {view.available && srv.pendingAction !== 'logout' && (
         <div className="mcp-actions">
+          {srv.gateway && <ConfigureButton serverId={srv.gateway.serverId} onConfigure={onConfigure} />}
           {layout.visible.map(b => (
             <button key={b} type="button" className={classOf(b)} disabled={acts.locked} onClick={() => run(b)}>
               {label(b)}
@@ -400,6 +442,15 @@ function McpServerRow({ s, view, srv, machine, phone }: { s: SessionView; view: 
         />
       )}
     </li>
+  );
+}
+
+function ConfigureButton({ serverId, onConfigure }: { serverId: string; onConfigure: (serverId: string) => void }) {
+  const t = useT();
+  return (
+    <button type="button" className="btn" onClick={() => onConfigure(serverId)}>
+      {t('mcp.row.configure')}
+    </button>
   );
 }
 

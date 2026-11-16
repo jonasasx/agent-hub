@@ -170,6 +170,7 @@ function MachineCard({
           <dd>{r.claudeLogin === 'ok' ? tr('settings.machines.claudeOk') : needsClaudeLogin(r) ? <span className="tag bad">{tr('settings.machines.claudeNo')}</span> : '—'}</dd>
         </div>
         {!off && r.providers?.some(p => p.id === 'codex') && <ProviderStatusRow r={r} provider="codex" />}
+        {!off && r.providers?.some(p => p.id === 'qwen') && <ProviderStatusRow r={r} provider="qwen" />}
         <div>
           <dt>{tr('settings.machines.factActivity')}</dt>
           <dd>{formatLastSeen(r.lastSeenAt) ?? tr('machines.tip.neverConnected')}</dd>

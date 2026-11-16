@@ -4,7 +4,7 @@
  * when two open files share a name).
  */
 import { useStore } from '../../store';
-import { parseFileTabId } from '../layout/layout';
+import { isDraftTab, parseFileTabId } from '../layout/layout';
 import { baseName, parentOf } from '../files/paths';
 import { subTitle } from '../subagents/model';
 import { colorVar } from '../sessions/status';
@@ -16,6 +16,7 @@ type Translator = ReturnType<typeof useT>;
 export function tabTitle(st: State, sid: string, t: Translator): string {
   const file = parseFileTabId(sid);
   if (file) return baseName(file.path);
+  if (isDraftTab(sid)) return t('newSession.title');
   if (st.tabKinds[sid] === 'subagent') {
     const sub = st.subagents[sid];
     return sub ? t('workspace.panes.subagentTitle', { title: subTitle(sub) }) : t('workspace.panes.subagentLoading');

@@ -214,6 +214,7 @@ export default {
   'hub.sessions.notFound': 'Sessão não encontrada',
   'hub.sessions.notImage': 'O arquivo não é uma imagem PNG, JPEG, GIF ou WebP',
   'hub.sessions.notRunning': 'A sessão não está executando um turno',
+  'hub.sessions.turnRunning': 'A sessão está executando um turno ou trabalho em segundo plano: não pode entrar em repouso agora',
   'hub.sessions.noteCrashed': 'O processo do Claude Code falhou',
   'hub.sessions.noteCrashedWith': 'O processo do Claude Code falhou: {error}',
   'hub.sessions.noteDeliveredAfterAll': 'A mensagem chegou à sessão, afinal: {quote}',
@@ -308,4 +309,5 @@ export default {
   'hub.voiceTalk.long': 'A tarefa é longa, continuo e aviso quando terminar.',
   'hub.voiceTalk.offline': 'A máquina da sessão está offline.',
   'hub.voiceTalk.failed': 'Não foi possível enviar a mensagem para a sessão.',
+  'hub.sessions.qwenEndpointDown': '{label}: o endpoint do modelo em {name} não responde ou recusa a chave. Verifique o agent.env',
 } satisfies Dict;

@@ -45,6 +45,7 @@ export class CodexService {
   /** provider-parity D3: sign-ins for the registry, each in its own app-server and temporary CODEX_HOME. */
   private readonly subLogins = new Map<string, { client: RpcClient; home: string; timer: NodeJS.Timeout }>();
   private models: CodexModel[] | null = null;
+  private subscriptionModels: CodexModel[] | null = null;
   status: ProviderStatus;
 
   constructor(private readonly d: CodexServiceDeps) {
@@ -117,8 +118,7 @@ export class CodexService {
     } catch (err) {
       this.d.log.warn('codex account status failed', { error: (err as Error).message });
     }
-    let models: CodexModel[] = [];
-    if (login === 'ok') models = await this.listModels().catch(() => []);
+    const models = await (login === 'ok' ? this.listModels() : this.modelsFromSubscription()).catch(() => [] as CodexModel[]);
     const next: ProviderStatus = { id: 'codex', version: this.d.bin.version, login, ...(account ? { account } : {}), ...(models.length ? { models: models.slice(0, 50) } : {}) };
     const changed = JSON.stringify(next) !== JSON.stringify(this.status);
     this.status = next;
@@ -254,7 +254,12 @@ export class CodexService {
   /** model/list without hidden models; cached for the life of the agent. */
   async listModels(): Promise<CodexModel[]> {
     if (this.models) return this.models;
-    const c = await this.rpc();
+    const out = await this.pageModels(await this.rpc());
+    if (out.length) this.models = out;
+    return out;
+  }
+
+  private async pageModels(c: RpcClient): Promise<CodexModel[]> {
     const out: CodexModel[] = [];
     let cursor: string | null = null;
     for (let page = 0; page < 5; page++) {
@@ -263,8 +268,30 @@ export class CodexService {
       cursor = r.nextCursor;
       if (!cursor) break;
     }
-    if (out.length) this.models = out;
     return out;
+  }
+
+  /** No sign-in on the machine: the model list from the sign-in of a subscription (its own short-lived app-server); `login` stays as it is. */
+  async modelsFromSubscription(): Promise<CodexModel[]> {
+    if (this.subscriptionModels) return this.subscriptionModels;
+    const home = await this.d.homes?.usableHome();
+    if (!home) return [];
+    const t = this.d.transport ? this.d.transport() : spawnAppServer(this.d.bin, this.d.log, [], home);
+    const c = new RpcClient(t, {
+      log: this.d.log,
+      onNotification: () => undefined,
+      onRequest: async method => {
+        throw new RpcError(-32601, `${method} is not handled by the model list process`);
+      },
+    });
+    try {
+      await initialize(c, this.d.agentVersion);
+      const out = await this.pageModels(c);
+      if (out.length) this.subscriptionModels = out;
+      return out;
+    } finally {
+      c.close();
+    }
   }
 
   /** The rate limits of the sign-in in `home` (a subscription): its own short-lived app-server. */

@@ -7,6 +7,7 @@ import { t, useT } from '../../i18n';
 import { usableRunner, useStore } from '../../store';
 import { useDialog, useMenu, useMenuPlacement } from '../ui/a11y';
 import { loadSidebar } from '../workspace/actions';
+import { loadHiddenGroups } from './hiddenGroups';
 import { ProjectPalette } from './ProjectPalette';
 import { ProjectFolderField, folderInvalid } from './ProjectFolderField';
 
@@ -71,6 +72,7 @@ export function ProjectActions({ project, total }: { project: ProjectRef; total:
     setMenu(false);
     try {
       await api.hideProjectGroup(project.id!, true);
+      void loadHiddenGroups();
       await refreshProject(project.id!);
       focusSidebar();
       projectToast(t('projects.toast.hidden'), project.title, {
@@ -78,7 +80,10 @@ export function ProjectActions({ project, total }: { project: ProjectRef; total:
         run: () => {
           void api
             .hideProjectGroup(project.id!, false)
-            .then(() => refreshProject(project.id!))
+            .then(() => {
+              void loadHiddenGroups();
+              return refreshProject(project.id!);
+            })
             .catch(error => projectToast(t('projects.toast.notRestored'), projectError(error)));
         },
       });

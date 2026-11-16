@@ -8,6 +8,8 @@ import { handleServerMessage } from '../workspace/actions';
 import { mcpImportPreview, mockFetch, resetStore, runner } from '../../test/factories';
 import { EnrollModal, EnrollProgress, NO_CONTACT_HINT_MS } from './EnrollModal';
 import { detectOs, osFamily } from './machines';
+import { isDraftTab } from '../layout/layout';
+import { useDrafts } from '../newSession/draftStore';
 
 const pending = (over: Partial<RunnerView> = {}) =>
   runner({ id: 'r-abc', name: 'Моя машина', os: null, online: false, lastSeenAt: null, agentVersion: null, defaultDir: null, homeDir: null, state: 'pending', claudeLogin: null, ...over });
@@ -112,7 +114,10 @@ describe('EnrollModal', () => {
     // step 4 «MCP»: the machine has nothing to import, the panel offers the first session
     expect(await screen.findByText('В настройках Claude Code и Codex на этой машине MCP-серверов нет.')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Начать первую сессию' }));
-    expect(useStore.getState().modal).toEqual({ type: 'new', runnerId: 'r-abc', first: true });
+    const ws = useStore.getState().ws;
+    const draftId = ws.panes[ws.focus]!.active!;
+    expect(isDraftTab(draftId)).toBe(true);
+    expect(useDrafts.getState().byId[draftId]?.runnerId).toBe('r-abc');
   });
 
   it('a taken name keeps the form with the text under the field', async () => {

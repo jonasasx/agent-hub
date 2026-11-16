@@ -24,6 +24,10 @@ import { findCodexBin, type CodexBin } from './providers/codex/bin.js';
 import { CodexHomes } from './providers/codex/homes.js';
 import { CodexProvider } from './providers/codex/provider.js';
 import type { RpcTransport } from './providers/codex/rpc.js';
+import { QwenProvider } from './providers/qwen/provider.js';
+import { QwenService } from './providers/qwen/service.js';
+import { qwenPackageVersion, type QwenSdk } from './providers/qwen/sdk.js';
+import type { QwenConfig } from './config.js';
 import { RegistryCache, type RegistrySnapshot } from './mcp/registryCache.js';
 import { McpGateway } from './mcp/gateway.js';
 import { McpDraftClient } from './mcp/draftClient.js';
@@ -75,6 +79,10 @@ export interface AgentOptions {
   codexBin?: CodexBin | null;
   codexTransport?: () => RpcTransport;
   codexServiceTransport?: () => RpcTransport;
+  /** change qwen-provider: the OpenAI-compatible endpoint of Qwen sessions (null/undefined — Qwen is not configured). Tests: a fake SDK and fetch. */
+  qwen?: QwenConfig | null;
+  qwenSdk?: () => Promise<QwenSdk>;
+  qwenFetch?: typeof fetch;
 }
 
 export interface Agent {
@@ -83,6 +91,7 @@ export interface Agent {
   /** agent-providers: the hub's session commands go through it to the provider of the session. */
   providers: ProviderRouter;
   codex: CodexProvider | null;
+  qwen: QwenProvider | null;
   replicator: Replicator;
   turns: TurnTracker;
   updater: Updater;
@@ -207,7 +216,42 @@ export function createAgent(o: AgentOptions): Agent {
         ...(o.codexServiceTransport ? { serviceTransport: o.codexServiceTransport } : {}),
       })
     : null;
-  const providers = new ProviderRouter(new ClaudeProvider(sessions), codex ? [codex] : []);
+  // change qwen-provider D1: Qwen only when agent.env names the endpoint and the key
+  const qwenConfig = o.qwen ?? null;
+  const qwenVersions = qwenPackageVersion();
+  const qwenService = qwenConfig
+    ? new QwenService({
+        config: qwenConfig,
+        log,
+        version: qwenVersions?.cli ?? qwenVersions?.sdk ?? null,
+        sdkAvailable: o.qwenSdk ? true : !!qwenVersions,
+        onStatus: () => {
+          if (hubProtocol) client.send('agent.status', { providers: providers.statuses() });
+        },
+        ...(o.qwenFetch ? { fetch: o.qwenFetch } : {}),
+      })
+    : null;
+  const qwen =
+    qwenConfig && qwenService
+      ? new QwenProvider({
+          config: qwenConfig,
+          service: qwenService,
+          send: sendOther,
+          log,
+          projectsDir: o.claudeProjectsDir,
+          agentVersion: AGENT_VERSION,
+          images: a => sessions.images(a),
+          hubProtocol: () => hubProtocol ?? (registry ? registry.protocol : null),
+          peers,
+          machineId: () => runnerId,
+          onSessionStarted: (id, dir) => replicator.followIn(id, dir),
+          onSessionExited: id => replicator.release(id),
+          onActivity: (id, at) => turns.touch(id, at),
+          ...(o.stopGraceMs ? { stopGraceMs: o.stopGraceMs } : {}),
+          ...(o.qwenSdk ? { loadSdk: o.qwenSdk } : {}),
+        })
+      : null;
+  const providers = new ProviderRouter(new ClaudeProvider(sessions), [...(codex ? [codex] : []), ...(qwen ? [qwen] : [])]);
   const client: HubClient = new HubClient({
     url: o.hubUrl,
     token: o.token,
@@ -375,6 +419,7 @@ export function createAgent(o: AgentOptions): Agent {
       providers.onWelcome();
       // agent-providers D10: the sign-in of the machine's other providers, then every 10 minutes
       if (codex) void codex.service.refresh().catch(() => undefined);
+      if (qwenService) void qwenService.refresh(true).catch(() => undefined);
       o.onWelcome?.();
     } finally {
       for (const message of messagesBeforeWelcome.splice(0)) {
@@ -417,12 +462,15 @@ export function createAgent(o: AgentOptions): Agent {
 
   const codexTimer = codex ? setInterval(() => void codex.service.refresh().catch(() => undefined), 10 * 60_000) : null;
   codexTimer?.unref?.();
+  const qwenTimer = qwenService ? setInterval(() => void qwenService.refresh(true).catch(() => undefined), 10 * 60_000) : null;
+  qwenTimer?.unref?.();
 
   return {
     client,
     sessions,
     providers,
     codex,
+    qwen,
     replicator,
     turns,
     updater,
@@ -435,6 +483,7 @@ export function createAgent(o: AgentOptions): Agent {
     },
     async stop(graceMs?: number) {
       if (codexTimer) clearInterval(codexTimer);
+      if (qwenTimer) clearInterval(qwenTimer);
       await providers.stopAll(graceMs);
       mcpOAuth.clear();
       await gateway.stop();

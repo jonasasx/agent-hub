@@ -1,0 +1,320 @@
+{
+ "categories": [
+  {
+   "id": "system_prompt",
+   "name": "System prompt",
+   "tokens": 141,
+   "color": "promptBorder",
+   "kind": "used"
+  },
+  {
+   "id": "system_tools",
+   "name": "System tools",
+   "tokens": 6067,
+   "color": "inactive",
+   "kind": "used"
+  },
+  {
+   "id": "mcp_instructions",
+   "name": "MCP server instructions",
+   "tokens": 2729,
+   "color": "green_FOR_SUBAGENTS_ONLY",
+   "kind": "used"
+  },
+  {
+   "id": "mcp_tools_deferred",
+   "name": "MCP tools (deferred)",
+   "tokens": 268265,
+   "color": "inactive",
+   "isDeferred": true,
+   "kind": "deferred"
+  },
+  {
+   "id": "system_tools_deferred",
+   "name": "System tools (deferred)",
+   "tokens": 27527,
+   "color": "inactive",
+   "isDeferred": true,
+   "kind": "deferred"
+  },
+  {
+   "id": "custom_agents",
+   "name": "Custom agents",
+   "tokens": 1853,
+   "color": "permission",
+   "kind": "used"
+  },
+  {
+   "id": "memory_files",
+   "name": "Memory files",
+   "tokens": 21378,
+   "color": "claude",
+   "kind": "used"
+  },
+  {
+   "id": "skills",
+   "name": "Skills",
+   "tokens": 9966,
+   "color": "warning",
+   "kind": "used"
+  },
+  {
+   "id": "messages",
+   "name": "Messages",
+   "tokens": 25197,
+   "color": "purple_FOR_SUBAGENTS_ONLY",
+   "kind": "used"
+  },
+  {
+   "id": "autocompact_buffer",
+   "name": "Autocompact buffer",
+   "tokens": 33000,
+   "color": "inactive",
+   "kind": "buffer"
+  },
+  {
+   "id": "free_space",
+   "name": "Free space",
+   "tokens": 99669,
+   "color": "promptBorder",
+   "kind": "free"
+  }
+ ],
+ "totalTokens": 67331,
+ "maxTokens": 200000,
+ "rawMaxTokens": 200000,
+ "autocompactSource": "settings",
+ "percentage": 34,
+ "model": "claude-haiku-5-5",
+ "memoryFiles": [
+  {
+   "path": "/home/ubuntu/.claude/CLAUDE.md",
+   "type": "User",
+   "tokens": 251
+  },
+  {
+   "path": "/home/ubuntu/vault/AGENTS.md",
+   "type": "Project",
+   "tokens": 3119
+  },
+  {
+   "path": "/home/ubuntu/vault/00-meta/01-rules/pos.rule.verify-changes-end-to-end-2026-05-18.md",
+   "type": "Project",
+   "tokens": 1211
+  }
+ ],
+ "mcpTools": [
+  {
+   "name": "mcp__claude_ai_Claude_Data__certify_query",
+   "serverName": "claude_ai_Claude_Data",
+   "tokens": 1424,
+   "isLoaded": false
+  },
+  {
+   "name": "mcp__claude_ai_Claude_Data__get_certified_query_source",
+   "serverName": "claude_ai_Claude_Data",
+   "tokens": 576,
+   "isLoaded": false
+  },
+  {
+   "name": "mcp__claude_ai_Claude_Data__get_live_results",
+   "serverName": "claude_ai_Claude_Data",
+   "tokens": 2082,
+   "isLoaded": false
+  },
+  {
+   "name": "mcp__claude_ai_Claude_Data__list_certified_queries",
+   "serverName": "claude_ai_Claude_Data",
+   "tokens": 758,
+   "isLoaded": false
+  },
+  {
+   "name": "mcp__claude_ai_Claude_Docs__batch",
+   "serverName": "claude_ai_Claude_Docs",
+   "tokens": 201,
+   "isLoaded": false
+  },
+  {
+   "name": "mcp__claude_ai_Claude_Docs__create",
+   "serverName": "claude_ai_Claude_Docs",
+   "tokens": 311,
+   "isLoaded": false
+  },
+  {
+   "name": "mcp__claude_ai_Claude_Docs__delete",
+   "serverName": "claude_ai_Claude_Docs",
+   "tokens": 404,
+   "isLoaded": false
+  },
+  {
+   "name": "mcp__claude_ai_Claude_Docs__export",
+   "serverName": "claude_ai_Claude_Docs",
+   "tokens": 613,
+   "isLoaded": false
+  },
+  {
+   "name": "mcp__claude_ai_Meetings__follow_meeting_transcript",
+   "serverName": "claude_ai_Meetings",
+   "tokens": 1395,
+   "isLoaded": false
+  },
+  {
+   "name": "mcp__claude_ai_Meetings__get_meeting",
+   "serverName": "claude_ai_Meetings",
+   "tokens": 1260,
+   "isLoaded": false
+  },
+  {
+   "name": "mcp__claude_ai_Meetings__get_meeting_action_items",
+   "serverName": "claude_ai_Meetings",
+   "tokens": 496,
+   "isLoaded": false
+  },
+  {
+   "name": "mcp__claude_ai_Meetings__get_meeting_transcript",
+   "serverName": "claude_ai_Meetings",
+   "tokens": 1135,
+   "isLoaded": false
+  }
+ ],
+ "mcpInstructions": [
+  {
+   "serverName": "claude.ai Claude Data",
+   "tokens": 351
+  },
+  {
+   "serverName": "claude.ai Claude Docs",
+   "tokens": 631
+  }
+ ],
+ "agents": [
+  {
+   "agentType": "company-researcher",
+   "source": "projectSettings",
+   "path": "/home/ubuntu/vault/.claude/agents/company-researcher.md",
+   "tokens": 35
+  },
+  {
+   "agentType": "content-researcher",
+   "source": "projectSettings",
+   "path": "/home/ubuntu/vault/.claude/agents/content-researcher.md",
+   "tokens": 44
+  },
+  {
+   "agentType": "content-writer",
+   "source": "projectSettings",
+   "path": "/home/ubuntu/vault/.claude/agents/content-writer.md",
+   "tokens": 25
+  }
+ ],
+ "slashCommands": {
+  "totalCommands": 148,
+  "includedCommands": 148,
+  "tokens": 1417
+ },
+ "skills": {
+  "totalSkills": 122,
+  "includedSkills": 122,
+  "tokens": 9966,
+  "skillFrontmatter": [
+   {
+    "name": "backend-developer",
+    "source": "userSettings",
+    "path": "/home/ubuntu/.claude/skills/backend-developer/SKILL.md",
+    "tokens": 239
+   },
+   {
+    "name": "business-analyst",
+    "source": "userSettings",
+    "path": "/home/ubuntu/.claude/skills/business-analyst/SKILL.md",
+    "tokens": 189
+   },
+   {
+    "name": "delivery-pipeline",
+    "source": "userSettings",
+    "path": "/home/ubuntu/.claude/skills/delivery-pipeline/SKILL.md",
+    "tokens": 432
+   }
+  ]
+ },
+ "autoCompactThreshold": 167000,
+ "isAutoCompactEnabled": true,
+ "messageBreakdown": {
+  "toolCallTokens": 0,
+  "toolResultTokens": 0,
+  "attachmentTokens": 50916,
+  "assistantMessageTokens": 293,
+  "userMessageTokens": 6,
+  "redirectedContextTokens": 0,
+  "unattributedTokens": 0,
+  "toolCallsByType": [],
+  "attachmentsByType": [
+   {
+    "name": "instructions",
+    "tokens": 16367
+   },
+   {
+    "name": "prompt_snapshot",
+    "tokens": 12570
+   },
+   {
+    "name": "skill_listing",
+    "tokens": 8798
+   },
+   {
+    "name": "hook_success",
+    "tokens": 4779
+   },
+   {
+    "name": "deferred_tools_delta",
+    "tokens": 3848
+   },
+   {
+    "name": "agent_listing_delta",
+    "tokens": 2931
+   },
+   {
+    "name": "mcp_instructions_delta",
+    "tokens": 1234
+   },
+   {
+    "name": "session_context",
+    "tokens": 80
+   },
+   {
+    "name": "hook_non_blocking_error",
+    "tokens": 77
+   },
+   {
+    "name": "model",
+    "tokens": 63
+   },
+   {
+    "name": "remote_session_change",
+    "tokens": 62
+   },
+   {
+    "name": "environment",
+    "tokens": 54
+   },
+   {
+    "name": "total_tokens_reminder",
+    "tokens": 23
+   },
+   {
+    "name": "credential_org",
+    "tokens": 21
+   },
+   {
+    "name": "date",
+    "tokens": 9
+   }
+  ]
+ },
+ "apiUsage": {
+  "input_tokens": 2,
+  "output_tokens": 52,
+  "cache_creation_input_tokens": 24626,
+  "cache_read_input_tokens": 42702
+ }
+}

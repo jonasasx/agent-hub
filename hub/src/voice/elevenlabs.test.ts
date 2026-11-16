@@ -39,7 +39,7 @@ const hanging = (_url: string, init: RequestInit) =>
   });
 
 describe('ScribeClient.transcribe', () => {
-  it('sends the multipart request: model, language, no audio events, no timestamps, the file; no enable_logging', async () => {
+  it('sends the multipart request: model, language, no audio events, no timestamps, no verbatim, the file; no enable_logging', async () => {
     const { c, calls } = client(() => json(200, { text: '  Привет  ', language_code: 'rus' }));
     expect(await c.transcribe(audio, 'audio/webm;codecs=opus')).toEqual({ text: '  Привет  ' });
     expect(calls).toHaveLength(1);
@@ -52,12 +52,13 @@ describe('ScribeClient.transcribe', () => {
     expect(form.get('language_code')).toBe('ru');
     expect(form.get('tag_audio_events')).toBe('false');
     expect(form.get('timestamps_granularity')).toBe('none');
+    expect(form.get('no_verbatim')).toBe('true');
     expect(form.has('enable_logging')).toBe(false);
     const file = form.get('file') as File;
     expect(file.name).toBe('voice.webm');
     expect(file.type).toBe('audio/webm;codecs=opus');
     expect(Buffer.from(await file.arrayBuffer()).equals(audio)).toBe(true);
-    expect([...form.keys()].sort()).toEqual(['file', 'language_code', 'model_id', 'tag_audio_events', 'timestamps_granularity']);
+    expect([...form.keys()].sort()).toEqual(['file', 'language_code', 'model_id', 'no_verbatim', 'tag_audio_events', 'timestamps_granularity']);
   });
 
   it('names the file by the type: mp4, ogg', async () => {

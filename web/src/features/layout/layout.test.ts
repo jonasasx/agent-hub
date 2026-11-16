@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   PANE_LIMIT,
   allTabs,
+  appendTab,
   clampRatio,
   closePane,
   closeTab,
@@ -16,6 +17,7 @@ import {
   parseWorkspace,
   reconcileTabs,
   removePaneIfEmpty,
+  replaceTab,
   restoreSplit,
   setRatio,
   split,
@@ -48,6 +50,16 @@ describe('Мои вкладки', () => {
     expect(ws.focus).toBe('p2');
     expect(ws.panes.p2!.active).toBe('d');
     expect(allTabs(ws)).toHaveLength(4);
+  });
+
+  it('Кнопка новой вкладки (spec tab-strip): appendTab puts the tab last in its pane, activates and focuses it', () => {
+    const ws = appendTab(twoPanes(), 'p2', 'x');
+    expect(tabsOf(ws)).toEqual([
+      ['a', 'b', 'c'],
+      ['d', 'x'],
+    ]);
+    expect(ws.panes.p2!.active).toBe('x');
+    expect(ws.focus).toBe('p2');
   });
 
   it('Девятая вкладка (spec tab-strip): the ninth tab joins the pane, nothing is evicted', () => {
@@ -330,5 +342,16 @@ describe('Раскладка хранится на сервере', () => {
     expect(parseWorkspace(JSON.parse(JSON.stringify(ws)))).toEqual(ws);
     expect(parseWorkspace({ layout: { type: 'leaf', pane: 'p9' }, panes: {}, focus: 'p9' })).toBeNull();
     expect(parseWorkspace(null)).toBeNull();
+  });
+});
+
+describe('replaceTab (new-session draft)', () => {
+  it('the session takes the place of the draft; the focus stays in the pane the user is in', () => {
+    const { ws } = split(emptyWorkspace(['draft:x-1', 'b']), 'b', 'p1', 'right');
+    const r = replaceTab(ws, 'draft:x-1', 's1');
+    expect(tabsOf(r)).toEqual([['s1'], ['b']]);
+    expect(r.panes.p1!.active).toBe('s1');
+    expect(r.focus).toBe(ws.focus);
+    expect(r.focus).not.toBe('p1');
   });
 });

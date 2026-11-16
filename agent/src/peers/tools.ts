@@ -58,7 +58,7 @@ export function peersToolDefs(sessionId: string, client: Pick<PeersClient, 'requ
   };
   const spawnShape = {
     task: z.string().min(1).max(PEER_TEXT_MAX).describe('task for the subagent: what to do and what to return in the end'),
-    provider: z.enum(PROVIDERS).optional().describe('vendor: claude or codex; defaults to the vendor of this session'),
+    provider: z.enum(PROVIDERS).optional().describe('vendor: claude, codex or qwen; defaults to the vendor of this session'),
     machine: z.string().max(200).optional().describe('machine name (X1, HP, VM...); defaults to this machine'),
     model: z.string().max(200).optional().describe('model; defaults to the model of this session for the same vendor, otherwise the default model'),
     title: z.string().max(200).optional().describe('tab title; defaults to one derived from the task'),
@@ -91,7 +91,12 @@ export function peersToolDefs(sessionId: string, client: Pick<PeersClient, 'requ
   if (o.spawn)
     defs.push({
       name: PEERS_TOOLS.spawn,
-      description: `Start a subagent: a new Agent Hub session, including one of another vendor (claude, codex) or on another machine. The task is delivered to it as the first turn. The call returns immediately: id, title, machine, vendor, directory, model; the hub sends you the result of the subagent's turn itself as a <peer-message kind="report"> message, so there is no need to wait or poll. To continue working with the subagent, use session_send with its id. At most 10 running subagents; rate limited like session_send.`,
+      description:
+        `Start a subagent: a new Agent Hub session, including one of another vendor (claude, codex, qwen) or on another machine. ` +
+        `The task is delivered to it as the first turn. The call returns immediately: id, title, machine, vendor, directory, model; ` +
+        `the hub sends you the result of the subagent's turn itself as a <peer-message kind="report"> message, ` +
+        `so there is no need to wait or poll. To continue working with the subagent, use session_send with its id. ` +
+        `At most 10 running subagents; rate limited like session_send.`,
       shape: spawnShape,
       readOnly: false,
       run: a => {

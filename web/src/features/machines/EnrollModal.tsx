@@ -16,6 +16,7 @@ import { type EnrollCodeResponse, type EnrollStage, type MachineOs, type RunnerV
 import { useT } from '../../i18n';
 import { fmt } from '../../i18n';
 import { useStore } from '../../store';
+import { openDraft } from '../workspace/actions';
 import { useDialog } from '../ui/a11y';
 import { McpImportPanel } from '../mcp/McpImportPanel';
 import { DefaultDirField } from './DefaultDir';
@@ -188,7 +189,8 @@ export function EnrollModal({ runnerId: initialRunnerId, onClose }: { runnerId?:
   const host = typeof location !== 'undefined' ? location.host : '';
   const startFirst = () => {
     if (!runner) return;
-    useStore.setState({ modal: { type: 'new', runnerId: runner.id, first: true } });
+    onClose();
+    openDraft(runner.id);
   };
 
   return createPortal(

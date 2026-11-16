@@ -46,6 +46,8 @@ function isQueuedCommand(obj: Record<string, unknown>): boolean {
 
 /** agent-providers D4: the provider of a transcript by its folder under ~/.claude/projects. */
 export function providerOfRelPath(relPath: string): Provider {
+  // qwen-provider D3: Qwen sessions are mirrored under agent-hub-qwen
+  if (/^agent-hub-qwen[/\\]/i.test(relPath)) return 'qwen';
   return /^agent-hub-codex[/\\]/i.test(relPath) ? 'codex' : 'claude';
 }
 

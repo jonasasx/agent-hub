@@ -10,7 +10,7 @@ import { create } from 'zustand';
 import type { FsListResponse } from '@agent-hub/shared';
 import type { RunnerView, SessionView } from '../../api/types';
 import { useStore } from '../../store';
-import { isFileTab, type Workspace } from '../layout/layout';
+import { isLocalTab, type Workspace } from '../layout/layout';
 import { FsError, fsList } from './filesApi';
 import { isInside, pathKey } from './paths';
 import { resolveSource, type Source, type SourceChoice } from './source';
@@ -171,7 +171,7 @@ export function loadDir(runnerId: string, path: string | undefined, sessionId: s
  * opened last. Null — the window has no session tab.
  */
 export function lastActiveSession(ws: Workspace, openedAt: Record<string, number>, tabKinds: Record<string, string>, sessions: Record<string, SessionView>): string | null {
-  const isSession = (id: string) => !isFileTab(id) && !tabKinds[id] && !!sessions[id];
+  const isSession = (id: string) => !isLocalTab(id) && !tabKinds[id] && !!sessions[id];
   const active = ws.panes[ws.focus]?.active;
   if (active && isSession(active)) return active;
   const all = Object.values(ws.panes).flatMap(p => p.tabs.filter(isSession));

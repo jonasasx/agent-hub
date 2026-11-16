@@ -5,7 +5,18 @@ import type { FsAgentErrorCode, FsEntry } from './files.js';
 import type { I18nText, Locale } from './i18n/index.js';
 import { LOCAL_PATH_MESSAGE, isAbsoluteLocalPath } from './paths.js';
 import { normalizeProjectFolder } from './folders.js';
-import { mcpActionSchema, providerSchema, subscriptionTokenSchema, type ClaudeLogin, type McpServerSnapshot, type Provider, type ProviderLoginStart, type ProviderStatus } from './protocol.js';
+import {
+  mcpActionSchema,
+  providerSchema,
+  subscriptionTokenSchema,
+  type ClaudeLogin,
+  type McpServerSnapshot,
+  type Provider,
+  type SubscriptionProvider,
+  type ProviderLoginStart,
+  type ProviderStatus,
+  type SessionContextPayload,
+} from './protocol.js';
 
 export type RunnerKind = 'machine' | 'k8s';
 
@@ -57,7 +68,7 @@ export function providerReady(r: Pick<RunnerView, 'providers'> | null | undefine
 }
 
 /** Display name of a provider. */
-export const PROVIDER_LABELS: Record<Provider, string> = { claude: 'Claude', codex: 'Codex' };
+export const PROVIDER_LABELS: Record<Provider, string> = { claude: 'Claude', codex: 'Codex', qwen: 'Qwen' };
 
 /** POST /api/runners/:id/providers/:provider/login → 200 this; the end comes as WS provider.login. */
 export type ProviderLoginStartView = ProviderLoginStart;
@@ -247,7 +258,7 @@ export type SetProjectRequest = z.infer<typeof setProjectRequestSchema>;
 /** Reasons a session is read-only (input, mode and model disabled). */
 export type ReadOnlyReason = 'cwd_missing' | 'cron' | 'unknown_runner';
 
-/** Idle timeout choices of the UI, minutes; 0 = «не усыплять», null = default (30). */
+/** Idle timeout choices of the UI, minutes; 0 = «не усыплять», null = default (the user's, else the hub's). */
 export const IDLE_TIMEOUT_CHOICES = [15, 30, 60, 120, 480, 0] as const;
 
 /** A session row: sidebar, tabs, chat head. */
@@ -295,7 +306,7 @@ export interface SessionView {
   model: string | null;
   /** Override set by the user: null = default, 0 = never. */
   idleTimeoutMin: number | null;
-  /** Timeout the hub applies now (idleTimeoutMin ?? 30; 120 while waiting for permission); 0 = never. */
+  /** Timeout the hub applies now, or the next wait gets when not waiting (idleTimeoutMin ?? default; 120 while waiting for permission); 0 = never. */
   effectiveIdleTimeoutMin: number;
   /** When the hub will put the session to sleep if nothing happens (ISO); null when not counting down. */
   sleepsAt: string | null;
@@ -343,7 +354,22 @@ export interface SessionView {
    * the sidebar row. 0 or absent — no mark (older hubs do not send it).
    */
   mcpProblems?: number;
+  /** session-context-usage (D4): fill of the context window from the last snapshot; null/absent — no snapshot yet. */
+  context?: SessionContextSummary | null;
   createdAt: string;
+}
+
+export interface SessionContextSummary {
+  usedTokens: number;
+  windowTokens: number;
+  percent: number;
+}
+
+/** GET /api/sessions/:id/context (session-context-usage D4): the last snapshot without `sessionId`, `observedAt` as ISO. */
+export type SessionContextView = Omit<SessionContextPayload, 'sessionId' | 'observedAt'> & { observedAt: string };
+
+export interface SessionContextResponse {
+  context: SessionContextView | null;
 }
 
 export interface SidebarProject {
@@ -764,6 +790,25 @@ export const patchSessionRequestSchema = z
   })
   .refine(b => Object.keys(b).length > 0, 'nothing to change');
 export type PatchSessionRequest = z.infer<typeof patchSessionRequestSchema>;
+
+/**
+ * PUT /api/preferences/sessions (change `session-sleep-controls`): the user's default idle timeout of sessions without
+ * their own; null — the hub's (env IDLE_TIMEOUT_MIN), 0 — never.
+ */
+export const sessionPreferencesRequestSchema = z.object({
+  idleTimeoutMin: z
+    .number()
+    .int()
+    .refine(n => (IDLE_TIMEOUT_CHOICES as readonly number[]).includes(n), 'one of 15, 30, 60, 120, 480, 0')
+    .nullable(),
+});
+export type SessionPreferencesRequest = z.infer<typeof sessionPreferencesRequestSchema>;
+
+/** GET/PUT /api/preferences/sessions: the user's default and the hub's one shown as «как в хабе (N мин)». */
+export interface SessionPreferences {
+  idleTimeoutMin: number | null;
+  hubIdleTimeoutMin: number;
+}
 
 /**
  * POST /api/sessions/:id/permissions/:requestId. A tool: allow | allow_session | deny. A question (M4b): `allow` with
@@ -1217,7 +1262,7 @@ export interface SubscriptionView {
   limitKind: string | null;
   tokenRejected: boolean;
   /** provider-parity: whose subscription it is (Claude token or Codex ChatGPT sign-in). */
-  provider: Provider;
+  provider: SubscriptionProvider;
 }
 
 /** GET /api/subscriptions; PUT /api/subscriptions/order. */
@@ -1230,7 +1275,7 @@ export interface SubscriptionsResponse {
   /** lastChoiceId if it is active, else the first active one; null with no active subscription. */
   defaultId: string | null;
   /** provider-parity: the same two values per provider (lastChoiceId/defaultId stay those of Claude). */
-  byProvider: Record<Provider, { lastChoiceId: string | null; defaultId: string | null }>;
+  byProvider: Record<SubscriptionProvider, { lastChoiceId: string | null; defaultId: string | null }>;
   /** Show the hint that claude.ai connectors may be unavailable under a subscription (design P11). */
   connectorsHint: boolean;
 }
@@ -1455,6 +1500,17 @@ export interface McpServerView extends McpServerSnapshot {
   oauth: boolean;
   /** mcp-auth-controls A2: `failed` with an error that reads as a refused authorisation (isAuthErrorText). */
   authError: boolean;
+  /** mcp-session-gateway-errors: the gateway's own reason on the session's machine, set only on a `failed` registry server. */
+  gateway?: McpServerGatewayIssue;
+}
+
+/** The last `failed`/`needs-secret` status of the machine gateway for a registry server (error redacted by the hub). */
+export interface McpServerGatewayIssue {
+  /** The registry server id: «Настроить сервер» opens the registry on it. */
+  serverId: string;
+  status: 'failed' | 'needs-secret';
+  error: string | null;
+  observedAt: string;
 }
 
 /**

@@ -102,13 +102,19 @@ describe('profile menu versions', () => {
     });
     render(<Sidebar onLogout={() => undefined} />);
     await userEvent.click(screen.getByRole('button', { name: 'Профиль' }));
-    return screen.getByRole('menu', { name: 'Профиль' });
+    const menu = screen.getByRole('menu', { name: 'Профиль' });
+    expect(within(menu).queryByLabelText('Версии')).not.toBeInTheDocument();
+    await userEvent.click(within(menu).getByRole('button', { name: 'подробнее' }));
+    return menu;
   };
+  const line = (menu: HTMLElement) => menu.querySelector('.m-ver-line')!;
   const rows = (menu: HTMLElement) => [...within(menu).getByLabelText('Версии').querySelectorAll('dt')].map(dt => `${dt.textContent} ${dt.nextElementSibling!.textContent}`);
 
   it('«Браузер»: Клиент and Хаб with commit and time, no «Приложение», no update item', async () => {
     await deploy(A);
     const menu = await openMenu();
+    expect(line(menu)).toHaveTextContent('Клиент = Хаб 0.1.0 · aaaaaaa · 28.10 07:17');
+    expect(line(menu)).not.toHaveClass('warn');
     expect(rows(menu)).toEqual(['Клиент 0.1.0 · aaaaaaa · 28.10 07:17', 'Хаб 0.1.0 · aaaaaaa · 28.10 07:17']);
     expect(within(menu).queryByRole('menuitem', { name: 'Обновить до новой версии' })).not.toBeInTheDocument();
   });
@@ -125,6 +131,8 @@ describe('profile menu versions', () => {
     useUpdate.setState({ dismissed: true });
     const menu = await openMenu();
     expect(rows(menu)[1]).toBe('Хаб 0.1.0 · bbbbbbb · 28.10 08:37');
+    expect(line(menu)).toHaveClass('warn');
+    expect(line(menu)).toHaveTextContent('Хаб 0.1.0 · bbbbbbb · 28.10 08:37');
     const items = within(menu).getAllByRole('menuitem');
     expect(items[0]).toHaveTextContent('Обновить до новой версии');
     await userEvent.click(items[0]!);

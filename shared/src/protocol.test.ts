@@ -15,6 +15,8 @@ import {
   mcpProbeResultSchema,
   limitsProbeResultSchema,
   PROTOCOL_VERSION,
+  PROVIDER_LABELS,
+  QWEN_PROTOCOL,
   FILES_PROTOCOL,
   DOWNLOAD_PROTOCOL,
   FS_CHUNK_MAX,
@@ -57,6 +59,7 @@ const validAgent: Array<[string, unknown, { re?: string }?]> = [
   ['session.state', { sessionId: SID, state: 'working', processAlive: true }],
   ['session.partial', { sessionId: SID, messageId: 'msg_1', blockIndex: 0, textDelta: 'При' }],
   ['session.result', { sessionId: SID, subtype: 'success', isError: false, durationMs: 1200, costUsd: 0.01 }],
+  ['session.context', { sessionId: SID, observedAt: 1, model: null, usedTokens: 10, windowTokens: 100, percent: 10, categories: [{ id: 'messages', name: 'Messages', kind: 'used', tokens: 10 }] }],
   ['session.exited', { sessionId: SID, code: null, reason: 'crashed', errorText: 'boom' }],
   ['permission.request', { requestId: UUID2, sessionId: SID, toolName: 'Bash', toolUseId: 'toolu_1', input: { command: 'ls' }, suggestions: [] }],
   ['repl.chunk', { relPath: 'p/x.jsonl', kind: 'main', sessionId: SID, generation: 0, fromLine: 0, fromByte: 0, lines: ['{}'], endByte: 3 }],
@@ -229,7 +232,7 @@ describe('protocol version', () => {
     expect(parseHubMessage(JSON.stringify(envelope('fs.read_chunk', { ...chunk, offset: -1 }, { id: 'c4' }))).ok).toBe(false);
   });
   it('is 1.15 with close codes 4401/4409/4426; subscriptions need 1.4, agent.update 1.5, limits 1.6, MCP 1.7, MCP sign-out 1.8, Codex subscriptions 1.11', () => {
-    expect(PROTOCOL_VERSION).toBe('1.19');
+    expect(PROTOCOL_VERSION).toBe('1.21');
     expect(isCompatibleProtocol('1.11')).toBe(true); // project launch adds only optional HTTP fields; agent commands remain 1.12-compatible
     expect(MCP_PROTOCOL).toBe('1.7');
     expect(MCP_AUTH_CONTROLS_PROTOCOL).toBe('1.8');
@@ -815,5 +818,17 @@ describe('providers (agent-providers, protocol 1.10)', () => {
     );
     expect(r.ok).toBe(true);
     expect(parseAgentMessage(JSON.stringify(envelope('hello', { ...hello, providers: [{ id: 'claude', version: null, login: 'ok' }] }))).ok).toBe(false);
+  });
+  // qwen-provider D7: the provider qwen exists from 1.21, has no device-code sign-in
+  it('qwen is a provider of session commands and of the hello status, but has no device-code sign-in', () => {
+    const base = { sessionId: SID, cwd: '/x', permissionMode: 'default', model: 'm', prompt: 'p', promptUuid: UUID2 };
+    expect(parseHubMessage(JSON.stringify(envelope('session.start', { ...base, provider: 'qwen' }, { id: 'q1' }))).ok).toBe(true);
+    const status = { id: 'qwen', version: '0.27.4', login: 'ok', models: [{ value: 'qwen3.8-flash-next', displayName: 'qwen3.8-flash-next' }] };
+    expect(parseAgentMessage(JSON.stringify(envelope('hello', { ...hello, providers: [status] }))).ok).toBe(true);
+    expect(parseHubMessage(JSON.stringify(envelope('provider.login.start', { provider: 'qwen' }, { id: 'q2' }))).ok).toBe(false);
+    expect(QWEN_PROTOCOL).toBe('1.21');
+    expect(protocolAtLeast('1.20', QWEN_PROTOCOL)).toBe(false);
+    expect(protocolAtLeast('1.21', QWEN_PROTOCOL)).toBe(true);
+    expect(PROVIDER_LABELS.qwen).toBe('Qwen');
   });
 });

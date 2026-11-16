@@ -5,8 +5,8 @@
  */
 import {
   CODEX_SUBSCRIPTIONS_PROTOCOL,
-  PROVIDERS,
   PROVIDER_LABELS,
+  SUBSCRIPTION_PROVIDERS,
   SUBSCRIPTIONS_PROTOCOL,
   type Provider,
   type RunnerView,
@@ -43,8 +43,8 @@ export const subscriptionsProtocol = (provider: Provider): string => (provider =
 /** «Claude»/«Codex» — the vendor mark next to the name of a subscription. */
 export const providerLabel = (provider: Provider): string => PROVIDER_LABELS[provider];
 
-/** Providers that have anything in the registry or can be added to it. */
-export const REGISTRY_PROVIDERS: readonly Provider[] = PROVIDERS;
+/** Providers that have anything in the registry or can be added to it (qwen has no subscriptions, qwen-provider D6). */
+export const REGISTRY_PROVIDERS: readonly Provider[] = SUBSCRIPTION_PROVIDERS;
 
 /**
  * The full order for PUT /api/subscriptions/order after `next` reordered the active subscriptions of `provider`:
@@ -135,7 +135,7 @@ export const outdatedText = (runnerName: string) => t('subscriptions.outdated', 
 /** The subscription a form starts with: the hub's default (the last choice if active, else the first active one). */
 export function initialChoice(subs: SubscriptionsResponse | null, provider: Provider = 'claude'): string {
   const active = activeSubs(subs, provider);
-  const def = subs?.byProvider?.[provider]?.defaultId ?? (provider === 'claude' ? subs?.defaultId : null);
+  const def = (provider === 'qwen' ? undefined : subs?.byProvider?.[provider]?.defaultId) ?? (provider === 'claude' ? subs?.defaultId : null);
   if (def && active.some(s => s.id === def)) return def;
   return active[0]?.id ?? '';
 }

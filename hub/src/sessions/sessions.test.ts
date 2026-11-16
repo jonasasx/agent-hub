@@ -419,6 +419,18 @@ describe('sessions API (integration)', () => {
       expect(resumes.at(-1)!.payload.prompt).toBeUndefined();
     });
 
+    it('a sleeping session reports the timeout its next wait gets, not «never»; its own 0 stays 0', async () => {
+      const s = await newSession('a');
+      await t.tdb.pool.query(`UPDATE sessions SET status = 'sleeping', process_alive = false, idle_timeout_min = NULL WHERE id = $1`, [s.id]);
+      const dflt = await getS(s.id);
+      expect(dflt.sleepsAt).toBeNull();
+      expect(dflt.effectiveIdleTimeoutMin).toBeGreaterThan(0);
+      await t.tdb.pool.query(`UPDATE sessions SET idle_timeout_min = 120 WHERE id = $1`, [s.id]);
+      expect((await getS(s.id)).effectiveIdleTimeoutMin).toBe(120);
+      await t.tdb.pool.query(`UPDATE sessions SET idle_timeout_min = 0 WHERE id = $1`, [s.id]);
+      expect((await getS(s.id)).effectiveIdleTimeoutMin).toBe(0);
+    });
+
     it('B1 / Сессия ещё жива в терминале: 409 concurrent_external → the same clientUuid with force:true resumes', async () => {
       const s = await newSession('b');
       await t.tdb.pool.query(`UPDATE sessions SET status = 'closed', process_alive = false, last_external_write_at = now() - interval '2 minutes' WHERE id = $1`, [s.id]);
@@ -489,10 +501,10 @@ describe('sessions API (integration)', () => {
   });
 
   describe('sidebar (2.9 data)', () => {
-    it('«Сейчас» holds permission/unread/working of online machines, ordered; cron hidden by default', async () => {
+    it('«Сейчас» holds permission/unread/working and awake waiting sessions of online machines, ordered; cron hidden by default', async () => {
       const sb = (await api('GET', '/api/sidebar')).json() as SidebarResponse;
-      expect(sb.now.every(x => x.status === 'working' || x.status === 'permission' || x.unread)).toBe(true);
-      const rank = (x: SessionView) => (x.status === 'permission' || x.unread ? 0 : 1);
+      expect(sb.now.every(x => x.status === 'working' || x.status === 'permission' || x.unread || (x.status === 'waiting' && x.processAlive))).toBe(true);
+      const rank = (x: SessionView) => (x.status === 'permission' || x.unread ? 0 : x.status === 'working' ? 1 : 2);
       expect(sb.now.map(rank)).toEqual([...sb.now.map(rank)].sort());
       expect(sb.projects).toHaveLength(1);
       expect(sb.projects[0]!.project).toEqual({ id: null, title: 'No project', i18n: { key: 'hub.api.noProject' }, colorKey: 'none', path: '' });

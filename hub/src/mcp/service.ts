@@ -34,7 +34,7 @@ import { findSessionByClaudeId, getSession, type SessionBase, type SessionRow } 
 import { HttpError, type SessionService } from '../sessions/service.js';
 import { isLiveStatus } from '../sessions/status.js';
 import { McpAuthFlows, flowView, type McpAuthFlow } from './authFlows.js';
-import { canAuthOf, storeMachineServers, storeSessionSnapshot, toMachineMcpView, toSessionMcpView, type ServerState } from './repo.js';
+import { canAuthOf, gatewayIssues, storeMachineServers, storeSessionSnapshot, toMachineMcpView, toSessionMcpView, type ServerState } from './repo.js';
 
 /**
  * Timeouts of the hub's wait for the agent (M2). `callback` stays below the 60-s proxy_read_timeout of nginx on YM: the
@@ -194,12 +194,14 @@ export class McpService {
 
   private async viewOf(s: SessionBase): Promise<McpSessionView> {
     const runner = await getRunner(this.o.db, s.runner_id);
+    const failed = Array.isArray(s.mcp_servers) && s.mcp_servers.some(x => (x as { status?: unknown })?.status === 'failed');
     return toSessionMcpView(s, {
       protocol: runner?.protocol_version ?? null,
       online: this.o.agents.isOnline(s.runner_id),
       states: this.states.get(s.id) ?? new Map(),
       flows: this.flows.ofSession(s.id).map(flowView),
       waking: this.waking.has(s.id),
+      ...(failed ? { gateway: await gatewayIssues(this.o.db, s) } : {}),
     });
   }
 

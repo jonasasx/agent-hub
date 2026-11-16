@@ -79,6 +79,20 @@ describe('working subagents make the waiting session «работает»', () =
         .sort(),
     ).toEqual(['a', 'n']);
   });
+  it('«Сейчас» lists the awake sessions after those waiting for the user and the working ones (session-sleep-controls D5)', () => {
+    const t0 = Date.parse('2026-11-15T10:00:00Z');
+    const at = (min: number) => new Date(t0 + min * 60_000).toISOString();
+    const awakeFresh = session({ id: 'af', status: 'waiting', processAlive: true, lastEventAt: at(9) });
+    const awakeOld = session({ id: 'ao', status: 'waiting', processAlive: true, lastEventAt: at(1) });
+    const working = session({ id: 'w', status: 'working', processAlive: true, lastEventAt: at(2) });
+    const asking = session({ id: 'p', status: 'permission', processAlive: true, lastEventAt: at(0) });
+    const asleep = session({ id: 's', status: 'sleeping', processAlive: false, lastEventAt: at(10) });
+    const gone = session({ id: 'g', status: 'waiting', processAlive: false, lastEventAt: at(10) });
+    const offline = session({ id: 'o', runnerId: 'hp', status: 'waiting', processAlive: true, lastEventAt: at(10) });
+    expect(isNow(awakeOld, idx)).toBe(true);
+    expect(isNow(asleep, idx)).toBe(false);
+    expect(nowList([awakeOld, asleep, awakeFresh, gone, working, offline, asking], idx).map(s => s.id)).toEqual(['p', 'w', 'af', 'ao']);
+  });
 });
 
 describe('mergeEvents', () => {

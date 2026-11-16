@@ -6,6 +6,7 @@ import { stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import type { CanUseTool, ModelInfo, Options, PermissionResult, PermissionUpdate, Query, SDKMessage, SDKUserMessage, McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import {
+  CONTEXT_PROTOCOL,
   LIMITS_PROTOCOL,
   MCP_REGISTRY_PROTOCOL,
   PEERS_PROTOCOL,
@@ -38,6 +39,7 @@ import { parseRateLimitEvent } from '../limits/parse.js';
 import { MCP_PROTOCOL, MCP_TEXTS, mcpAuthStartResultSchema, type McpAuthStartResult, type McpSnapshot } from '@agent-hub/shared';
 import { McpWatch, credentialsDirOf, oauthServerNames, projectRootOf, type CliAuthStart, type McpAuthApi, type McpQuery } from './mcp.js';
 import { redactText } from './mcpRedact.js';
+import { toContextPayload } from './contextUsage.js';
 import { createPeersServer } from '../peers/tools.js';
 import { listDirectories, DirectoryListingError } from './listDirs.js';
 import type { PeersClient } from '../peers/client.js';
@@ -207,6 +209,8 @@ class LiveSession {
   limitsEventInTurn = false;
   /** mcp-management M3: snapshots of the process's MCP servers; set after init. */
   mcp: McpWatch | null = null;
+  /** session-context-usage D2: a getContextUsage call is running; the next result while it runs sends nothing. */
+  contextBusy = false;
   /**
    * mcp-auth-controls (re-review): sign-ins started with mcp.auth.start and not yet ended by mcp.auth.callback — the CLI
    * may take the localhost callback itself. `left` — the server left `connected`; `gone` — its saved token was gone.
@@ -1250,7 +1254,22 @@ export class SessionManager {
       }
       // mcp-management M3: a snapshot at the end of every turn (sent only if it changed)
       void s.mcp?.poll();
+      void this.sendContext(s);
       if (s.state === 'waiting') void this.applyRegistryUpdates(s);
+    }
+  }
+
+  /** session-context-usage D2: the context window after a turn, to hubs ≥1.20; a failure only goes to the log. */
+  private async sendContext(s: LiveSession): Promise<void> {
+    if (s.contextBusy || s.stopping || !protocolAtLeast(this.deps.hubProtocol?.() ?? null, CONTEXT_PROTOCOL)) return;
+    s.contextBusy = true;
+    try {
+      const usage = await s.query.getContextUsage({ detail: 'summary' });
+      if (!s.stopping) this.deps.send('session.context', toContextPayload(s.id, usage, Date.now()));
+    } catch (err) {
+      this.deps.log.warn('context usage failed', { sessionId: s.id, error: (err as Error).message });
+    } finally {
+      s.contextBusy = false;
     }
   }
 

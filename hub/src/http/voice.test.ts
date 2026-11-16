@@ -52,6 +52,13 @@ describe('voice transcribe (integration)', () => {
     expect(r.body).not.toContain(KEY);
   });
 
+  it('200: hesitation sounds Scribe left are dropped', async () => {
+    handler = async () => json(200, { text: 'Эээ, давай, э-э-э, сделаем фильтр.' });
+    const r = await post(audio);
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ text: 'Давай, сделаем фильтр.' });
+  });
+
   it('200: the text is trimmed; the request goes to ElevenLabs speech-to-text', async () => {
     calls.length = 0;
     handler = async () => json(200, { text: `  ${SECRET_TEXT}  \n` });

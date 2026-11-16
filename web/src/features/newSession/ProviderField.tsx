@@ -11,6 +11,8 @@ export function providerUnavailable(r: RunnerView | undefined, p: Provider): str
   if (p === 'claude' || !r) return null;
   const st = r.providers?.find(x => x.id === p);
   if (!st) return t('newSession.provider.missing');
+  // qwen-provider D2: no sign-in, «not ok» means the endpoint of the machine does not answer or refuses the key
+  if (p === 'qwen' && st.login !== 'ok') return t('newSession.provider.qwenDown');
   return null;
 }
 
@@ -25,6 +27,13 @@ export function accountLine(r: RunnerView | undefined, p: Provider): string | nu
   const a = r?.providers?.find(x => x.id === p)?.account;
   if (!a) return null;
   return [a.email, a.plan].filter(Boolean).join(' · ') || null;
+}
+
+/** The second line of a provider option: the vendor, the account of the sign-in, or the endpoint of Qwen. */
+export function providerSubline(r: RunnerView | undefined, p: Provider): string {
+  if (p === 'claude') return 'Anthropic';
+  if (p === 'qwen') return t('newSession.provider.qwenSub');
+  return accountLine(r, p) ?? 'OpenAI';
 }
 
 export function ProviderField({ id, runner, value, onChange }: { id: string; runner: RunnerView | undefined; value: Provider; onChange: (p: Provider) => void }) {
@@ -49,7 +58,7 @@ export function ProviderField({ id, runner, value, onChange }: { id: string; run
               title={why ?? undefined}
             >
               <b>{PROVIDER_LABELS[p]}</b>
-              <span>{why ?? (p === 'claude' ? 'Anthropic' : (accountLine(runner, p) ?? 'OpenAI'))}</span>
+              <span>{why ?? providerSubline(runner, p)}</span>
             </button>
           );
         })}

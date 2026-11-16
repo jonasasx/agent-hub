@@ -6,10 +6,11 @@
  * Продолжение (resume); Продолжение сессий, начатых вне хаба.
  * API (D10): /api/sidebar, /api/projects/:id/sessions, /api/models, /api/sessions*, /api/layout; WS /ws/ui.
  */
-import type { Device, HubEvent, LayoutResponse, PermissionDecision, PatchSessionRequest, SessionView, UiServerMessage, CreateSessionRequest, SubagentView, ExtraProvider } from '../../api/types';
+import type { Device, HubEvent, LayoutResponse, PermissionDecision, PatchSessionRequest, SessionView, UiServerMessage, CreateSessionRequest, SubagentView, DeviceLoginProvider } from '../../api/types';
 import { ApiError, api, type AttachmentRef } from '../../api/client';
 import { sessionAlive } from '../../api/types';
-import { readyRefs, sent as attachmentsSent, setNote, settleOptimistic, useAttachments } from '../images/attachments';
+import { clearAttachments, readyRefs, sent as attachmentsSent, setNote, settleOptimistic, useAttachments } from '../images/attachments';
+import { dropDraft, newDraft, patchDraft, useDrafts } from '../newSession/draftStore';
 import type { UiSocket } from '../../api/uiSocket';
 import { projectKey, useStore, type ChatLog, type PendingResume } from '../../store';
 import * as L from '../layout/layout';
@@ -214,6 +215,12 @@ export async function loadWorkspace(device: Device = currentDevice()): Promise<v
       if (tpl?.tabKinds) setTabKinds({ ...get().tabKinds, ...subagentKinds(tpl.tabKinds) });
     }
     if (windowTabs) ws = L.reconcileTabs(ws, windowTabs);
+    // the choices of a draft live in memory only: after a reload its tab starts from the defaults
+    for (const id of L.allTabs(ws).filter(L.isDraftTab)) {
+      if (useDrafts.getState().byId[id]) continue;
+      useDrafts.setState(s => ({ byId: { ...s.byId, [id]: newDraft() } }));
+      loadDraftChoices(id);
+    }
     applyLoaded({ ws, openedAt: opened, layoutLoaded: true });
     writeWindow(device, ws, opened);
   } finally {
@@ -232,14 +239,14 @@ export async function loadWorkspace(device: Device = currentDevice()): Promise<v
 
 /** The sessions of the open tabs fetched again (their project may have changed with the catalogue). */
 async function refreshTabSessions() {
-  const ids = L.allTabs(get().ws).filter(id => !get().tabKinds[id] && !L.isFileTab(id));
+  const ids = L.allTabs(get().ws).filter(id => !get().tabKinds[id] && !L.isLocalTab(id));
   const got = await Promise.all(ids.map(id => api.session(id).catch(() => null)));
   get().upsertSessions(got.filter((s): s is SessionView => !!s));
 }
 
 /** Tabs whose session the hub no longer knows (404) are removed — an automatic change of this window. */
 async function dropVanishedTabs() {
-  const missing = L.allTabs(get().ws).filter(id => !L.isFileTab(id) && !get().sessions[id] && !get().subagents[id]);
+  const missing = L.allTabs(get().ws).filter(id => !L.isLocalTab(id) && !get().sessions[id] && !get().subagents[id]);
   if (!missing.length) return;
   const gone = (err: unknown) => err instanceof ApiError && err.status === 404;
   // a subagent tab (change `subagents` S9): its row; a tab of unknown kind that is not a session may be a subagent too
@@ -330,14 +337,31 @@ function clearUnread(sid: string) {
   if (s?.unread) get().upsertSessions([{ ...s, unread: false }]);
 }
 
-/** A file tab that left the window (closed, evicted, replaced) takes its pin and its session with it. */
-function forgetLostFileTabs(before: L.Workspace, after: L.Workspace) {
+/**
+ * A file tab that left the window (closed, evicted, replaced) takes its pin and its session with it; a draft tab — its
+ * text, attachments and launch choices.
+ */
+function forgetLostLocalTabs(before: L.Workspace, after: L.Workspace) {
   const kept = new Set(L.allTabs(after));
   const files = useFiles.getState();
   for (const t of L.allTabs(before)) {
-    if (!L.isFileTab(t) || kept.has(t)) continue;
-    files.unpin(t);
-    files.rememberSession(t, undefined);
+    if (kept.has(t)) continue;
+    if (L.isFileTab(t)) {
+      files.unpin(t);
+      files.rememberSession(t, undefined);
+    } else if (L.isDraftTab(t)) {
+      forgetDraft(t);
+    }
+  }
+}
+
+function forgetDraft(id: string) {
+  dropDraft(id);
+  clearAttachments(id);
+  if (id in get().drafts) {
+    const drafts = { ...get().drafts };
+    delete drafts[id];
+    set({ drafts });
   }
 }
 
@@ -349,8 +373,8 @@ function commitWithTab(next: L.Workspace, sid: string, extra: Partial<ReturnType
   const openedAt = { ...get().openedAt, [sid]: Date.now() };
   const before = get().ws;
   set({ ws: next, openedAt, ...extra });
-  forgetLostFileTabs(before, next);
-  if (!L.isFileTab(sid)) {
+  forgetLostLocalTabs(before, next);
+  if (!L.isLocalTab(sid)) {
     clearUnread(sid);
     ensureLog(sid);
   }
@@ -534,8 +558,8 @@ export function openSubagent(v: SubagentView | string): void {
 }
 
 export async function ensureSession(sid: string): Promise<void> {
-  // a file tab has no session card: `GET /api/sessions/file:…` is a 404 that would close the tab
-  if (L.isFileTab(sid)) return;
+  // a file or draft tab has no session card: `GET /api/sessions/file:…` is a 404 that would close the tab
+  if (L.isLocalTab(sid)) return;
   if (get().sessions[sid] || get().tabKinds[sid] || sessionInFlight.has(sid)) return;
   sessionInFlight.add(sid);
   try {
@@ -562,17 +586,55 @@ export function openSession(sid: string): void {
   commitWithTab(L.openSession(get().ws, sid), sid, { inChat: true });
 }
 
+/**
+ * A new-session draft tab in the focused pane (spec new-session-draft «Вкладка-черновик»); `runnerId` — the machine
+ * chosen from its menu, `paneId` — the pane whose «+» was pressed: the draft becomes its last tab, as in Chrome.
+ * The last launched machine and agent (`launchPreferences`) apply until the user picks his own.
+ */
+export function openDraft(runnerId?: string, paneId?: L.PaneId): void {
+  const id = L.draftTabId();
+  useDrafts.setState(s => ({ byId: { ...s.byId, [id]: newDraft(runnerId) } }));
+  if (queueWhileLoading(id)) {
+    set({ modal: null, inChat: true });
+  } else {
+    set({ modal: null });
+    const ws = get().ws;
+    commitWithTab(paneId ? L.appendTab(ws, paneId, id) : L.openSession(ws, id), id, { inChat: true });
+  }
+  loadDraftChoices(id);
+}
+
+/** The project list of the chip and the last machine and agent; a draft restored after a reload gets them too. */
+function loadDraftChoices(id: string): void {
+  void api
+    .catalogProjects('recent')
+    .then(projects => useDrafts.setState({ projects }))
+    .catch(() => undefined);
+  void api
+    .launchPreferences()
+    .then(p => {
+      const d = useDrafts.getState().byId[id];
+      if (!d) return;
+      const preferred = get().runners.find(r => r.id === p.runnerId && r.online);
+      patchDraft(id, {
+        ...(!d.touched.runner && preferred ? { runnerId: preferred.id } : {}),
+        ...(!d.touched.provider && p.provider ? { provider: p.provider } : {}),
+      });
+    })
+    .catch(() => undefined);
+}
+
 /** Closing a tab does not stop the session and does not touch other windows. */
 export function closeTab(sid: string) {
   const before = get().ws;
   const ws = L.closeTab(before, sid);
   set({ ws });
-  forgetLostFileTabs(before, ws);
+  forgetLostLocalTabs(before, ws);
 }
 
 export function activateTab(pid: string, sid: string) {
   set({ ws: L.activateTab(get().ws, pid, sid), openedAt: { ...get().openedAt, [sid]: Date.now() }, inChat: true });
-  if (L.isFileTab(sid)) return;
+  if (L.isLocalTab(sid)) return;
   clearUnread(sid);
   ensureLog(sid);
 }
@@ -957,6 +1019,21 @@ export async function sendMessage(sid: string, text: string, force = false, clie
   }
 }
 
+/**
+ * «Сжать контекст» (session-context-usage D5): `/compact` goes as its own message — the draft, its images and the id
+ * of an unsent message stay as they were.
+ */
+export async function compactContext(sid: string): Promise<boolean> {
+  const draft = get().drafts[sid];
+  const unsent = unsentUuid[sid];
+  const ok = await sendMessage(sid, '/compact', false, newUuid(), []);
+  if (unsent) unsentUuid[sid] = unsent;
+  else delete unsentUuid[sid];
+  // sendMessage cleared the field; text typed while /compact was sent stays
+  if (draft && !get().drafts[sid]) set({ drafts: { ...get().drafts, [sid]: draft } });
+  return ok;
+}
+
 export const PENDING_CHECK_MS = 30_000;
 
 /**
@@ -1010,6 +1087,16 @@ export async function interrupt(sid: string): Promise<void> {
     applySession(r?.session);
   } catch (err) {
     if (!(err instanceof ApiError && err.code === 'not_running')) toastError(t('workspace.actions.notInterrupted'), err, t('workspace.actions.hubNoAnswer'));
+  }
+}
+
+/** «Усыпить сейчас»: stops the process of an idle session; the hub explains a refusal (409) in the toast. */
+export async function sleepSession(sid: string): Promise<void> {
+  try {
+    const r = await api.sleepSession(sid);
+    applySession(r?.session);
+  } catch (err) {
+    toastError(t('workspace.actions.notSlept'), err, t('workspace.actions.hubNoAnswer'));
   }
 }
 
@@ -1093,11 +1180,17 @@ export function openFork(sid: string, sourceId: string, right: boolean): void {
 
 export type CreateResult = { ok: true; session: SessionView } | { ok: false; field: 'cwd' | 'runner' | 'form' | 'subscription'; message: string; retry?: boolean };
 
-export async function createSession(body: CreateSessionRequest & { attachments?: AttachmentRef[] }, runnerName: string): Promise<CreateResult> {
+/** `draftId` — the draft tab the session is launched from: the session tab takes its place (and the draft is forgotten). */
+export async function createSession(body: CreateSessionRequest & { attachments?: AttachmentRef[] }, runnerName: string, draftId?: string): Promise<CreateResult> {
   try {
     const s = await api.createSession(body);
     get().upsertSessions([s]);
-    openSession(s.id);
+    if (draftId && L.allTabs(get().ws).includes(draftId)) {
+      set({ modal: null });
+      commitWithTab(L.replaceTab(get().ws, draftId, s.id), s.id, { inChat: true });
+    } else {
+      openSession(s.id);
+    }
     scheduleSidebarRefresh(300);
     return { ok: true, session: s };
   } catch (err) {
@@ -1143,9 +1236,9 @@ export function visibleSessionIds(): string[] {
   const { ws, device, inChat } = get();
   if (device === 'phone') {
     const a = L.activeSession(ws);
-    return inChat && a && !L.isFileTab(a) ? [a] : [];
+    return inChat && a && !L.isLocalTab(a) ? [a] : [];
   }
-  return L.leaves(ws.layout).flatMap(pid => (ws.panes[pid]?.active && !L.isFileTab(ws.panes[pid]!.active!) ? [ws.panes[pid]!.active!] : []));
+  return L.leaves(ws.layout).flatMap(pid => (ws.panes[pid]?.active && !L.isLocalTab(ws.panes[pid]!.active!) ? [ws.panes[pid]!.active!] : []));
 }
 
 /** Sends subscribe/presence when they change (and always after a reconnect). */
@@ -1271,7 +1364,7 @@ export function handleServerMessage(m: UiServerMessage) {
       // agent-providers: a device-code sign-in of a machine's provider ended
       providerLoginArrived({
         runnerId: m.runnerId,
-        provider: m.provider as ExtraProvider,
+        provider: m.provider as DeviceLoginProvider,
         loginId: m.loginId,
         ok: m.ok,
         ...(m.error ? { error: hubText(m.error, m.errorI18n) } : {}),

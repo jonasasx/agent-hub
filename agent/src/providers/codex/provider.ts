@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import {
+  CONTEXT_PROTOCOL,
   LIMITS_PROTOCOL,
   PEERS_PROTOCOL,
   PEERS_SERVER_NAME,
@@ -113,6 +114,8 @@ class CodexSession {
   turnId: string | null = null;
   turnStartedAt = 0;
   usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number } | null = null;
+  /** session-context-usage D2: the last request's tokens and the model's window, sent at the end of the turn. */
+  context: { used: number; window: number } | null = null;
   turnError: { message?: unknown; codexErrorInfo?: unknown } | null = null;
   planVersion = 0;
   /** hub-subagents D2: the text of the turn's last agentMessage — the result for the parent's report. */
@@ -579,7 +582,10 @@ export class CodexProvider implements SessionProvider {
         if (Array.isArray(p.plan)) s.mirror.plan(String(p.turnId ?? s.turnId ?? ''), s.planVersion++, p.plan as Array<{ step?: unknown; status?: unknown }>, s.model);
         return;
       case 'thread/tokenUsage/updated': {
-        const last = (p.tokenUsage as { last?: Record<string, number> } | undefined)?.last;
+        const tokenUsage = p.tokenUsage as { last?: Record<string, number>; modelContextWindow?: number | null } | undefined;
+        const last = tokenUsage?.last;
+        const window = tokenUsage?.modelContextWindow;
+        if (last && typeof window === 'number' && window > 0) s.context = { used: Math.max(0, Math.round(last.totalTokens ?? 0)), window: Math.round(window) };
         if (last)
           s.usage = {
             inputTokens: last.inputTokens ?? 0,
@@ -608,6 +614,21 @@ export class CodexProvider implements SessionProvider {
     }
   }
 
+  /** session-context-usage D2: Codex knows only the fill of the window, no categories; once per turn, to hubs ≥1.20. */
+  private sendContext(s: CodexSession): void {
+    const c = s.context;
+    s.context = null;
+    if (!c || !protocolAtLeast(this.d.hubProtocol?.() ?? null, CONTEXT_PROTOCOL)) return;
+    this.d.send('session.context', {
+      sessionId: s.id,
+      observedAt: this.clock(),
+      model: s.model ? s.model.slice(0, 200) : null,
+      usedTokens: c.used,
+      windowTokens: c.window,
+      percent: Math.round((c.used / c.window) * 100),
+    });
+  }
+
   private onTurnCompleted(s: CodexSession, turn: { id: string; status: string; error: CodexSession['turnError']; durationMs: number | null }): void {
     const error = turn.error ?? s.turnError;
     const failed = turn.status === 'failed';
@@ -631,6 +652,7 @@ export class CodexProvider implements SessionProvider {
       usage: s.usage ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
       ...(failure ? { failure } : {}),
     });
+    this.sendContext(s);
     if (s.turnId === turn.id) s.turnId = null;
     s.turnError = null;
     s.usage = null;
@@ -671,6 +693,7 @@ export class CodexProvider implements SessionProvider {
     const done = (o: Pick<LimitsProbeResult, 'outcome' | 'snapshot' | 'message'>): LimitsProbeResult => ({ resetsAt: null, limitType: null, durationMs: Math.max(0, this.clock() - started), ...o });
     try {
       const home = await homes.prepare(p.subscription.id, p.subscription.token);
+      this.refreshModelsFromHome();
       const snapshot = snapshotOfRateLimits(await this.service.rateLimitsIn(home));
       await this.syncCredential(p.subscription.id);
       const full = snapshot?.windows.find(w => w.status === 'rejected');
@@ -681,6 +704,13 @@ export class CodexProvider implements SessionProvider {
       if (/unauthori|401|sign in|log in|token/i.test(message)) return done({ outcome: 'auth_rejected', snapshot: null, message });
       throw new CmdError('probe_failed', message);
     }
+  }
+
+  /** A subscription home has appeared on a machine without its own sign-in and models: the status can have them now. */
+  private refreshModelsFromHome(): void {
+    const st = this.service.status;
+    if (st.login === 'ok' || st.models?.length) return;
+    void this.service.refresh().catch((err: unknown) => this.d.log.warn('codex status refresh failed', { error: (err as Error).message }));
   }
 
   // ---------- requests of the app-server ----------

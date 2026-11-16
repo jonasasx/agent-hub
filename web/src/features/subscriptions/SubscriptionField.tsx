@@ -24,10 +24,7 @@ export function goneText(name: string | null): string {
  * window, subscriptions.changed) is never replaced silently: the field keeps it as a disabled option, `send` is
  * undefined and `blocked` holds the text — the form does not start until the user picks again (QA on prod, 6.6).
  */
-export function useSubscriptionChoice(
-  runner: RunnerView | undefined,
-  provider: Provider = 'claude',
-): {
+export interface SubscriptionChoice {
   value: string;
   pick: (id: string) => void;
   send: string | undefined;
@@ -38,10 +35,18 @@ export function useSubscriptionChoice(
   blocked: string | undefined;
   /** Only a choice the user made in this form (the handoff draft leaves the default to the hub, QA B1). */
   picked: string | undefined;
-} {
-  const subs = useStore(s => s.subs);
-  const [picked, setPicked] = useState<string | null>(null);
-  const [unavailable, setUnavailable] = useState<string | undefined>(undefined);
+}
+
+/** The choice computed from the user's pick and the refused id; the caller keeps both (form state or a draft store). */
+export function subscriptionChoice(
+  subs: ReturnType<typeof useStore.getState>['subs'],
+  runner: RunnerView | undefined,
+  provider: Provider,
+  picked: string | null,
+  unavailable: string | undefined,
+  setPicked: (id: string) => void,
+  setUnavailable: (id: string | undefined) => void,
+): SubscriptionChoice {
   const active = activeSubs(subs, provider);
   const field = formField(subs, runner, provider);
   const gone = field === 'select' && !!picked && !active.some(s => s.id === picked);
@@ -62,8 +67,15 @@ export function useSubscriptionChoice(
   };
 }
 
+export function useSubscriptionChoice(runner: RunnerView | undefined, provider: Provider = 'claude'): SubscriptionChoice {
+  const subs = useStore(s => s.subs);
+  const [picked, setPicked] = useState<string | null>(null);
+  const [unavailable, setUnavailable] = useState<string | undefined>(undefined);
+  return subscriptionChoice(subs, runner, provider, picked, unavailable, setPicked, setUnavailable);
+}
+
 /** The text under the field after 422: which subscription left and which one the field shows now. */
-function unavailableText(subs: ReturnType<typeof useStore.getState>['subs'], gone: string, now: string): string {
+export function unavailableText(subs: ReturnType<typeof useStore.getState>['subs'], gone: string, now: string): string {
   const goneName = subName(subs, gone);
   const head = goneName ? t('subscriptions.field.unavailableNamed', { name: goneName }) : t('subscriptions.field.unavailable');
   if (now === gone || !now) return t('subscriptions.field.listRefreshing', { head });

@@ -40,12 +40,12 @@ describe('Sidebar', () => {
     expect(within(row as HTMLElement).getByLabelText('Remote Control')).toHaveTextContent('RC');
   });
 
-  it('Раздел «Сейчас»: waiting for the user first (by freshness), then working; offline, read, sleeping, closed are not there', () => {
+  it('Раздел «Сейчас»: waiting for the user first (by freshness), then working, then the awake read ones; offline, sleeping, closed are not there', () => {
     setup();
     render(<Sidebar onLogout={() => undefined} />);
-    expect(screen.getByRole('heading', { name: /Сейчас/ })).toHaveTextContent('Сейчас 3');
+    expect(screen.getByRole('heading', { name: /Сейчас/ })).toHaveTextContent('Сейчас 4');
     const rows = [...document.querySelectorAll('.side-scroll > .srow')].map(r => r.querySelector('.title')!.firstChild!.textContent);
-    expect(rows).toEqual(['Непрочитанный', 'Просит разрешение', 'Работает']);
+    expect(rows).toEqual(['Непрочитанный', 'Просит разрешение', 'Работает', 'Прочитанный']);
     expect(screen.getByText('Без проекта · X1 · ждёт разрешения')).toBeInTheDocument();
   });
 
@@ -57,7 +57,7 @@ describe('Sidebar', () => {
     render(<Sidebar onLogout={() => undefined} />);
     expect(screen.getByRole('button', { name: /Agent Hub/, expanded: true })).toBeInTheDocument();
     expect(document.querySelector('.prow[title*="C:\\work"]')).toBeNull();
-    expect(screen.getByText('Catalog session')).toBeInTheDocument();
+    expect(within(document.querySelector('.pchildren') as HTMLElement).getByText('Catalog session')).toBeInTheDocument();
   });
 
   it('Сессия просит разрешение: «!» glyph; a newer permission request goes above an older unread answer', () => {
@@ -76,10 +76,10 @@ describe('Sidebar', () => {
     expect(nowList([cron], idx, true)).toHaveLength(1);
   });
 
-  it('empty «Сейчас» shows «Ничего не ждёт ответа»', () => {
+  it('empty «Сейчас» shows «Нет активных сессий»', () => {
     useStore.setState({ runners: RUNNERS });
     render(<Sidebar onLogout={() => undefined} />);
-    expect(screen.getByText('Ничего не ждёт ответа')).toBeInTheDocument();
+    expect(screen.getByText('Нет активных сессий')).toBeInTheDocument();
     expect(screen.getByText('Сессий пока нет')).toBeInTheDocument();
   });
 
@@ -178,5 +178,25 @@ describe('Sidebar', () => {
     expect(useStore.getState().ws.panes.p1!.tabs).toEqual([s.working.id]);
     expect(calls.filter(c => c.method !== 'GET')).toEqual([]);
     expect(calls.some(c => c.url.startsWith('/api/tabs'))).toBe(false);
+  });
+});
+
+describe('Sidebar → hidden groups icon', () => {
+  beforeEach(resetStore);
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('No hidden groups: no icon in the header «Проекты»', () => {
+    setup();
+    useStore.setState({ hiddenGroups: 0 });
+    render(<Sidebar onLogout={() => undefined} />);
+    expect(screen.queryByRole('button', { name: /Скрытые группы/ })).toBeNull();
+  });
+
+  it('Hidden groups icon: «Скрытые группы (2)» opens the hidden-groups dialog', async () => {
+    setup();
+    useStore.setState({ hiddenGroups: 2 });
+    render(<Sidebar onLogout={() => undefined} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Скрытые группы (2)' }));
+    expect(useStore.getState().hiddenProjectsOpen).toBe(true);
   });
 });

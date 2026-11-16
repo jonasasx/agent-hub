@@ -41,6 +41,26 @@ describe('MCP rules', () => {
     expect(v.reason).toBeUndefined();
   });
 
+  it('Причина ошибки сервера реестра в панели сессии: gateway only on a failed row', () => {
+    const issue = { serverId: 'id', status: 'failed' as const, error: 'command not found: wsl.exe', observedAt: new Date(1).toISOString() };
+    const v = toSessionMcpView(
+      { is_hub_managed: true, process_alive: true, mcp_servers: [srv('rdp', 'failed'), srv('ok', 'connected'), srv('other', 'failed')], mcp_observed_at: new Date(5) },
+      {
+        protocol: '1.7',
+        online: true,
+        gateway: new Map([
+          ['rdp', issue],
+          ['ok', issue],
+        ]),
+      },
+    );
+    expect(v.servers.map(s => [s.name, s.gateway ?? null])).toEqual([
+      ['rdp', issue],
+      ['ok', null],
+      ['other', null],
+    ]);
+  });
+
   it('mcp-auth-controls A1/A2/A4: oauth from the snapshot (http/sse only), authError of failed only, authControls from 1.8', () => {
     const rows = [
       srv('fleet', 'connected', { transport: 'http', oauth: true }),

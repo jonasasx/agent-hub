@@ -7,6 +7,7 @@ import type { Config } from '../config.js';
 import { HttpError } from '../sessions/service.js';
 import { tr } from '../i18n.js';
 import { ScribeClient, ScribeError, baseMime } from '../voice/elevenlabs.js';
+import { stripFillers } from '../voice/fillers.js';
 
 const AUDIO_TYPES: ReadonlySet<string> = new Set(VOICE_AUDIO_TYPES);
 
@@ -104,7 +105,7 @@ export function registerVoice(app: FastifyInstance, deps: VoiceDeps): void {
         try {
           // The client going away during the request aborts it (D2 «Отмена»).
           const r = await client.transcribe(body, String(req.headers['content-type']), gone);
-          return { text: r.text.trim() };
+          return { text: stripFillers(r.text.trim()) };
         } catch (err) {
           if (!(err instanceof ScribeError)) throw err;
           switch (err.kind) {

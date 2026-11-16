@@ -15,11 +15,10 @@ import { usableRunner, useStore } from './store';
 import { UiCloseCode } from './api/types';
 import { Welcome } from './features/machines/Welcome';
 import { EnrollModal } from './features/machines/EnrollModal';
-import { Settings, settingsFromPath } from './features/settings/Settings';
+import { Settings, settingsFromPath, settingsUrl } from './features/settings/Settings';
 import { Sidebar, SkeletonRows } from './features/sidebar/Sidebar';
 import { Toasts } from './features/toasts/Toasts';
 import { Workspace } from './features/workspace/Workspace';
-import { NewSessionModal } from './features/newSession/NewSessionModal';
 import { QuickSearch } from './features/search/QuickSearch';
 import { ForkModal } from './features/fork/ForkModal';
 import { handleHotkey } from './features/workspace/hotkeys';
@@ -29,6 +28,8 @@ import { openMcpPanel, reloadMcp } from './features/mcp/actions';
 import { LimitCard } from './features/limits/LimitCard';
 import { SwitchConfirm } from './features/subscriptions/SwitchConfirm';
 import { RestartConfirm } from './features/chat/RestartConfirm';
+import { HiddenProjects } from './features/projects/HiddenProjects';
+import { closeHiddenProjects, loadHiddenGroups } from './features/projects/hiddenGroups';
 import { trackCtrlKey } from './features/ui/a11y';
 import { Lightbox } from './features/images/ImagePreview';
 import { startPhoneHistory } from './features/workspace/phoneHistory';
@@ -140,6 +141,7 @@ export function App() {
     if (inChat) useDock.getState().setPhoneWin(null);
   }, [inChat]);
   const settings = useStore(s => s.settings);
+  const hiddenProjectsOpen = useStore(s => s.hiddenProjectsOpen);
   const hasMachines = useStore(s => s.runners.some(usableRunner) || Object.keys(s.sessions).length > 0);
 
   const handleUnauthorized = useCallback(() => {
@@ -152,6 +154,7 @@ export function App() {
       const me = await api.me();
       await applyProfileLocale(me.locale ?? null);
       await loadSidebar();
+      void loadHiddenGroups();
       setAuth({ kind: 'signed_in', me });
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) handleUnauthorized();
@@ -169,7 +172,7 @@ export function App() {
     const set = settingsFromPath(window.location.pathname);
     if (set) {
       const tab = set === 'unknown' ? 'machines' : set;
-      window.history.replaceState({ ahSettings: tab }, '', `/settings/${tab}`);
+      window.history.replaceState({ ahSettings: tab }, '', settingsUrl(tab));
       useStore.setState({ settings: tab, inChat: true });
     }
     const sid = sessionFromPath(window.location.pathname);
@@ -351,9 +354,9 @@ export function App() {
               <Rail side="right" />
             </>
           )}
-          {modal?.type === 'new' && <NewSessionModal key={modal.runnerId ?? ''} preset={modal} onClose={closeModal} />}
           {modal?.type === 'search' && <QuickSearch onClose={closeModal} />}
           {modal?.type === 'fork' && <ForkModal key={modal.sessionId} sessionId={modal.sessionId} initialMode={modal.mode} onClose={closeModal} />}
+          {hiddenProjectsOpen && <HiddenProjects onClose={closeHiddenProjects} />}
           <SwitchConfirm />
           <RestartConfirm />
           <LimitCard />

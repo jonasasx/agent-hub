@@ -189,6 +189,17 @@ export function openSession(ws: Workspace, sid: SessionId): Workspace {
   return w;
 }
 
+/** Adds a new tab at the end of pane `pid`, makes it active there and focuses the pane — the «+» of the tab strip. */
+export function appendTab(ws: Workspace, pid: PaneId, sid: SessionId): Workspace {
+  if (!ws.panes[pid] || paneOf(ws, sid)) return openSession(ws, sid);
+  const w = clone(ws);
+  const p = w.panes[pid]!;
+  p.tabs.push(sid);
+  p.active = sid;
+  w.focus = pid;
+  return w;
+}
+
 /** Moves a tab into a pane before `beforeSid` (null — to the end) and makes it active there. */
 export function moveToPane(ws: Workspace, sid: SessionId, pid: PaneId, beforeSid: SessionId | null = null): Workspace {
   if (!ws.panes[pid]) return ws;
@@ -449,26 +460,61 @@ export function parseFileTabId(id: string): { runnerId: string; path: string } |
   return { runnerId: rest.slice(0, at), path: rest.slice(at + 1) };
 }
 
+// ---------- draft tabs (change new-session-draft-tab) ----------
+
+const DRAFT_TAB_PREFIX = 'draft:';
+let draftSeq = 0;
+
+/** Id of a new session draft tab: `draft:<n>`, unique within the window. */
+export function draftTabId(): string {
+  draftSeq += 1;
+  return `${DRAFT_TAB_PREFIX}${Date.now().toString(36)}-${draftSeq}`;
+}
+
+export function isDraftTab(id: string): boolean {
+  return id.startsWith(DRAFT_TAB_PREFIX);
+}
+
+/** A tab that is not a session: a file or a draft. Local to the window, never goes to the server. */
+export function isLocalTab(id: string): boolean {
+  return isFileTab(id) || isDraftTab(id);
+}
+
+/** Puts `to` in place of `from` (same pane, same position, active if `from` was). */
+export function replaceTab(ws: Workspace, from: SessionId, to: SessionId): Workspace {
+  const w = clone(ws);
+  const p = paneOf(w, from);
+  if (!p) return openSession(ws, to);
+  const other = paneOf(w, to);
+  if (other) {
+    other.tabs = other.tabs.filter(id => id !== to);
+    if (other.active === to) other.active = other.tabs[0] ?? null;
+  }
+  p.tabs = p.tabs.map(id => (id === from ? to : id));
+  if (p.active === from) p.active = to;
+  return w;
+}
+
 /** The same for the layout remembered by «Одно окно». */
 export function stripFileTabsFromSnapshot(snap: Snapshot): Snapshot {
-  if (!Object.values(snap.panes).some(p => p.tabs.some(isFileTab))) return snap;
-  const open = allTabs(snap).filter(id => !isFileTab(id));
+  if (!Object.values(snap.panes).some(p => p.tabs.some(isLocalTab))) return snap;
+  const open = allTabs(snap).filter(id => !isLocalTab(id));
   const { layout, panes, focus } = reconcileTabs({ ...snap, saved: null, seq: Object.keys(snap.panes).length + 1 }, open);
   return { layout, panes, focus };
 }
 
 /**
- * Without file tabs: they are local to the window and never go to the server.
+ * Without file and draft tabs: they are local to the window and never go to the server.
  * Requirement (file-explorer): Файловые вкладки, scenario «Раскладка на сервере».
  */
 export function stripFileTabs(ws: Workspace): Workspace {
-  const hasFiles = Object.values(ws.panes).some(p => p.tabs.some(isFileTab));
-  const savedHasFiles = !!ws.saved && Object.values(ws.saved.panes).some(p => p.tabs.some(isFileTab));
+  const hasFiles = Object.values(ws.panes).some(p => p.tabs.some(isLocalTab));
+  const savedHasFiles = !!ws.saved && Object.values(ws.saved.panes).some(p => p.tabs.some(isLocalTab));
   if (!hasFiles && !savedHasFiles) return ws;
   const main = hasFiles
     ? reconcileTabs(
         ws,
-        allTabs(ws).filter(id => !isFileTab(id)),
+        allTabs(ws).filter(id => !isLocalTab(id)),
       )
     : ws;
   return { ...main, saved: ws.saved ? stripFileTabsFromSnapshot(ws.saved) : null };

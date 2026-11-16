@@ -91,6 +91,57 @@ describe('the MCP panel', () => {
     expect(document.querySelector('.scrim.sub-scrim:not(.mcp-registry-scrim)')).toHaveStyle({ display: 'none' });
   });
 
+  it('Причина ошибки сервера реестра в панели сессии: the gateway reason leads, SDK text in «Подробности», «Настроить сервер» opens its card', async () => {
+    const serverId = '7a0c6f2e-5b1d-4c8e-9f3a-2d4b6c8e0a1f';
+    const sdk = 'SdkHttpError dialing http://127.0.0.1:33763 (CLIENT_HTTP_NOT_IMPLEMENTED)';
+    const s = session({ mcpProblems: 1 });
+    const registryServer = {
+      id: serverId,
+      name: 'rdp',
+      enabled: true,
+      transport: 'stdio',
+      mode: 'per-session',
+      command: 'wsl.exe',
+      machineScope: { allMachines: true, machineIds: [] },
+      projectIds: [],
+      revision: 1,
+      secrets: [],
+    };
+    mockFetch({
+      [`GET /api/sessions/${s.id}/mcp`]: mcpRoute(
+        mcpView({
+          servers: [
+            mcpServer({
+              name: 'rdp',
+              status: 'failed',
+              transport: 'http',
+              error: sdk,
+              gateway: { serverId, status: 'failed', error: 'command not found: wsl.exe', observedAt: new Date().toISOString() },
+            }),
+            mcpServer({ name: 'plain', status: 'failed', error: 'plain failure' }),
+          ],
+        }),
+      ),
+      'GET /api/mcp/registry': () => ({ status: 200, body: { revision: 1, servers: [registryServer], drafts: [] } }),
+      'GET /api/mcp/registry/status': () => ({ status: 200, body: {} }),
+      'GET /api/catalog/projects': () => ({ status: 200, body: [] }),
+    });
+    head(s);
+    await userEvent.click(await screen.findByRole('button', { name: /^MCP/ }));
+    const rdp = await waitFor(() => row('rdp'));
+    expect(rdp).toHaveTextContent('На машине X1 нет команды wsl.exe. Установите её или выключите сервер для этой машины в реестре.');
+    const details = rdp.querySelector('details.mcp-details')!;
+    expect(details).not.toHaveAttribute('open');
+    expect(within(details as HTMLElement).getByText('Подробности')).toBeInTheDocument();
+    expect(details).toHaveTextContent(sdk);
+    expect(within(row('plain')).getByText('plain failure')).toBeInTheDocument();
+    expect(within(row('plain')).queryByRole('button', { name: 'Настроить сервер' })).not.toBeInTheDocument();
+    await userEvent.click(within(rdp).getByRole('button', { name: 'Настроить сервер' }));
+    const registry = await screen.findByRole('dialog', { name: 'Реестр MCP' });
+    await waitFor(() => expect(registry.querySelector('article.mcp-row.focused')).toHaveTextContent('rdp'));
+    expect(registry.querySelector('article.mcp-row.focused')).toHaveFocus();
+  });
+
   it('only needs-auth → --warn; no problems → a neutral «MCP»; 404 of the hub → no button', async () => {
     const a = session({ mcpProblems: 1 });
     const b = session({ mcpProblems: 0 });

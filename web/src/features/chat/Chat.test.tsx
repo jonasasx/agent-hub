@@ -198,6 +198,51 @@ describe('Chat: UI review 2.15', () => {
     expect(useStore.getState().modal).toEqual({ type: 'fork', sessionId: s.id });
   });
 
+  describe('«Усыпить сейчас» (change session-sleep-controls)', () => {
+    const openIdle = async (name: string) => {
+      await userEvent.click(screen.getByRole('button', { name }));
+      return within(screen.getByRole('menu', { name: 'Усыплять при простое' }));
+    };
+
+    it('an awake waiting session: the item under the timeouts sends POST /sleep and closes the menu', async () => {
+      const s = session({ effectiveIdleTimeoutMin: 30, sleepsAt: null });
+      const calls = mockFetch({ 'POST /api/sessions/': () => ({ status: 202, body: { session: { ...s, status: 'sleeping', processAlive: false } } }) });
+      show(s, []);
+      const menu = await openIdle('усыплять через 30 мин');
+      await userEvent.click(menu.getByRole('menuitem', { name: 'Усыпить сейчас' }));
+      await vi.waitFor(() => expect(calls.filter(c => c.url.endsWith(`/api/sessions/${s.id}/sleep`))).toHaveLength(1));
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+      await vi.waitFor(() => expect(useStore.getState().sessions[s.id]?.status).toBe('sleeping'));
+    });
+
+    it('while a turn runs the item is disabled with the reason; a sleeping session has no item', async () => {
+      const view = show(session({ status: 'working', effectiveIdleTimeoutMin: 30, sleepsAt: null }), []);
+      const menu = await openIdle('усыплять через 30 мин');
+      expect(menu.getByRole('menuitem', { name: 'Усыпить сейчас' })).toBeDisabled();
+      expect(menu.getByText('Идёт работа: усыпить сессию сейчас нельзя')).toBeInTheDocument();
+      view.unmount();
+      show(session({ status: 'sleeping', processAlive: false, effectiveIdleTimeoutMin: 30, sleepsAt: null }), []);
+      const asleep = await openIdle('усыплять через 30 мин');
+      expect(asleep.queryByRole('menuitem', { name: 'Усыпить сейчас' })).not.toBeInTheDocument();
+    });
+
+    it('a refusal of the hub (409) is shown in a toast with its text', async () => {
+      const s = session({ effectiveIdleTimeoutMin: 30, sleepsAt: null });
+      mockFetch({ 'POST /api/sessions/': () => ({ status: 409, body: { error: 'turn_running', message: 'Сессия выполняет ход' } }) });
+      show(s, []);
+      const menu = await openIdle('усыплять через 30 мин');
+      await userEvent.click(menu.getByRole('menuitem', { name: 'Усыпить сейчас' }));
+      await vi.waitFor(() => expect(useStore.getState().toasts.some(x => x.title === 'Сессия не усыплена' && x.text === 'Сессия выполняет ход')).toBe(true));
+    });
+
+    it('the phone «⋯» has the same item', async () => {
+      const s = session();
+      show(s, []);
+      await userEvent.click(screen.getByRole('button', { name: 'Меню сессии' }));
+      expect(within(screen.getByRole('menu', { name: 'Меню сессии' })).getByRole('menuitem', { name: 'Усыпить сейчас' })).toBeEnabled();
+    });
+  });
+
   describe('«Перезапустить сессию» (change session-restart)', () => {
     const restartCalls = (calls: Array<{ url: string; body: unknown }>) => calls.filter(c => c.url.endsWith('/restart')).map(c => c.body);
     const openRestart = async () => {

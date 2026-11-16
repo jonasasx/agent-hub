@@ -80,7 +80,7 @@ describe('language switch of the workspace shell', () => {
 
     const profile = await screen.findByRole('button', { name: 'Profile' });
     expect(pageText()).not.toMatch(CYRILLIC);
-    expect(screen.getByText('Nothing is waiting for an answer')).toBeInTheDocument();
+    expect(screen.getByText('No active sessions')).toBeInTheDocument();
 
     await userEvent.click(profile);
     const menu = screen.getByRole('menu', { name: 'Profile' });

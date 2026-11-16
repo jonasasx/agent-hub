@@ -105,4 +105,7 @@ export default {
   'machines.defaultDir.hint': 'Les sessions de cette machine démarrent ici ; le dossier du projet est indiqué par rapport à lui.',
   'machines.defaultDir.failed': 'Impossible de modifier le dossier par défaut',
   'machines.menu.defaultDir': 'Dossier par défaut…',
+  'machines.qwen.ok': 'point de terminaison disponible',
+  'machines.qwen.down': 'le point de terminaison ne répond pas ou refuse la clé',
+  'machines.qwen.hint': 'pas de connexion : l’adresse et la clé sont dans agent.env de la machine',
 } satisfies Dict;

@@ -5,9 +5,9 @@
  * «☰» drawer.
  * Requirements (workspace-ui): Раздел «Сейчас»; Дерево «Проекты»; Быстрый поиск Ctrl+K (button); Темы; Телефонный режим.
  */
-import { useState } from 'react';
 import { useStore } from '../../store';
-import { applyTheme, currentTheme } from '../theme/theme';
+import { openDraft } from '../workspace/actions';
+import { toggleTheme as switchTheme, useTheme } from '../theme/theme';
 import { PhoneDrawer } from '../toolwindows/PhoneDrawer';
 import { ProfileMenu } from './ProfileMenu';
 import { SessionsList, SkeletonRows } from './SessionsList';
@@ -17,12 +17,8 @@ export { SkeletonRows };
 
 export function Sidebar({ onLogout }: { onLogout: () => void }) {
   const t = useT();
-  const [theme, setTheme] = useState(currentTheme);
-  const toggleTheme = () => {
-    const next = theme === 'dark' ? 'light' : 'dark';
-    applyTheme(next);
-    setTheme(next);
-  };
+  const theme = useTheme();
+  const toggleTheme = switchTheme;
   return (
     <aside className="side" aria-label={t('workspace.sidebar.sessionsAndProjects')}>
       <div className="side-top">
@@ -44,13 +40,7 @@ export function Sidebar({ onLogout }: { onLogout: () => void }) {
           {t('workspace.sidebar.findSession')}
           <kbd>Ctrl K</kbd>
         </button>
-        <button
-          type="button"
-          className="btn primary"
-          title={t('workspace.sidebar.newSession')}
-          aria-label={t('workspace.sidebar.newSession')}
-          onClick={() => useStore.setState({ modal: { type: 'new' } })}
-        >
+        <button type="button" className="btn primary" title={t('workspace.sidebar.newSession')} aria-label={t('workspace.sidebar.newSession')} onClick={() => openDraft()}>
           ＋
         </button>
       </div>

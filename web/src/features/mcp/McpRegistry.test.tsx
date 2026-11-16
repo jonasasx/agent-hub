@@ -75,6 +75,22 @@ describe('MCP registry wizard', () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
+  it('Переход к настройке: focusServerId scrolls to the server card and highlights it', async () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    const other = '0b9a4c1e-7d2f-4e8a-9c3b-5f6d7e8a9b0c';
+    const server = (sid: string, name: string) => ({ ...draft().server, id: sid, name });
+    mockFetch({
+      'GET /api/mcp/registry': reply({ revision: 1, servers: [server(other, 'other'), server(id, 'rdp')], drafts: [] }),
+      'GET /api/mcp/registry/status': reply({}),
+      'GET /api/catalog/projects': reply([]),
+    });
+    render(<McpRegistry focusServerId={id} onClose={() => undefined} />);
+    await waitFor(() => expect(document.querySelector('article.mcp-row.focused')).toHaveTextContent('rdp'));
+    expect(document.querySelectorAll('article.mcp-row.focused')).toHaveLength(1);
+    expect(scroll).toHaveBeenCalledTimes(1);
+    Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+  });
   it('renders transport choices as descriptive radio segments', async () => {
     mockFetch({
       'GET /api/mcp/registry': initial,

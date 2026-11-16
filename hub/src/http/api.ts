@@ -24,11 +24,13 @@ import {
   sendMessageRequestSchema,
   statQuerySchema,
   providerSchema,
-  extraProviderSchema,
+  deviceLoginProviderSchema,
   wakeRequestSchema,
   restartSessionRequestSchema,
   projectSuggestionAnswerSchema,
   resolveSessionRefsSchema,
+  sessionPreferencesRequestSchema,
+  type SessionPreferences,
   type SessionRefView,
   type EventsPage,
   type LayoutResponse,
@@ -43,18 +45,19 @@ import {
   type UserProjectView,
   pathFitsPlatform,
   platformOfHome,
+  type SessionContextResponse,
 } from '@agent-hub/shared';
 import type { Db } from '../db/db.js';
 import type { AgentGateway, CommandError } from '../runners/agentGateway.js';
 import { listRunnerViews } from '../runners/repo.js';
-import { eventsPage, projectRef, resolveSessionRefs, selectSessions } from '../sessions/repo.js';
+import { eventsPage, getSessionContext, projectRef, resolveSessionRefs, selectSessions } from '../sessions/repo.js';
 import { HttpError, type SessionService } from '../sessions/service.js';
 import type { HandoffService } from '../sessions/handoff.js';
 import { getSubagent, listHubChildren, listSubagents, runFile, subagentEventsPage } from '../subagents/repo.js';
 import { listBackground } from '../subagents/background.js';
 import { searchSessions } from '../sessions/search.js';
 import { registerFileRoutes, type FsRouteOptions } from './files.js';
-import { LOCALE_IDS } from '@agent-hub/shared';
+import { LOCALE_IDS, type Provider } from '@agent-hub/shared';
 import { render, tr } from '../i18n.js';
 import { tx } from '../texts.js';
 
@@ -73,7 +76,7 @@ const pageQuery = z.object({
 const eventsQuery = z.object({ before: z.string().max(500).optional(), limit: z.coerce.number().int().min(1).max(500).default(200) });
 const deviceQuery = z.object({ device: z.enum(['desktop', 'phone']) });
 const modelsQuerySchema = z.object({ provider: providerSchema.optional() });
-const providerParamsSchema = z.object({ id: z.string().min(1), provider: extraProviderSchema });
+const providerParamsSchema = z.object({ id: z.string().min(1), provider: deviceLoginProviderSchema });
 
 export function registerApi(
   app: FastifyInstance,
@@ -154,7 +157,25 @@ export function registerApi(
     return reply.code(204).send();
   });
 
-  app.get('/api/preferences/launch', async (req): Promise<{ runnerId: string | null; provider: 'claude' | 'codex' | null }> => {
+  // session-sleep-controls D3: the user's default idle timeout; null — as in the hub (env IDLE_TIMEOUT_MIN)
+  app.get('/api/preferences/sessions', async (req): Promise<SessionPreferences> => {
+    const pref = await db.selectFrom('user_preferences').select('idle_timeout_min').where('user_id', '=', req.user!.id).executeTakeFirst();
+    return { idleTimeoutMin: pref?.idle_timeout_min ?? null, hubIdleTimeoutMin: sessions.hubIdleTimeoutMin };
+  });
+
+  app.put('/api/preferences/sessions', async (req): Promise<SessionPreferences> => {
+    const { idleTimeoutMin } = parse(sessionPreferencesRequestSchema, req.body);
+    const userId = req.user!.id;
+    await db
+      .insertInto('user_preferences')
+      .values({ user_id: userId, last_runner_id: null, last_provider: null, idle_timeout_min: idleTimeoutMin })
+      .onConflict(oc => oc.column('user_id').doUpdateSet({ idle_timeout_min: idleTimeoutMin }))
+      .execute();
+    await sessions.idleDefaultsChanged(userId);
+    return { idleTimeoutMin, hubIdleTimeoutMin: sessions.hubIdleTimeoutMin };
+  });
+
+  app.get('/api/preferences/launch', async (req): Promise<{ runnerId: string | null; provider: Provider | null }> => {
     const userId = req.user!.id;
     const pref = await db.selectFrom('user_preferences').select(['last_runner_id', 'last_provider']).where('user_id', '=', userId).executeTakeFirst();
     if (!pref?.last_runner_id) return { runnerId: null, provider: pref?.last_provider ?? null };
@@ -336,9 +357,16 @@ export function registerApi(
       .where(visible(q.cron))
       // a spawned session shows here only when it waits for the user (permission): nobody else can answer it
       .where(eb => eb.or([sql<boolean>`s.spawned_by IS NULL`, eb('s.status', '=', 'permission')]))
-      // M4a: also a session written outside the hub right now (externalActive).
-      .where(eb => eb.or([eb('s.status', 'in', ['permission', 'working']), eb('s.unread', '=', true), sql<boolean>`(NOT s.process_alive AND s.external_seen_at > now() - interval '3 minutes')`]))
-      .orderBy(sql`CASE WHEN s.status = 'permission' OR s.unread THEN 0 ELSE 1 END`)
+      // M4a: also a session written outside the hub right now (externalActive); session-sleep-controls D5: every awake session waiting for input.
+      .where(eb =>
+        eb.or([
+          eb('s.status', 'in', ['permission', 'working']),
+          eb('s.unread', '=', true),
+          eb.and([eb('s.status', '=', 'waiting'), eb('s.process_alive', '=', true)]),
+          sql<boolean>`(NOT s.process_alive AND s.external_seen_at > now() - interval '3 minutes')`,
+        ]),
+      )
+      .orderBy(sql`CASE WHEN s.status = 'permission' OR s.unread THEN 0 WHEN s.status = 'working' THEN 1 ELSE 2 END`)
       .orderBy(recency, 'desc')
       .limit(100)
       .execute();
@@ -649,6 +677,12 @@ export function registerApi(
     return eventsPage(db, s.id, q.before, q.limit);
   });
 
+  /** The breakdown of the last context-window snapshot. Requirement (session-context-usage): Разбивка контекстного окна */
+  app.get('/api/sessions/:id/context', async (req): Promise<SessionContextResponse> => {
+    const s = await sessions.get(req.user!.id, (req.params as { id: string }).id);
+    return { context: await getSessionContext(db, s.id) };
+  });
+
   // ---------- subagents (change `subagents`, design S7) ----------
 
   /** The registry of a session by started_at. Requirement (subagents): Список субагентов и счётчик */
@@ -683,6 +717,11 @@ export function registerApi(
 
   app.post('/api/sessions/:id/interrupt', async (req, reply) => {
     return reply.code(202).send({ session: await sessions.interrupt(req.user!.id, (req.params as { id: string }).id) });
+  });
+
+  /** Requirement: Ручное усыпление сессии. */
+  app.post('/api/sessions/:id/sleep', async (req, reply) => {
+    return reply.code(202).send({ session: await sessions.sleepNow(req.user!.id, (req.params as { id: string }).id) });
   });
 
   /** Stop the process and resume at once with the same settings. Requirement: Перезапуск сессии из меню. */

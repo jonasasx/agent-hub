@@ -12,7 +12,7 @@ import { t, useT } from '../../i18n';
 const emptyRegistry: McpRegistryResponse = { revision: 0, servers: [], drafts: [] };
 const emptyStatus: McpRegistryStatus = { revision: 0, agents: [], gateways: [], oauth: [] };
 
-export function McpRegistry({ onClose, sessionId }: { onClose: () => void; sessionId?: string }) {
+export function McpRegistry({ onClose, sessionId, focusServerId }: { onClose: () => void; sessionId?: string; focusServerId?: string }) {
   const t = useT();
   const dialogRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -201,6 +201,7 @@ export function McpRegistry({ onClose, sessionId }: { onClose: () => void; sessi
             onProjectOverrideClear={clearProjectOverride}
             onRefreshStatus={refreshStatus}
             onMachineOverride={machineOverride}
+            focusServerId={focusServerId}
           />
         )}
       </section>

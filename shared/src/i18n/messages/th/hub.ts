@@ -214,6 +214,7 @@ export default {
   'hub.sessions.notFound': 'ไม่พบเซสชัน',
   'hub.sessions.notImage': 'ไฟล์นี้ไม่ใช่รูปภาพ PNG, JPEG, GIF หรือ WebP',
   'hub.sessions.notRunning': 'เซสชันไม่ได้กำลังรันเทิร์น',
+  'hub.sessions.turnRunning': 'เซสชันกำลังรันเทิร์นหรืองานเบื้องหลัง จึงพักตอนนี้ไม่ได้',
   'hub.sessions.noteCrashed': 'โปรเซส Claude Code ขัดข้อง',
   'hub.sessions.noteCrashedWith': 'โปรเซส Claude Code ขัดข้อง: {error}',
   'hub.sessions.noteDeliveredAfterAll': 'ข้อความไปถึงเซสชันจนได้: {quote}',
@@ -304,4 +305,5 @@ export default {
   'hub.voiceTalk.long': 'งานนี้ใช้เวลานาน จะทำต่อไป เสร็จแล้วจะบอก',
   'hub.voiceTalk.offline': 'เครื่องของเซสชันออฟไลน์อยู่',
   'hub.voiceTalk.failed': 'ส่งข้อความไปยังเซสชันไม่ได้',
+  'hub.sessions.qwenEndpointDown': '{label}: เอนด์พอยต์โมเดลบน {name} ไม่ตอบสนองหรือปฏิเสธคีย์ ดู agent.env',
 } satisfies Dict;

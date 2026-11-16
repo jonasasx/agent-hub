@@ -214,6 +214,7 @@ export default {
   'hub.sessions.notFound': '未找到会话',
   'hub.sessions.notImage': '该文件不是 PNG、JPEG、GIF 或 WebP 图片',
   'hub.sessions.notRunning': '该会话当前没有进行中的一轮',
+  'hub.sessions.turnRunning': '会话正在进行一轮或后台工作，现在无法休眠',
   'hub.sessions.noteCrashed': 'Claude Code 进程崩溃了',
   'hub.sessions.noteCrashedWith': 'Claude Code 进程崩溃了：{error}',
   'hub.sessions.noteDeliveredAfterAll': '该消息最终还是送达了会话：{quote}',
@@ -304,4 +305,5 @@ export default {
   'hub.voiceTalk.long': '任务较长，我继续进行，完成后告诉你。',
   'hub.voiceTalk.offline': '会话所在的机器离线。',
   'hub.voiceTalk.failed': '无法把消息发送到会话。',
+  'hub.sessions.qwenEndpointDown': '{label}：{name} 上的模型端点无响应或拒绝密钥，请检查 agent.env',
 } satisfies Dict;

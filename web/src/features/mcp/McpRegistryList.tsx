@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { McpProjectOverride, McpRegistryDraftView, McpRegistryMachineOverrideRequest, McpRegistryResponse, McpRegistryServerUpdate, McpRegistryStatus } from '../../api/mcpRegistryTypes';
 import { ApiError, api } from '../../api/client';
 import type { UserProjectView } from '../../api/types';
@@ -29,6 +29,8 @@ interface McpRegistryListProps {
   onProjectOverrideClear: (serverId: string, projectId: string, revision: number) => Promise<McpProjectOverride>;
   onRefreshStatus: () => Promise<void>;
   onMachineOverride: (serverId: string, machineId: string, body: McpRegistryMachineOverrideRequest) => Promise<void>;
+  /** «Настроить сервер» from a session panel: this card is scrolled into view and highlighted. */
+  focusServerId?: string;
 }
 
 export function McpRegistryList(props: McpRegistryListProps) {
@@ -48,6 +50,7 @@ export function McpRegistryList(props: McpRegistryListProps) {
     onProjectOverrideClear,
     onRefreshStatus,
     onMachineOverride,
+    focusServerId,
   } = props;
   const t = useT();
 
@@ -75,6 +78,7 @@ export function McpRegistryList(props: McpRegistryListProps) {
         onProjectOverrideClear={onProjectOverrideClear}
         onRefreshStatus={onRefreshStatus}
         onMachineOverride={onMachineOverride}
+        focusServerId={focusServerId}
       />
       <DraftList drafts={registry.drafts} onContinue={onContinueDraft} />
     </>
@@ -117,6 +121,7 @@ function ServerList({
   onProjectOverrideClear,
   onRefreshStatus,
   onMachineOverride,
+  focusServerId,
 }: {
   servers: McpRegistryResponse['servers'];
   status: McpRegistryStatus;
@@ -130,6 +135,7 @@ function ServerList({
   onProjectOverrideClear: McpRegistryListProps['onProjectOverrideClear'];
   onRefreshStatus: McpRegistryListProps['onRefreshStatus'];
   onMachineOverride: McpRegistryListProps['onMachineOverride'];
+  focusServerId?: string;
 }) {
   return servers.map(server => (
     <ServerRow
@@ -146,6 +152,7 @@ function ServerList({
       onProjectOverrideClear={onProjectOverrideClear}
       onRefreshStatus={onRefreshStatus}
       onMachineOverride={onMachineOverride}
+      focused={server.id === focusServerId}
     />
   ));
 }
@@ -163,6 +170,7 @@ function ServerRow({
   onProjectOverrideClear,
   onRefreshStatus,
   onMachineOverride,
+  focused,
 }: {
   server: McpRegistryResponse['servers'][number];
   status: McpRegistryStatus;
@@ -176,8 +184,15 @@ function ServerRow({
   onProjectOverrideClear: McpRegistryListProps['onProjectOverrideClear'];
   onRefreshStatus: McpRegistryListProps['onRefreshStatus'];
   onMachineOverride: McpRegistryListProps['onMachineOverride'];
+  focused?: boolean;
 }) {
   const t = useT();
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!focused) return;
+    ref.current?.scrollIntoView?.({ block: 'center' });
+    ref.current?.focus({ preventScroll: true });
+  }, [focused]);
   const rename = () => {
     const name = window.prompt(t('mcp.list.server.renamePrompt'), server.name);
     if (!name || name === server.name) return;
@@ -189,7 +204,7 @@ function ServerRow({
   };
 
   return (
-    <article className="mcp-row">
+    <article className={`mcp-row${focused ? ' focused' : ''}`} ref={ref} tabIndex={focused ? -1 : undefined}>
       <div className="mcp-r-top">
         <strong>{server.name}</strong>
         <span className={`pill mcp-status-pill ${mcpStatusTone(server.enabled ? 'enabled' : 'disabled')}`}>{mcpStatusLabel(server.enabled ? 'enabled' : 'disabled')}</span>

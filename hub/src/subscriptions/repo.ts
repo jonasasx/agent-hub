@@ -1,7 +1,7 @@
 // The subscription registry in Postgres (claude-subscriptions design P2). No token ever leaves this module in a view.
 import type { Selectable } from 'kysely';
 import { sql } from 'kysely';
-import { CODEX_SUBSCRIPTIONS_PROTOCOL, SUBSCRIPTIONS_PROTOCOL, type Provider, type SubscriptionView } from '@agent-hub/shared';
+import { CODEX_SUBSCRIPTIONS_PROTOCOL, SUBSCRIPTIONS_PROTOCOL, type SubscriptionProvider, type SubscriptionView } from '@agent-hub/shared';
 import type { Db, SubscriptionsTable } from '../db/db.js';
 
 export type SubscriptionRow = Selectable<SubscriptionsTable>;
@@ -64,14 +64,14 @@ export async function getSubscription(db: Db, userId: string, id: string): Promi
 }
 
 /** The last explicit choice of the user for a provider (claude by default). */
-export async function lastChoiceOf(db: Db, userId: string, provider: Provider = 'claude'): Promise<string | null> {
+export async function lastChoiceOf(db: Db, userId: string, provider: SubscriptionProvider = 'claude'): Promise<string | null> {
   const col = provider === 'codex' ? 'last_codex_subscription_id' : 'last_subscription_id';
   const u = await db.selectFrom('users').select(col).where('id', '=', userId).executeTakeFirst();
   return (u as Record<string, string | null> | undefined)?.[col] ?? null;
 }
 
 /** The default subscription (P2): the last choice while it is active, else the first active one by position. */
-export function defaultOf(subs: SubscriptionMeta[], lastChoiceId: string | null, provider: Provider = 'claude'): SubscriptionMeta | null {
+export function defaultOf(subs: SubscriptionMeta[], lastChoiceId: string | null, provider: SubscriptionProvider = 'claude'): SubscriptionMeta | null {
   const active = subs.filter(s => s.retired_at === null && s.provider === provider);
   return active.find(s => s.id === lastChoiceId) ?? active[0] ?? null;
 }

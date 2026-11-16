@@ -7,7 +7,7 @@ import { useState } from 'react';
 import type { RunnerView } from '../../api/types';
 import type { MessageKey } from '@agent-hub/shared';
 import { t, useT } from '../../i18n';
-import { useStore } from '../../store';
+import { openDraft } from '../workspace/actions';
 import { menuIcon, type MachineMenuIcon } from '../toolwindows/icons';
 import { menuKeys, usePopupMenu } from '../toolwindows/useFlipMenu';
 import { openToolWindow } from '../toolwindows/open';
@@ -40,7 +40,7 @@ interface Item {
 }
 
 const ITEMS: Item[] = [
-  { icon: 'new', text: 'machines.menu.new', needsOnline: true, run: r => useStore.setState({ modal: { type: 'new', runnerId: r.id } }) },
+  { icon: 'new', text: 'machines.menu.new', needsOnline: true, run: r => openDraft(r.id) },
   { icon: 'files', text: 'machines.menu.files', needsOnline: true, run: r => openFilesForMachine(r.id) },
   { icon: 'mcp', text: 'machines.menu.mcp', needsOnline: true, run: r => openMachineSettings(r.id) },
   {

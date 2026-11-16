@@ -1,3 +1,4 @@
+import type { McpServerGatewayIssue } from '@agent-hub/shared';
 import { t } from '../../i18n';
 
 export type McpTransport = 'stdio' | 'http' | 'sse';
@@ -40,6 +41,16 @@ export function mcpErrorMessage(error: unknown, transport: McpTransport): McpErr
 
   const message = details || t('mcp.error.failed');
   return { message, details: message === details ? '' : details };
+}
+
+/** Причина ошибки сервера реестра в панели сессии: the machine gateway's reason, with the machine and the next step. */
+export function mcpGatewayMessage(gateway: McpServerGatewayIssue, machine: string): McpErrorMessage {
+  const details = gateway.error ?? '';
+  if (gateway.status === 'needs-secret') return { message: t('mcp.gateway.needsSecret', { machine }), details };
+  const command = getMissingCommand(details);
+  if (command) return { message: t('mcp.gateway.noCommand', { machine, command }), details };
+  const parsed = mcpErrorMessage(gateway.error, 'http');
+  return { message: t('mcp.gateway.failed', { machine, message: parsed.message }), details: parsed.details };
 }
 
 function errorText(error: unknown): string {

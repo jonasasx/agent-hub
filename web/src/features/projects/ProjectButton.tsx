@@ -6,7 +6,7 @@
  * Requirements: session-project-line; project-auto-detection «Назначение по уверенности и карточка выбора».
  * API: GET /api/projects, PUT /api/sessions/:id/project, POST/DELETE /api/sessions/:id/pin, POST …/project-suggestion.
  */
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import type { ProjectSuggestionAnswer } from '@agent-hub/shared';
 import type { SessionView } from '../../api/types';
 import { api, ApiError } from '../../api/client';
@@ -26,9 +26,9 @@ const PIN = (
 
 const RECENT = 3;
 
-interface Row {
+export interface Row {
   key: string;
-  kind: 'project' | 'create' | 'none';
+  kind: 'project' | 'create' | 'none' | 'auto';
   id: string;
   title: string;
   colorKey: ProjectItem['colorKey'];
@@ -67,7 +67,25 @@ function recentIds(sessions: Record<string, SessionView>, current: string): stri
   return ids;
 }
 
-function Picker({ s, pinned, hubOptions, onDone }: { s: SessionView; pinned: boolean; hubOptions: { projectId: string; name: string }[]; onDone: () => void }) {
+/**
+ * The project list with search: «Предлагает хаб», «Недавние», «Все проекты», «Создать проект «запрос»», `extra` rows (the
+ * draft's «Определить по сообщению»), «Без проекта». `onPick` gets the chosen row; a created project comes as a project row.
+ */
+export function ProjectPicker({
+  listId,
+  current,
+  hubOptions = [],
+  extra = [],
+  onPick,
+  foot,
+}: {
+  listId: string;
+  current: string;
+  hubOptions?: { projectId: string; name: string }[];
+  extra?: Row[];
+  onPick: (row: Row) => void | Promise<void>;
+  foot?: ReactNode;
+}) {
   const tr = useT();
   const dir = useStore(st => st.projectDir);
   const sessions = useStore(st => st.sessions);
@@ -78,7 +96,6 @@ function Picker({ s, pinned, hubOptions, onDone }: { s: SessionView; pinned: boo
   useEffect(() => {
     void loadProjectDir();
   }, []);
-  const current = s.project.id ?? 'none';
   const query = q.trim();
   const real = (dir ?? []).filter(p => p.id !== 'none');
   const byId = new Map(real.map(p => [p.id, p]));
@@ -98,6 +115,7 @@ function Picker({ s, pinned, hubOptions, onDone }: { s: SessionView; pinned: boo
     tail.push({ key: 'create', kind: 'create', id: query, title: tr('projects.suggest.createNamed', { name: query }), colorKey: 'none', path: '', tag: '', archived: false });
   }
   if (dir) {
+    tail.push(...extra);
     tail.push({ key: 'none', kind: 'none', id: 'none', title: tr('projects.none'), colorKey: 'none', path: '', tag: '', archived: false });
   }
   if (tail.length) sections.push({ title: null, rows: tail });
@@ -105,18 +123,13 @@ function Picker({ s, pinned, hubOptions, onDone }: { s: SessionView; pinned: boo
   const cur = Math.min(sel, rows.length - 1);
   const pick = async (row: Row) => {
     setError(null);
-    if (row.kind === 'create') {
-      try {
-        const created = await api.createCatalogProject({ name: row.id });
-        onDone();
-        await moveWithUndo(s, created.id, created.name, pinned);
-      } catch (err) {
-        setError(err instanceof ApiError && err.code === 'name_conflict' ? tr('projects.suggest.taken') : tr('projects.suggest.saveFailed'));
-      }
-      return;
+    if (row.kind !== 'create') return onPick(row);
+    try {
+      const created = await api.createCatalogProject({ name: row.id });
+      await onPick({ ...row, key: `created:${created.id}`, kind: 'project', id: created.id, title: created.name });
+    } catch (err) {
+      setError(err instanceof ApiError && err.code === 'name_conflict' ? tr('projects.suggest.taken') : tr('projects.suggest.saveFailed'));
     }
-    onDone();
-    if (row.id !== current || !pinned) await moveWithUndo(s, row.id, row.title, pinned);
   };
   const onKey = (e: KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
@@ -139,8 +152,8 @@ function Picker({ s, pinned, hubOptions, onDone }: { s: SessionView; pinned: boo
         aria-label={tr('projects.line.searchLabel')}
         role="combobox"
         aria-expanded
-        aria-controls={`proj-list-${s.id}`}
-        aria-activedescendant={rows[cur] ? `proj-${s.id}-${rows[cur].key}` : undefined}
+        aria-controls={`proj-list-${listId}`}
+        aria-activedescendant={rows[cur] ? `proj-${listId}-${rows[cur].key}` : undefined}
         value={q}
         onChange={e => {
           setQ(e.target.value);
@@ -148,7 +161,7 @@ function Picker({ s, pinned, hubOptions, onDone }: { s: SessionView; pinned: boo
         }}
         onKeyDown={onKey}
       />
-      <div className="proj-list" id={`proj-list-${s.id}`} role="listbox" aria-label={tr('projects.line.list')}>
+      <div className="proj-list" id={`proj-list-${listId}`} role="listbox" aria-label={tr('projects.line.list')}>
         {!dir && <div className="hint">{tr('projects.line.loading')}</div>}
         {dir && !rows.length && <div className="hint">{tr('projects.line.nothing')}</div>}
         {sections.map((section, n) => (
@@ -159,11 +172,11 @@ function Picker({ s, pinned, hubOptions, onDone }: { s: SessionView; pinned: boo
               return (
                 <button
                   key={row.key}
-                  id={`proj-${s.id}-${row.key}`}
+                  id={`proj-${listId}-${row.key}`}
                   type="button"
                   role="option"
                   aria-selected={i === cur}
-                  className={`${i === cur ? 'sel' : ''}${row.id === current && row.kind === 'project' ? ' on' : ''}${row.archived ? ' archived' : ''}${row.kind === 'create' ? ' create' : ''}`}
+                  className={`${i === cur ? 'sel' : ''}${row.id === current && row.kind !== 'create' ? ' on' : ''}${row.archived ? ' archived' : ''}${row.kind === 'create' ? ' create' : ''}`}
                   style={{ '--gc': colorVar(row.colorKey) } as CSSProperties}
                   title={row.path || undefined}
                   tabIndex={-1}
@@ -184,20 +197,39 @@ function Picker({ s, pinned, hubOptions, onDone }: { s: SessionView; pinned: boo
           {error}
         </div>
       )}
-      <div className="proj-foot">
-        <button
-          type="button"
-          className="btn"
-          onClick={() => {
-            onDone();
-            void setPinned(s.id, !pinned);
-          }}
-        >
-          {pinned ? tr('projects.line.unpin') : tr('projects.line.pin')}
-        </button>
-        <span className="hint">{tr('projects.line.folderNote')}</span>
-      </div>
+      {foot}
     </>
+  );
+}
+
+function Picker({ s, pinned, hubOptions, onDone }: { s: SessionView; pinned: boolean; hubOptions: { projectId: string; name: string }[]; onDone: () => void }) {
+  const tr = useT();
+  const current = s.project.id ?? 'none';
+  return (
+    <ProjectPicker
+      listId={s.id}
+      current={current}
+      hubOptions={hubOptions}
+      onPick={async row => {
+        onDone();
+        if (row.id !== current || !pinned) await moveWithUndo(s, row.id, row.title, pinned);
+      }}
+      foot={
+        <div className="proj-foot">
+          <button
+            type="button"
+            className="btn"
+            onClick={() => {
+              onDone();
+              void setPinned(s.id, !pinned);
+            }}
+          >
+            {pinned ? tr('projects.line.unpin') : tr('projects.line.pin')}
+          </button>
+          <span className="hint">{tr('projects.line.folderNote')}</span>
+        </div>
+      }
+    />
   );
 }
 

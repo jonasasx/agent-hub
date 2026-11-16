@@ -107,4 +107,7 @@ export default {
   'machines.defaultDir.hint': 'このマシンのセッションはここで開始します。プロジェクトのフォルダーはここからの相対パスで指定します。',
   'machines.defaultDir.failed': '既定のフォルダーを変更できませんでした',
   'machines.menu.defaultDir': '既定のフォルダー…',
+  'machines.qwen.ok': 'エンドポイント利用可',
+  'machines.qwen.down': 'エンドポイントが応答しないか、キーを拒否しています',
+  'machines.qwen.hint': 'ログインなし: アドレスとキーはマシンの agent.env で設定します',
 } satisfies Dict;

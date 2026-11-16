@@ -6,6 +6,8 @@ import { t, useT } from '../../i18n';
 import { useDialog } from '../ui/a11y';
 import { loadSidebar } from '../workspace/actions';
 import { projectError } from './ProjectActions';
+import { loadHiddenGroups } from './hiddenGroups';
+
 export function HiddenProjects({ onClose }: { onClose: () => void }) {
   const tr = useT();
   const [groups, setGroups] = useState<ProjectRef[]>([]);
@@ -25,6 +27,7 @@ export function HiddenProjects({ onClose }: { onClose: () => void }) {
     try {
       await api.hideProjectGroup(id, false);
       setGroups(current => current.filter(p => p.id !== id));
+      void loadHiddenGroups();
     } catch (failure) {
       setError(projectError(failure));
       return;

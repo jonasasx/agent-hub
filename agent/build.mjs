@@ -37,7 +37,7 @@ await build({
   format: 'esm',
   sourcemap: true,
   // ws loads its optional native helpers in try/catch; they are not installed.
-  external: ['@anthropic-ai/claude-agent-sdk', '@openai/codex', 'bufferutil', 'utf-8-validate'],
+  external: ['@anthropic-ai/claude-agent-sdk', '@openai/codex', '@qwen-code/sdk', 'bufferutil', 'utf-8-validate'],
   banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
   logLevel: 'warning',
 });

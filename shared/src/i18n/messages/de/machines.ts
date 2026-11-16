@@ -106,4 +106,7 @@ export default {
   'machines.defaultDir.hint': 'Sitzungen auf dieser Maschine starten hier; der Projektordner wird relativ dazu angegeben.',
   'machines.defaultDir.failed': 'Standardordner konnte nicht geändert werden',
   'machines.menu.defaultDir': 'Standardordner…',
+  'machines.qwen.ok': 'Endpunkt erreichbar',
+  'machines.qwen.down': 'Endpunkt antwortet nicht oder lehnt den Schlüssel ab',
+  'machines.qwen.hint': 'keine Anmeldung: Adresse und Schlüssel stehen in agent.env des Rechners',
 } satisfies Dict;

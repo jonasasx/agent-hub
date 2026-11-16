@@ -297,6 +297,30 @@ describe('CodexProvider', () => {
     expect(server.calls('thread/start')[0]!.dynamicTools).toBeUndefined();
   });
 
+  // Requirement: Снимок контекстного окна, scenario «Ход Codex» (session-context-usage D2)
+  it('hub 1.20: the window fill of the last request at turn end; hub 1.19 and no window: no snapshot', async () => {
+    for (const [hubProtocol, window, expected] of [
+      ['1.20', 475000, true],
+      ['1.19', 475000, false],
+      ['1.20', null, false],
+    ] as const) {
+      const t = setup({ hubProtocol });
+      const { sessionId, server } = await started(t);
+      await t.p.handle(cmd('session.send', { sessionId, text: 'x', promptUuid: randomUUID() }));
+      server.notify('turn/started', { threadId: 'thread-1', turn: { id: 'turn-1' } });
+      server.notify('thread/tokenUsage/updated', { threadId: 'thread-1', turnId: 'turn-1', tokenUsage: { last: { inputTokens: 90000, totalTokens: 95000 }, modelContextWindow: window } });
+      server.notify('turn/completed', { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed', error: null, durationMs: 1 } });
+      await t.tick();
+      const ctx = t.sent.find(m => m.type === 'session.context')?.payload;
+      if (expected) {
+        expect(ctx).toMatchObject({ sessionId, model: 'gpt-test', usedTokens: 95000, windowTokens: 475000, percent: 20 });
+        expect(ctx).not.toHaveProperty('categories');
+      } else {
+        expect(ctx).toBeUndefined();
+      }
+    }
+  });
+
   it('a message: user line with the prompt uuid, turn/start with the policy; partial text; items; result', async () => {
     const t = setup();
     const { sessionId, server } = await started(t, 'bypassPermissions');
@@ -554,6 +578,56 @@ describe('CodexProvider', () => {
     t.service.handlers['account/read'] = () => ({ account: null, requiresOpenaiAuth: true });
     await t.p.handle(cmd('provider.logout', { provider: 'codex' }));
     expect(t.p.status().login).toBe('missing');
+  });
+
+  it('models come from a subscription sign-in when the machine has none; login stays missing', async () => {
+    const state = mkdtempSync(join(tmpdir(), 'ah-codex-state-'));
+    dirs.push(state);
+    const homes = new CodexHomes({ stateDir: state, baseHome: join(state, 'base') });
+    await homes.prepare('11111111-1111-4111-8111-111111111111', '{"v":1}');
+    const t = setup({ homes });
+    t.service.handlers['account/read'] = () => ({ account: null, requiresOpenaiAuth: true });
+    await t.p.handle(cmd('provider.logout', { provider: 'codex' }));
+    expect(t.p.status()).toEqual({ id: 'codex', version: '0.166.0', login: 'missing', models: [{ value: 'gpt-test', displayName: 'GPT Test' }] });
+  });
+
+  it('a limits probe that creates the first subscription home brings the models into the status', async () => {
+    const state = mkdtempSync(join(tmpdir(), 'ah-codex-state-'));
+    dirs.push(state);
+    const homes = new CodexHomes({ stateDir: state, baseHome: join(state, 'base') });
+    const t = setup({ homes });
+    t.service.handlers['account/read'] = () => ({ account: null, requiresOpenaiAuth: true });
+    t.service.handlers['account/rateLimits/read'] = () => ({ rateLimits: { primary: null, secondary: null } });
+    await t.p.handle(cmd('provider.logout', { provider: 'codex' }));
+    expect(t.p.status().models).toBeUndefined();
+    const subscription = { id: '11111111-1111-4111-8111-111111111111', provider: 'codex', token: '{"v":1}' };
+    await t.p.handle(cmd('limits.probe', { subscription }));
+    await t.tick();
+    await t.tick();
+    // the fake app-server is one object for the machine process and the subscription ones, so `login` is not asserted here
+    expect(t.p.status().models).toEqual([{ value: 'gpt-test', displayName: 'GPT Test' }]);
+    expect(t.p.status().login).not.toBe('ok');
+  });
+
+  it('no machine sign-in and no subscription home: no models, as before', async () => {
+    const state = mkdtempSync(join(tmpdir(), 'ah-codex-state-'));
+    dirs.push(state);
+    const homes = new CodexHomes({ stateDir: state, baseHome: join(state, 'base') });
+    const t = setup({ homes });
+    t.service.handlers['account/read'] = () => ({ account: null, requiresOpenaiAuth: true });
+    await t.p.handle(cmd('provider.logout', { provider: 'codex' }));
+    expect(t.p.status()).toEqual({ id: 'codex', version: '0.166.0', login: 'missing' });
+  });
+
+  it('a machine sign-in is enough: the subscription homes are not looked at', async () => {
+    const state = mkdtempSync(join(tmpdir(), 'ah-codex-state-'));
+    dirs.push(state);
+    const homes = new CodexHomes({ stateDir: state, baseHome: join(state, 'base') });
+    const usable = vi.spyOn(homes, 'usableHome');
+    const t = setup({ homes });
+    await t.p.handle(cmd('provider.logout', { provider: 'codex' }));
+    expect(t.p.status().models).toEqual([{ value: 'gpt-test', displayName: 'GPT Test' }]);
+    expect(usable).not.toHaveBeenCalled();
   });
 
   it('R5: a sign-in result without a connection waits for the next welcome and is sent once', async () => {

@@ -1,6 +1,6 @@
 import { Kysely, PostgresDialect, type ColumnType, type Generated } from 'kysely';
 import pg from 'pg';
-import type { McpServerSnapshot, Provider, ProviderStatus } from '@agent-hub/shared';
+import type { McpServerSnapshot, Provider, ProviderStatus, SessionContextPayload } from '@agent-hub/shared';
 
 type Timestamp = ColumnType<Date, Date | string | undefined, Date | string>;
 
@@ -208,6 +208,10 @@ export interface SessionsTable {
   mcp_project_root: ColumnType<string | null, string | null | undefined, string | null>;
   /** `failed` + `needs-auth` of mcp_servers. */
   mcp_problems: ColumnType<number, number | undefined, number>;
+  /** 054 (session-context-usage D3): fill of the context window from the last snapshot; null — none yet. */
+  context_used: ColumnType<number | null, number | null | undefined, number | null>;
+  context_window: ColumnType<number | null, number | null | undefined, number | null>;
+  context_at: ColumnType<Date | null, Date | null | undefined, Date | null>;
   created_at: Generated<Date>;
 }
 
@@ -287,6 +291,13 @@ export interface PermissionRequestsTable {
   answers: Json | null;
 }
 
+/** 054 (session-context-usage D3): the last context-window snapshot of a session (payload without sessionId). */
+export interface SessionContextTable {
+  session_id: string;
+  snapshot: ColumnType<Omit<SessionContextPayload, 'sessionId'>, string, string>;
+  observed_at: Date;
+}
+
 export interface SessionNotesTable {
   id: Generated<string>;
   session_id: string;
@@ -356,6 +367,8 @@ export interface UserPreferencesTable {
   last_provider: Provider | null;
   /** change i18n D4: the interface language of the profile; NULL — the browser language. */
   locale: string | null;
+  /** change session-sleep-controls D1: the default idle timeout of the user's sessions, minutes; NULL — the hub's, 0 — never. */
+  idle_timeout_min: Generated<number | null>;
 }
 export interface ProjectSuggestionsTable {
   user_id: string;
@@ -732,6 +745,7 @@ export interface Database {
   events: EventsTable;
   permission_requests: PermissionRequestsTable;
   session_notes: SessionNotesTable;
+  session_context: SessionContextTable;
   blobs: BlobsTable;
   uploads: UploadsTable;
   blob_owners: BlobOwnersTable;

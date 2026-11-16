@@ -35,6 +35,35 @@ test('список → чат → «назад» → список; a second chat
   await expect(page).toHaveURL('about:blank');
 });
 
+// bug from Ivan: after «Машины» every reload («Обновить» of a new build) opened «Машины» — the settings address stayed
+for (const way of ['назад', '← и закрыть'] as const) {
+  test(`«Машины» → ${way} → чат: the address is the app's, a reload does not open «Настройки»`, async ({ page }) => {
+    await start(page);
+    await page.getByRole('button', { name: 'Профиль' }).click();
+    await page.getByRole('menu', { name: 'Профиль' }).getByRole('menuitem', { name: 'Машины' }).click();
+    const set = page.getByRole('region', { name: 'Настройки' });
+    await expect(set).toBeVisible();
+    await expect(page).toHaveURL(/\/settings\/machines$/);
+    if (way === 'назад') {
+      await page.goBack();
+    } else {
+      await set.getByRole('button', { name: 'К списку настроек' }).click();
+      await expect(page).toHaveURL(/\/settings$/);
+      await set.getByRole('button', { name: 'Закрыть настройки' }).click();
+    }
+    await expect(set).toBeHidden();
+    await expect(list(page)).toBeVisible();
+    await inApp(page);
+    await page.locator('.side-scroll > .srow', { hasText: 'Индексация Notion' }).click();
+    await expect(list(page)).toBeHidden();
+    await inApp(page);
+    await page.reload();
+    await expect(list(page)).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Настройки' })).toHaveCount(0);
+    await inApp(page);
+  });
+}
+
 test('лайтбокс → «назад» → чат → «назад» → список', async ({ page }) => {
   await start(page);
   await page.getByRole('button', { name: /^ещё \d+/ }).click();

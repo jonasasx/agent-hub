@@ -105,4 +105,7 @@ export default {
   'machines.defaultDir.hint': '이 머신의 세션은 여기서 시작됩니다. 프로젝트 폴더는 이 폴더 기준으로 지정합니다.',
   'machines.defaultDir.failed': '기본 폴더를 변경하지 못했습니다',
   'machines.menu.defaultDir': '기본 폴더…',
+  'machines.qwen.ok': '엔드포인트 사용 가능',
+  'machines.qwen.down': '엔드포인트가 응답하지 않거나 키를 거부합니다',
+  'machines.qwen.hint': '로그인 없음: 주소와 키는 머신의 agent.env에 설정합니다',
 } satisfies Dict;

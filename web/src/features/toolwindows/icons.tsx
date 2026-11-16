@@ -138,3 +138,79 @@ const MI: Record<MachineMenuIcon, ReactNode> = {
 };
 
 export const menuIcon = (id: MachineMenuIcon): ReactNode => MI[id];
+
+/** Icons of the profile menu, the settings navigation and Ctrl K commands (change profile-menu-grouping). */
+export type ProfileIcon = 'shield' | 'gear' | 'eyeoff' | 'reset' | 'logout' | 'users' | 'usage' | 'bell' | 'globe' | 'clock' | 'download' | 'theme' | 'sleep';
+
+const PI: Record<ProfileIcon, ReactNode> = {
+  shield: (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" d="M8 1.8 13 3.6v4c0 3-2.1 5.4-5 6.6-2.9-1.2-5-3.6-5-6.6v-4z" />
+    </svg>
+  ),
+  gear: MI.cfg,
+  eyeoff: (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" d="M1.8 8s2.3-4.2 6.2-4.2S14.2 8 14.2 8s-2.3 4.2-6.2 4.2S1.8 8 1.8 8z" />
+      <circle cx="8" cy="8" r="1.8" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" d="m2.5 13.5 11-11" />
+    </svg>
+  ),
+  reset: (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" d="M3 8a5 5 0 1 0 1.5-3.6M3 2.5V5h2.5" />
+    </svg>
+  ),
+  logout: (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" d="M6.5 2.5h-3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h3M10 5l3 3-3 3M13 8H6" />
+    </svg>
+  ),
+  users: (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="6" cy="5.5" r="2.3" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" d="M1.8 13.5a4.2 4.2 0 0 1 8.4 0M10.5 3.4a2.3 2.3 0 0 1 0 4.3M12 9.6a4.2 4.2 0 0 1 2.2 3.9" />
+    </svg>
+  ),
+  usage: (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" d="M3 13.5V9M6.3 13.5V5.5M9.7 13.5V7.5M13 13.5V3" />
+    </svg>
+  ),
+  bell: (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" d="M4 11V7a4 4 0 0 1 8 0v4l1.2 1.5H2.8z" />
+      <path stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" d="M6.6 14.2h2.8" />
+    </svg>
+  ),
+  globe: (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path fill="none" stroke="currentColor" strokeWidth="1.4" d="M2 8h12M8 2c-2.2 2.4-2.2 9.6 0 12M8 2c2.2 2.4 2.2 9.6 0 12" />
+    </svg>
+  ),
+  clock: (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" d="M8 4.5V8l2.3 1.5" />
+    </svg>
+  ),
+  download: (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" d="M8 2.5v7.5M4.8 7 8 10.2 11.2 7M2.5 13.5h11" />
+    </svg>
+  ),
+  theme: (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="5.8" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path fill="currentColor" d="M8 2.2a5.8 5.8 0 0 1 0 11.6z" />
+    </svg>
+  ),
+  sleep: (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" d="M12.8 9.6A5.5 5.5 0 0 1 6.4 3.2a5.5 5.5 0 1 0 6.4 6.4z" />
+    </svg>
+  ),
+};
+
+export const profileIcon = (id: ProfileIcon): ReactNode => PI[id];

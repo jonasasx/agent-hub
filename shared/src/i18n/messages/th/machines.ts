@@ -105,4 +105,7 @@ export default {
   'machines.defaultDir.hint': 'เซสชันบนเครื่องนี้เริ่มที่นี่ โฟลเดอร์โปรเจกต์กำหนดโดยนับจากโฟลเดอร์นี้',
   'machines.defaultDir.failed': 'เปลี่ยนโฟลเดอร์เริ่มต้นไม่สำเร็จ',
   'machines.menu.defaultDir': 'โฟลเดอร์เริ่มต้น…',
+  'machines.qwen.ok': 'เอนด์พอยต์พร้อมใช้งาน',
+  'machines.qwen.down': 'เอนด์พอยต์ไม่ตอบสนองหรือปฏิเสธคีย์',
+  'machines.qwen.hint': 'ไม่ต้องลงชื่อเข้าใช้: ที่อยู่และคีย์อยู่ใน agent.env',
 } satisfies Dict;

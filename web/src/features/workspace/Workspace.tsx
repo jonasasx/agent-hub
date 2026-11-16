@@ -10,13 +10,14 @@ import { Chat, SubagentChat, ModeModelMenu } from '../chat/Chat';
 import { SessionTitle } from '../chat/SessionTitle';
 import { Glyph } from '../sessions/Glyph';
 import { colorVar, displayStatus, runnerIndex, statusText, tabNeedsGlyph } from '../sessions/status';
-import { insertSlot, isFileTab, leaves, parseFileTabId, slotTarget, topRight, zoneBox, zoneHint, zoneOf, type InsertSlot, type LayoutNode, type Zone } from '../layout/layout';
+import { insertSlot, isDraftTab, isFileTab, leaves, parseFileTabId, slotTarget, topRight, zoneBox, zoneHint, zoneOf, type InsertSlot, type LayoutNode, type Zone } from '../layout/layout';
 import { FileIcon, nameKind } from '../files/fileIcons';
 import { FileViewer } from '../files/FileViewer';
 import { useFiles } from '../files/filesStore';
-import { activateTab, closePane, closeTab, dropSplit, dropToPane, focusPane, pinFileTab, setRatio, toggleSingle } from './actions';
+import { activateTab, closePane, closeTab, dropSplit, dropToPane, focusPane, openDraft, pinFileTab, setRatio, toggleSingle } from './actions';
 import { backToList } from './phoneHistory';
 import { useTabTitle } from './tabTitle';
+import { DraftView } from '../newSession/DraftView';
 import { baseName } from '../files/paths';
 import { StripThumb, TabList, useTabStrip } from './TabList';
 import { SUBAGENT_STATUS_LABEL, subStatus, subTitle } from '../subagents/model';
@@ -37,6 +38,12 @@ const ICON_PANE_CLOSE = (
     <path d="M6 6l4 4M10 6l-4 4" />
   </svg>
 );
+const ICON_NEW_TAB = (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
+    <path d="M8 3v10M3 8h10" />
+  </svg>
+);
+
 const ICON_SPLIT = (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
     <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
@@ -192,6 +199,16 @@ function TabBar({ paneId, multi }: { paneId: string; multi: boolean }) {
         {edge.right && <span className="tab-fade r" aria-hidden="true" />}
         <StripThumb strip={tabsRef} edge={edge} />
       </div>
+      <button
+        type="button"
+        className="icon-btn tab-new"
+        title={t('workspace.panes.newTab')}
+        aria-label={t('workspace.panes.newTab')}
+        aria-keyshortcuts="Control+Alt+N"
+        onClick={() => openDraft(undefined, paneId)}
+      >
+        {ICON_NEW_TAB}
+      </button>
       {(edge.left || edge.right) && <TabList paneId={paneId} tabs={pane.tabs} active={pane.active} strip={tabsRef} />}
       {multi && paneId === topRight(layout) && (
         <button type="button" className="icon-btn layout-btn" title={t('workspace.panes.singleTitle')} aria-label={t('workspace.panes.singleLabel')} onClick={toggleSingle}>
@@ -218,6 +235,7 @@ function Leaf({ paneId, multi, phone }: { paneId: string; multi: boolean; phone:
   const focused = useStore(st => st.ws.focus === paneId);
   const session = useStore(st => (pane?.active && !st.tabKinds[pane.active] ? st.sessions[pane.active] : undefined));
   const fileId = pane?.active && isFileTab(pane.active) ? pane.active : null;
+  const draftId = pane?.active && isDraftTab(pane.active) ? pane.active : null;
   const subId = useStore(st => (pane?.active && st.tabKinds[pane.active] === 'subagent' ? pane.active : null));
   const dragSid = useStore(st => st.dragSid);
   const paneCount = useStore(st => leaves(st.ws.layout).length);
@@ -255,7 +273,9 @@ function Leaf({ paneId, multi, phone }: { paneId: string; multi: boolean; phone:
       onDrop={onDrop}
     >
       {!phone && <TabBar paneId={paneId} multi={multi} />}
-      {fileId ? (
+      {draftId ? (
+        <DraftView key={draftId} draftId={draftId} paneId={paneId} />
+      ) : fileId ? (
         <FileViewer key={fileId} tabId={fileId} />
       ) : subId ? (
         <SubagentChat key={subId} id={subId} />
@@ -383,7 +403,9 @@ function PhoneBar() {
             )}
           </>
         ) : (
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub ? t('workspace.panes.subagentTitle', { title: subTitle(sub) }) : ''}</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {sub ? t('workspace.panes.subagentTitle', { title: subTitle(sub) }) : activeId && isDraftTab(activeId) ? t('newSession.title') : ''}
+          </span>
         )}
       </span>
       {s && !sub && <ModeModelMenu s={s} />}

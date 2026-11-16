@@ -214,6 +214,7 @@ export default {
   'hub.sessions.notFound': 'Session introuvable',
   'hub.sessions.notImage': 'Le fichier n’est pas une image PNG, JPEG, GIF ou WebP',
   'hub.sessions.notRunning': 'La session n’exécute pas de tour',
+  'hub.sessions.turnRunning': 'La session exécute un tour ou un travail en arrière-plan : elle ne peut pas être mise en veille maintenant',
   'hub.sessions.noteCrashed': 'Le processus Claude Code a planté',
   'hub.sessions.noteCrashedWith': 'Le processus Claude Code a planté : {error}',
   'hub.sessions.noteDeliveredAfterAll': 'Le message est finalement parvenu à la session : {quote}',
@@ -309,4 +310,5 @@ export default {
   'hub.voiceTalk.long': 'La tâche est longue, je continue et je te préviens quand c’est fini.',
   'hub.voiceTalk.offline': 'La machine de la session est hors ligne.',
   'hub.voiceTalk.failed': 'Impossible d’envoyer le message à la session.',
+  'hub.sessions.qwenEndpointDown': '{label} : le point de terminaison du modèle sur {name} ne répond pas ou refuse la clé. Vérifiez agent.env',
 } satisfies Dict;

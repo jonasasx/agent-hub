@@ -16,6 +16,8 @@ import { sortProjects, type ProjectInfo } from '../projects/projects';
 import { collapseMore, loadMore, openSession, toggleCron, toggleProject } from '../workspace/actions';
 import { ProjectActions } from '../projects/ProjectActions';
 import { NewProjectButton } from '../projects/NewProject';
+import { openHiddenProjects } from '../projects/hiddenGroups';
+import { profileIcon } from '../toolwindows/icons';
 import { useMachineFilter } from '../machines/machineFilter';
 import { PhoneFileTabs } from '../files/PhoneFileTabs';
 import { usePhone } from '../toolwindows/usePhone';
@@ -104,6 +106,7 @@ export function SessionsList() {
   const moreLoading = useStore(s => s.moreLoading);
   const openState = useStore(s => s.openProjects);
   const showCron = useStore(s => s.showCron);
+  const hiddenGroups = useStore(s => s.hiddenGroups);
   const ws = useStore(s => s.ws);
   const filter = useMachineFilter(s => s.runnerId);
   const setFilter = useMachineFilter(s => s.set);
@@ -178,6 +181,17 @@ export function SessionsList() {
       <h2 className="sec-h" id="sidebar-projects-heading" tabIndex={-1}>
         {t('workspace.sidebar.projects')}
         <span className="sp" />
+        {hiddenGroups > 0 && (
+          <button
+            type="button"
+            className="sec-ic"
+            aria-label={t('workspace.sidebar.hiddenGroups', { count: hiddenGroups })}
+            title={t('workspace.sidebar.hiddenGroups', { count: hiddenGroups })}
+            onClick={openHiddenProjects}
+          >
+            {profileIcon('eyeoff')}
+          </button>
+        )}
         <NewProjectButton />
         <button type="button" onClick={() => void toggleCron()} aria-pressed={showCron}>
           {showCron ? t('workspace.sidebar.hideCron') : t('workspace.sidebar.showCron')}

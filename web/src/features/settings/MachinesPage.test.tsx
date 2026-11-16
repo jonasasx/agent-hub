@@ -44,6 +44,27 @@ describe('MachinesPage', () => {
     expect(screen.getByText('Отключённые')).toBeInTheDocument();
   });
 
+  // Change qwen-provider: the status of the endpoint, no sign-in buttons
+  it('a machine with Qwen shows the endpoint status without buttons of sign-in', async () => {
+    mockFetch({
+      'GET /api/runners': () => ({
+        status: 200,
+        body: {
+          runners: [
+            runner({ id: 'gpu', name: 'GPU', state: 'active', providers: [{ id: 'qwen', version: '0.27.4', login: 'ok' }] }),
+            runner({ id: 'bad', name: 'Bad', state: 'active', providers: [{ id: 'qwen', version: '0.27.4', login: 'rejected' }] }),
+          ],
+          agentVersion: null,
+        },
+      }),
+    });
+    render(<MachinesPage />);
+    await screen.findByRole('listitem', { name: 'GPU' });
+    expect(within(card('GPU')).getByText('эндпоинт доступен')).toBeInTheDocument();
+    expect(within(card('GPU')).queryByRole('button', { name: /Войти/ })).not.toBeInTheDocument();
+    expect(within(card('Bad')).getByText('эндпоинт не отвечает или не принимает ключ')).toBeInTheDocument();
+  });
+
   // Requirement (runner-enrollment): Запуск под root
   it('a machine whose agent runs as root shows the bypassPermissions warning; others do not', async () => {
     mockFetch({

@@ -4,6 +4,9 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useStore } from '../../store';
 import { RUNNERS, mockFetch, resetStore, session } from '../../test/factories';
+import { defaultDock } from '../toolwindows/dock';
+import { useDock } from '../toolwindows/useDock';
+import { openSession } from '../workspace/actions';
 import { QuickSearch } from './QuickSearch';
 import { hitsOf, snippetParts } from './snippet';
 
@@ -105,6 +108,98 @@ describe('QuickSearch', () => {
   it('the placeholder names the text of the replies', () => {
     mockFetch({ '/api/search': () => ({ status: 200, body: [] }) });
     render(<QuickSearch onClose={() => undefined} />);
-    expect(screen.getByRole('combobox')).toHaveAttribute('placeholder', 'Название, проект или текст реплики…');
+    expect(screen.getByRole('combobox')).toHaveAttribute('placeholder', 'Название, проект или текст реплики… > — команды');
+  });
+});
+
+describe('QuickSearch «>» commands', () => {
+  beforeEach(() => {
+    resetStore();
+    useStore.setState({ runners: RUNNERS });
+    useDock.setState({ dock: defaultDock(), phoneWin: null });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  function withActive(over: Parameters<typeof session>[0] = {}) {
+    const s = session(over);
+    useStore.getState().upsertSessions([s]);
+    openSession(s.id);
+    return s;
+  }
+
+  it('Поиск «>сон»: the setting with its page and the sleep action, no «>» request to /api/search', async () => {
+    const calls = mockFetch({ '/api/sessions/': () => ({ status: 200, body: { events: [], before: null } }) });
+    withActive();
+    render(<QuickSearch onClose={() => undefined} />);
+    await userEvent.type(screen.getByRole('combobox'), '>сон');
+    const idle = screen.getByRole('option', { name: /Сон: таймаут сессий по умолчанию/ });
+    expect(within(idle).getByText('Сессии')).toBeInTheDocument();
+    expect(within(idle).getByText('параметр')).toBeInTheDocument();
+    expect(within(screen.getByRole('option', { name: /Отправить в сон текущую сессию/ })).getByText('действие')).toBeInTheDocument();
+    await new Promise(r => setTimeout(r, 200));
+    // the empty query on open lists recent sessions; a «>» query never goes to the hub
+    expect(calls.some(c => c.url.startsWith('/api/search?q=%3E'))).toBe(false);
+  });
+
+  it('Переход к параметру: the dialog closes, /settings/sessions opens', async () => {
+    mockFetch({});
+    const onClose = vi.fn();
+    render(<QuickSearch onClose={onClose} />);
+    await userEvent.type(screen.getByRole('combobox'), '>таймаут');
+    await userEvent.click(screen.getByRole('option', { name: /Сон: таймаут сессий по умолчанию/ }));
+    expect(onClose).toHaveBeenCalled();
+    expect(useStore.getState().settings).toBe('sessions');
+    expect(window.location.pathname).toBe('/settings/sessions');
+  });
+
+  it('Усыпить текущую сессию: POST /api/sessions/<id>/sleep, the dialog closes', async () => {
+    const calls = mockFetch({
+      '/api/sessions/': () => ({ status: 200, body: { events: [], before: null } }),
+      'POST /api/sessions/': () => ({ status: 200, body: {} }),
+    });
+    const s = withActive();
+    const onClose = vi.fn();
+    render(<QuickSearch onClose={onClose} />);
+    await userEvent.type(screen.getByRole('combobox'), '>сон');
+    await userEvent.click(screen.getByRole('option', { name: /Отправить в сон текущую сессию/ }));
+    expect(onClose).toHaveBeenCalled();
+    await waitFor(() => expect(calls.some(c => c.method === 'POST' && c.url === `/api/sessions/${s.id}/sleep`)).toBe(true));
+  });
+
+  it('Нет открытой сессии: no sleep action without a session or for a sleeping one', async () => {
+    mockFetch({ '/api/sessions/': () => ({ status: 200, body: { events: [], before: null } }) });
+    const view = render(<QuickSearch onClose={() => undefined} />);
+    await userEvent.type(screen.getByRole('combobox'), '>сон');
+    expect(screen.getByRole('option', { name: /Сон: таймаут/ })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /Отправить в сон/ })).toBeNull();
+    view.unmount();
+    withActive({ status: 'sleeping', processAlive: false });
+    render(<QuickSearch onClose={() => undefined} />);
+    await userEvent.type(screen.getByRole('combobox'), '>сон');
+    expect(screen.queryByRole('option', { name: /Отправить в сон/ })).toBeNull();
+  });
+
+  it('Сброс раскладки с подтверждением: the first select arms, the second resets and closes', async () => {
+    mockFetch({});
+    useDock.getState().toggle('sessions');
+    const onClose = vi.fn();
+    render(<QuickSearch onClose={onClose} />);
+    await userEvent.type(screen.getByRole('combobox'), '>раскладк');
+    await userEvent.click(screen.getByRole('option', { name: /Сбросить раскладку окон/ }));
+    expect(useDock.getState().dock).not.toEqual(defaultDock());
+    expect(onClose).not.toHaveBeenCalled();
+    const armed = screen.getByRole('option', { name: /Выберите ещё раз/ });
+    expect(armed).toHaveClass('armed');
+    await userEvent.keyboard('{Enter}');
+    expect(useDock.getState().dock).toEqual(defaultDock());
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('Обычный поиск: without «>» the hub is asked as before', async () => {
+    const calls = mockFetch({ '/api/search': () => ({ status: 200, body: [] }) });
+    render(<QuickSearch onClose={() => undefined} />);
+    await userEvent.type(screen.getByRole('combobox'), 'сон');
+    await waitFor(() => expect(calls.some(c => c.url.startsWith('/api/search?q=%D1%81%D0%BE%D0%BD'))).toBe(true));
+    expect(screen.queryByRole('option', { name: /Сон: таймаут/ })).toBeNull();
   });
 });

@@ -214,6 +214,7 @@ export default {
   'hub.sessions.notFound': 'セッションが見つかりません',
   'hub.sessions.notImage': 'PNG、JPEG、GIF、WebPの画像ではありません',
   'hub.sessions.notRunning': 'セッションはターンを実行していません',
+  'hub.sessions.turnRunning': 'セッションはターンまたはバックグラウンド処理を実行中のため、今はスリープできません',
   'hub.sessions.noteCrashed': 'Claude Codeのプロセスがクラッシュしました',
   'hub.sessions.noteCrashedWith': 'Claude Codeのプロセスがクラッシュしました: {error}',
   'hub.sessions.noteDeliveredAfterAll': 'メッセージは結局セッションに届いていました: {quote}',
@@ -305,4 +306,5 @@ export default {
   'hub.voiceTalk.long': '長いタスクなので続けます。終わったらお知らせします。',
   'hub.voiceTalk.offline': 'セッションのマシンがオフラインです。',
   'hub.voiceTalk.failed': 'セッションにメッセージを送れませんでした。',
+  'hub.sessions.qwenEndpointDown': '{label}: {name} のモデルエンドポイントが応答しないか、キーを拒否しています。agent.env を確認してください',
 } satisfies Dict;

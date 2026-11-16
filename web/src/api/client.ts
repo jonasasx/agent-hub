@@ -1,7 +1,7 @@
 // HTTP client for the hub API (design.md D10).
 import type {
   AdminUserView,
-  ExtraProvider,
+  DeviceLoginProvider,
   Provider,
   ProviderLoginStartView,
   CodexLoginRequest,
@@ -34,6 +34,7 @@ import type {
   PermissionView,
   ProjectSessionsResponse,
   PutLayoutResponse,
+  SessionPreferences,
   SessionView,
   SidebarResponse,
   SubagentView,
@@ -181,6 +182,9 @@ export const api = {
   /** GET /api/voice/talk — the ElevenLabs conversation link and the hub's token (change voice-conversation, D1). */
   voiceTalk: (sessionId: string) => request<VoiceTalkResponse>(`/api/voice/talk?session=${enc(sessionId)}`),
   setLocale: (locale: Locale | null) => request<void>('/api/preferences/locale', json('PUT', { locale })),
+  /** «Настройки → Сессии»: the user's default idle timeout (change session-sleep-controls). */
+  getSessionPreferences: () => request<SessionPreferences>('/api/preferences/sessions'),
+  setSessionPreferences: (idleTimeoutMin: number | null) => request<SessionPreferences>('/api/preferences/sessions', json('PUT', { idleTimeoutMin })),
   desktopInfo: () => request<import('@agent-hub/shared').DesktopInfo>('/api/desktop/info'),
   sidebar: (cron = false) => request<SidebarResponse>(`/api/sidebar?cron=${cron ? 1 : 0}`),
   /** keycloak-auth D7: `redirect` — the provider's end_session_endpoint, or `/`. */
@@ -217,6 +221,8 @@ export const api = {
   events: (id: string, before: string | null, limit = 200) => request<EventsPage>(`/api/sessions/${enc(id)}/events?limit=${limit}${before ? `&before=${enc(before)}` : ''}`),
   /** Change `subagents` (design S7): the registry of a session, one row, the transcript of a subagent by pages. */
   subagents: (sessionId: string) => request<SubagentsResponse>(`/api/sessions/${enc(sessionId)}/subagents`),
+  /** Change `session-context-usage` (D4): the breakdown of the last context-window snapshot. */
+  sessionContext: (id: string) => request<import('@agent-hub/shared').SessionContextResponse>(`/api/sessions/${enc(id)}/context`),
   subagent: (id: string) => request<SubagentView>(`/api/subagents/${enc(id)}`),
   subagentEvents: (id: string, before: string | null, limit = 200) => request<EventsPage>(`/api/subagents/${enc(id)}/events?limit=${limit}${before ? `&before=${enc(before)}` : ''}`),
   createSession: (body: CreateSessionRequest & { attachments?: AttachmentRef[] }) => request<SessionView>('/api/sessions', json('POST', body)),
@@ -232,6 +238,8 @@ export const api = {
     request<{ session: SessionView }>(`/api/sessions/${enc(id)}/messages`, json('POST', { text, clientUuid, ...(force ? { force: true } : {}), ...(attachments.length ? { attachments } : {}) })),
   wake: (id: string, force = false) => request<{ session: SessionView }>(`/api/sessions/${enc(id)}/wake`, json('POST', force ? { force: true } : {})),
   interrupt: (id: string) => request<{ session: SessionView }>(`/api/sessions/${enc(id)}/interrupt`, json('POST', {})),
+  /** «Усыпить сейчас»: 409 turn_running while a turn or background work runs (change session-sleep-controls). */
+  sleepSession: (id: string) => request<{ session: SessionView }>(`/api/sessions/${enc(id)}/sleep`, json('POST', {})),
   patchSession: (id: string, body: PatchSessionRequest) => request<SessionView>(`/api/sessions/${enc(id)}`, json('PATCH', body)),
   regenerateSessionTitle: (id: string) => request<SessionView>(`/api/sessions/${enc(id)}/title/regenerate`, json('POST', {})),
   /** `extra`: the answers of an AskUserQuestion card, the comment of «Продолжить планирование» (M4b contract). */
@@ -255,10 +263,10 @@ export const api = {
   enrollCode: (id: string) => request<EnrollCodeResponse>(`/api/runners/${enc(id)}/enroll-code`, json('POST', {})),
   disableRunner: (id: string) => request<RunnerDetail>(`/api/runners/${enc(id)}/disable`, json('POST', {})),
   // agent-providers: the device-code sign-in of a machine's provider
-  providerLogin: (id: string, provider: ExtraProvider) => request<ProviderLoginStartView>(`/api/runners/${enc(id)}/providers/${provider}/login`, json('POST', {})),
+  providerLogin: (id: string, provider: DeviceLoginProvider) => request<ProviderLoginStartView>(`/api/runners/${enc(id)}/providers/${provider}/login`, json('POST', {})),
   codexLogin: (body: CodexLoginRequest) => request<ProviderLoginStartView>('/api/subscriptions/codex-login', json('POST', body)),
-  providerLoginCancel: (id: string, provider: ExtraProvider, loginId: string) => request<void>(`/api/runners/${enc(id)}/providers/${provider}/login/${enc(loginId)}`, { method: 'DELETE' }),
-  providerLogout: (id: string, provider: ExtraProvider) => request<void>(`/api/runners/${enc(id)}/providers/${provider}/logout`, json('POST', {})),
+  providerLoginCancel: (id: string, provider: DeviceLoginProvider, loginId: string) => request<void>(`/api/runners/${enc(id)}/providers/${provider}/login/${enc(loginId)}`, { method: 'DELETE' }),
+  providerLogout: (id: string, provider: DeviceLoginProvider) => request<void>(`/api/runners/${enc(id)}/providers/${provider}/logout`, json('POST', {})),
   adminUsers: () => request<AdminUsersResponse>('/api/admin/users'),
   setUserEnabled: (id: string, enabled: boolean) => request<AdminUserView>(`/api/admin/users/${enc(id)}/${enabled ? 'enable' : 'disable'}`, json('POST', {})),
   invites: () => request<InvitesResponse>('/api/admin/invites'),

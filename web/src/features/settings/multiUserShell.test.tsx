@@ -9,7 +9,8 @@ import { App } from '../../App';
 import { useStore } from '../../store';
 import { mcpImportPreview, mockFetch, resetStore, runner, session } from '../../test/factories';
 import { ClaudeLoginBanner } from '../chat/Chat';
-import { NewSessionModal } from '../newSession/NewSessionModal';
+import { DraftView } from '../newSession/DraftView';
+import { openDraft } from '../workspace/actions';
 
 class FakeSocket {
   static last: FakeSocket | null = null;
@@ -114,7 +115,8 @@ describe('multi-user shell', () => {
     expect(screen.getByText('Машина подключилась')).toBeInTheDocument();
     act(() => FakeSocket.last!.emit({ type: 'runner.enroll', runnerId: 'r-a', stage: 'ready', runner: active }));
     await user.click(await screen.findByRole('button', { name: 'Начать первую сессию' }));
-    expect(screen.getByRole('dialog', { name: 'Новая сессия' })).toBeInTheDocument();
+    expect(await screen.findByLabelText('Первое сообщение')).toHaveFocus();
+    expect(screen.queryByRole('dialog', { name: 'Новая сессия' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Каталог')).not.toBeInTheDocument();
     expect(calls.filter(c => c.url === '/api/runners' && c.method === 'POST')).toHaveLength(1);
   });
@@ -169,7 +171,7 @@ describe('multi-user shell', () => {
     expect(window.location.pathname).toBe('/settings/subscriptions');
     expect(await screen.findByRole('heading', { level: 2, name: 'Подписки' })).toBeInTheDocument();
     const nav = screen.getByRole('navigation', { name: 'Разделы настроек' });
-    expect([...nav.querySelectorAll('button')].map(b => b.textContent)).toEqual(['Машины', 'Подписки', 'Расход', 'Безопасность', 'Уведомления', 'Язык']);
+    expect([...nav.querySelectorAll('button')].map(b => b.textContent)).toEqual(['Машины', 'Подписки', 'Расход', 'Сессии', 'Уведомления', 'Язык', 'Безопасность']);
     await user.click(screen.getByRole('button', { name: 'Расход' }));
     expect(window.location.pathname).toBe('/settings/usage');
     expect(await screen.findByRole('heading', { level: 2, name: 'Расход' })).toBeInTheDocument();
@@ -250,7 +252,8 @@ describe('multi-user shell', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('«Начать первую сессию»: the machine chosen, no folder field; a disabled machine is not offered', () => {
+  it('«Начать первую сессию»: the machine chosen, no folder field; a disabled machine is not offered', async () => {
+    mockFetch({});
     useStore.setState({
       runners: [
         runner({ id: 'old', name: 'Старый', state: 'disabled', online: false }),
@@ -258,11 +261,12 @@ describe('multi-user shell', () => {
         runner({ id: 'r-a', name: 'Ноутбук', os: 'macOS 15.1', defaultDir: null, homeDir: '/Users/bob', state: 'active' }),
       ],
     });
-    render(<NewSessionModal preset={{ runnerId: 'r-a', first: true }} onClose={() => undefined} />);
-    expect(screen.getByRole('radio', { name: /Ноутбук/ })).toHaveAttribute('aria-checked', 'true');
-    expect(screen.queryByRole('radio', { name: /Старый/ })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Каталог')).not.toBeInTheDocument();
-    expect(screen.getByText('Выберите машину и проект — каталог запуска задаёт проект.')).toBeInTheDocument();
+    act(() => openDraft('r-a'));
+    const ws = useStore.getState().ws;
+    render(<DraftView draftId={ws.panes[ws.focus]!.active!} paneId={ws.focus} />);
     expect(screen.getByLabelText('Первое сообщение')).toHaveFocus();
+    await userEvent.click(screen.getByRole('button', { name: 'Машина: Ноутбук' }));
+    expect(screen.queryByRole('menuitemradio', { name: /Старый/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Каталог')).not.toBeInTheDocument();
   });
 });

@@ -1,5 +1,5 @@
 // MCP snapshots in the hub's database (mcp-management design M6) and the views of the panel and the machine block (M8).
-// Requirements: Статус MCP сессии; Отметка проблем MCP; MCP спящей сессии; MCP машины; Совместимость управления MCP.
+// Requirements: Статус MCP сессии; Причина ошибки сервера реестра в панели сессии; Отметка проблем MCP; MCP спящей сессии; MCP машины; Совместимость управления MCP.
 import {
   MCP_AUTH_CONTROLS_PROTOCOL,
   MCP_PROTOCOL,
@@ -9,6 +9,7 @@ import {
   type McpAuthFlowView,
   type McpMachineView,
   type McpPendingAction,
+  type McpServerGatewayIssue,
   type McpServerSnapshot,
   type McpServerView,
   type McpSessionView,
@@ -94,9 +95,10 @@ export function canAuthOf(s: Pick<McpServerSnapshot, 'transport'>): boolean {
   return s.transport === 'http' || s.transport === 'sse';
 }
 
-export function toServerView(s: McpServerSnapshot, st?: ServerState): McpServerView {
+export function toServerView(s: McpServerSnapshot, st?: ServerState, gateway?: McpServerGatewayIssue): McpServerView {
   return {
     ...s,
+    ...(gateway && s.status === 'failed' ? { gateway } : {}),
     ...(st?.pending ? { pendingAction: st.pending } : {}),
     ...(st?.lastError ? { lastError: st.lastError } : {}),
     ...(st?.lastErrorI18n ? { lastErrorI18n: st.lastErrorI18n } : {}),
@@ -120,7 +122,15 @@ export interface SessionMcpRow {
 /** The panel of a session (M8). `protocol` — of its machine's agent; `online` — the agent is connected. */
 export function toSessionMcpView(
   row: SessionMcpRow,
-  o: { protocol: string | null; online: boolean; states?: ReadonlyMap<string, ServerState>; flows?: McpAuthFlowView[]; waking?: boolean },
+  o: {
+    protocol: string | null;
+    online: boolean;
+    states?: ReadonlyMap<string, ServerState>;
+    flows?: McpAuthFlowView[];
+    waking?: boolean;
+    /** The gateway issues of the session's machine by registry server name. */
+    gateway?: ReadonlyMap<string, McpServerGatewayIssue>;
+  },
 ): McpSessionView {
   const servers = rowsOf(row.mcp_servers);
   const outdated = !protocolAtLeast(o.protocol, MCP_PROTOCOL);
@@ -131,7 +141,7 @@ export function toSessionMcpView(
     live: row.process_alive && o.online,
     observedAt: row.mcp_observed_at ? row.mcp_observed_at.toISOString() : null,
     ...(row.mcp_project_root ? { projectRoot: row.mcp_project_root } : {}),
-    servers: servers.map(s => toServerView(s, o.states?.get(s.name))),
+    servers: servers.map(s => toServerView(s, o.states?.get(s.name), o.gateway?.get(s.name))),
     authFlows: o.flows ?? [],
     waking: o.waking ?? false,
     authControls: protocolAtLeast(o.protocol, MCP_AUTH_CONTROLS_PROTOCOL),
@@ -168,4 +178,30 @@ export function toMachineMcpView(
     online: o.online,
     authControls: protocolAtLeast(row.protocol_version, MCP_AUTH_CONTROLS_PROTOCOL),
   };
+}
+
+/**
+ * Причина ошибки сервера реестра в панели сессии: the freshest gateway status per registry server name on the session's
+ * machine (the machine-wide process or this session's), kept only when it is `failed`/`needs-secret` — a newer `ready`
+ * hides an older failure.
+ */
+export async function gatewayIssues(db: Db, s: { id: string; user_id: string; runner_id: string }): Promise<Map<string, McpServerGatewayIssue>> {
+  const rows = await db
+    .selectFrom('mcp_gateway_statuses')
+    .innerJoin('mcp_registry_servers', 'mcp_registry_servers.id', 'mcp_gateway_statuses.server_id')
+    .select(['mcp_registry_servers.name', 'mcp_gateway_statuses.server_id', 'mcp_gateway_statuses.status', 'mcp_gateway_statuses.error', 'mcp_gateway_statuses.observed_at'])
+    .where('mcp_registry_servers.user_id', '=', s.user_id)
+    .where('mcp_gateway_statuses.machine_id', '=', s.runner_id)
+    .where(eb => eb.or([eb('mcp_gateway_statuses.session_id', 'is', null), eb('mcp_gateway_statuses.session_id', '=', s.id)]))
+    .orderBy('mcp_gateway_statuses.observed_at', 'desc')
+    .execute();
+  const seen = new Set<string>();
+  const issues = new Map<string, McpServerGatewayIssue>();
+  for (const r of rows) {
+    if (seen.has(r.name)) continue;
+    seen.add(r.name);
+    if (r.status !== 'failed' && r.status !== 'needs-secret') continue;
+    issues.set(r.name, { serverId: r.server_id, status: r.status, error: r.error, observedAt: r.observed_at.toISOString() });
+  }
+  return issues;
 }

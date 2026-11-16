@@ -19,8 +19,8 @@ import { providerModels } from '../newSession/ProviderField';
 import { projectKey, useStore } from '../../store';
 import { hubText, t as tr, useT } from '../../i18n';
 import { Glyph } from '../sessions/Glyph';
-import { childrenWorking, clockLabel, colorVar, displayStatus, externalText, isReadOnly, readOnlyText, runnerIndex, sleepsInMin, SOURCE_LABEL, statusText } from '../sessions/status';
-import { cancelResume, confirmResume, decide, idleLabel, interrupt, loadOlder, retryLog, openSession, patchSession, sendMessage, wake } from '../workspace/actions';
+import { childrenWorking, clockLabel, colorVar, displayStatus, externalText, isReadOnly, readOnlyText, runnerIndex, sleepNowState, sleepsInMin, SOURCE_LABEL, statusText } from '../sessions/status';
+import { cancelResume, confirmResume, decide, idleLabel, interrupt, loadOlder, retryLog, openSession, patchSession, sendMessage, sleepSession, wake } from '../workspace/actions';
 import { ChatItemView, ItemBoundary } from './ChatItems';
 import { AgentProvider } from './agentName';
 import { ProviderIcon } from './ProviderIcon';
@@ -49,6 +49,7 @@ import { McpButton, McpMenuItem, McpPanelHost } from '../mcp/McpViews';
 import { ICON_FOLDER_BTN } from '../files/fileIcons';
 import { openFilesForSession } from '../files/open';
 import { requestRestart } from './restart';
+import { ContextRing } from './ContextUsage';
 
 /**
  * Current time for «уснёт через N мин» (D11, M2.1): N = ceil((sleepsAt − now) / 1 min), so the component re-renders
@@ -143,8 +144,8 @@ function Banner({ s }: { s: SessionView }) {
 export function ClaudeLoginBanner({ s }: { s: SessionView }) {
   const t = useT();
   const runner = useStore(st => st.runners.find(r => r.id === s.runnerId));
-  // a Codex session does not need the machine's Claude login (provider-parity)
-  if (s.provider === 'codex' || !runner || !needsClaudeLogin(runner)) return null;
+  // a Codex or Qwen session does not need the machine's Claude login (provider-parity)
+  if ((s.provider ?? 'claude') !== 'claude' || !runner || !needsClaudeLogin(runner)) return null;
   return (
     <div className="banner warn" role="status">
       <span className="g-perm" aria-hidden="true">
@@ -193,6 +194,7 @@ function IdleControl({ s }: { s: SessionView }) {
   // one source for the label and the checked item: the timeout the hub applies now
   const current = s.effectiveIdleTimeoutMin;
   const label = mins !== null ? t('chat.idle.sleepsIn', { mins }) : current === 0 ? t('chat.idle.never') : t('chat.idle.after', { label: idleLabel(current) });
+  const sleepNow = useStore(st => sleepNowState(s, runnerIndex(st.runners)));
   return (
     <span ref={box} style={{ position: 'relative' }}>
       ·{' '}
@@ -217,9 +219,34 @@ function IdleControl({ s }: { s: SessionView }) {
               {m === 0 ? t('chat.idle.never') : t('chat.idle.choice', { label: idleLabel(m) })}
             </button>
           ))}
+          {sleepNow !== 'hidden' && <SleepNowItem s={s} busy={sleepNow === 'busy'} onPick={() => setOpen(false)} />}
         </div>
       )}
     </span>
+  );
+}
+
+/** «Усыпить сейчас» under the idle timeouts and in the phone «⋯»; while work runs it is disabled with the reason. */
+function SleepNowItem({ s, busy, onPick }: { s: SessionView; busy: boolean; onPick: () => void }) {
+  const t = useT();
+  return (
+    <>
+      <div className="m-sep" role="separator" />
+      <button
+        type="button"
+        role="menuitem"
+        className="btn menu-sleep"
+        disabled={busy}
+        title={busy ? t('chat.idle.sleepNowBusy') : undefined}
+        onClick={() => {
+          onPick();
+          void sleepSession(s.id);
+        }}
+      >
+        {t('chat.idle.sleepNow')}
+      </button>
+      {busy && <span className="hint sub-why">{t('chat.idle.sleepNowBusy')}</span>}
+    </>
   );
 }
 
@@ -236,6 +263,7 @@ export function ModeModelMenu({ s }: { s: SessionView }) {
   const ro = useStore(st => isReadOnly(s, runnerIndex(st.runners)));
   const offline = useStore(st => displayStatus(s, runnerIndex(st.runners)) === 'offline');
   const restartWhy = offline ? t('chat.restart.offline') : ro ? t('chat.restart.readOnly') : undefined;
+  const sleepNow = useStore(st => sleepNowState(s, runnerIndex(st.runners)));
   return (
     <span className="ctl-more" ref={box}>
       <button type="button" className="icon-btn" aria-haspopup="menu" aria-expanded={open} aria-label={t('chat.menu.label')} title={t('chat.menu.label')} onClick={() => setOpen(!open)}>
@@ -283,6 +311,11 @@ export function ModeModelMenu({ s }: { s: SessionView }) {
                   ))}
                 </select>
               </label>
+            )}
+            {sleepNow !== 'hidden' && (
+              <div className="phone-only menu-sleep-box">
+                <SleepNowItem s={s} busy={sleepNow === 'busy'} onPick={() => setOpen(false)} />
+              </div>
             )}
           </div>
         </div>
@@ -558,6 +591,7 @@ function Composer({ s, paneId }: { s: SessionView; paneId: string }) {
                 ) : (
                   <span className="pill narrow-only">{s.permissionMode}</span>
                 )}
+                <ContextRing s={s} busy={disabled || st === 'working' || st === 'permission'} />
               </div>
               <div className="left">
                 {/* the phone has one main button: «Прервать» while the turn runs and the field is empty, else «Отправить» */}

@@ -123,22 +123,41 @@ export function needsMe(s: SessionView, runners: RunnerIndex): boolean {
   return waitsForUser(s, runners[s.runnerId]?.online === true);
 }
 
+/** «Сейчас»: waits for the user, works, or is awake waiting for input (session-sleep-controls D5). */
 export function isNow(s: SessionView, runners: RunnerIndex): boolean {
   const st = displayStatus(s, runners);
-  return needsMe(s, runners) || st === 'working' || st === 'external';
+  return needsMe(s, runners) || st === 'working' || st === 'external' || (st === 'waiting' && s.processAlive);
+}
+
+/**
+ * «Усыпить сейчас» (session-sleep-controls D3): `ready` for an awake session waiting for input or a permission, `busy` while
+ * a turn, a subagent, a background task or a hub child runs (the hub answers 409), `hidden` for anything else.
+ */
+export function sleepNowState(s: SessionView, runners: RunnerIndex): 'ready' | 'busy' | 'hidden' {
+  if (!s.processAlive || isReadOnly(s, runners)) return 'hidden';
+  const st = displayStatus(s, runners);
+  if (st === 'working') return 'busy';
+  return st === 'waiting' || st === 'permission' ? 'ready' : 'hidden';
 }
 
 const time = (iso: string | null) => (iso ? Date.parse(iso) : 0);
 
+/** Group of «Сейчас»: 0 — waits for the user, 1 — works, 2 — awake and waiting for input. */
+function nowRank(s: SessionView, runners: RunnerIndex): number {
+  if (needsMe(s, runners)) return 0;
+  const st = displayStatus(s, runners);
+  return st === 'working' || st === 'external' ? 1 : 2;
+}
+
 /**
- * «Сейчас»: waiting for the user first, then working; inside — the freshest first. Cron hidden unless shown. Sessions
- * a hub session started (hub-subagents D10) are not listed — the hub does not send them in /api/sidebar, but the
- * socket does — except one that asks for a permission.
+ * «Сейчас»: waiting for the user first, then working, then the awake ones; inside — the freshest first. Cron hidden
+ * unless shown. Sessions a hub session started (hub-subagents D10) are not listed — the hub does not send them in
+ * /api/sidebar, but the socket does — except one that asks for a permission.
  */
 export function nowList(sessions: SessionView[], runners: RunnerIndex, showCron = false): SessionView[] {
   return sessions
     .filter(s => (showCron || !s.isCron) && isNow(s, runners) && (!s.spawnedBy || displayStatus(s, runners) === 'permission'))
-    .sort((a, b) => Number(needsMe(b, runners)) - Number(needsMe(a, runners)) || time(b.lastEventAt ?? b.createdAt) - time(a.lastEventAt ?? a.createdAt));
+    .sort((a, b) => nowRank(a, runners) - nowRank(b, runners) || time(b.lastEventAt ?? b.createdAt) - time(a.lastEventAt ?? a.createdAt));
 }
 
 /** Glyph shown in a tab only when an action is needed or a turn is running. */

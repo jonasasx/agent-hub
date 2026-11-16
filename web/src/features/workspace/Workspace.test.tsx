@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 import type { SessionView } from '../../api/types';
 import { useStore } from '../../store';
 import { RUNNERS, mockFetch, resetStore, session } from '../../test/factories';
-import { emptyWorkspace, leaves, split } from '../layout/layout';
+import { emptyWorkspace, isDraftTab, leaves, split } from '../layout/layout';
 import { handleHotkey } from './hotkeys';
 import { openSession } from './actions';
 import { Workspace } from './Workspace';
@@ -151,14 +151,12 @@ describe('Hotkeys', () => {
     expect(screen.getByRole('tab', { selected: true })).toHaveTextContent('C');
   });
 
-  it('Ctrl+K over «Новая сессия» keeps the form (the search would lose what was typed)', () => {
+  it('Ctrl+Alt+N opens a new-session draft tab in the focused pane', () => {
     setup([session({ title: 'A' })]);
-    useStore.setState({ modal: { type: 'new' } });
-    expect(key('k').prevented).toBe(true);
-    expect(useStore.getState().modal).toEqual({ type: 'new' });
-    useStore.setState({ modal: null });
-    key('k');
-    expect(useStore.getState().modal).toEqual({ type: 'search' });
+    mockFetch({});
+    expect(key('n', { altKey: true }).prevented).toBe(true);
+    const ws = useStore.getState().ws;
+    expect(isDraftTab(ws.panes[ws.focus]!.active!)).toBe(true);
   });
 
   it('Ctrl+\\ merges panes with a toast and the restore icon; again restores; nothing on the phone', () => {
@@ -208,6 +206,37 @@ describe('Panes', () => {
     expect(right).toHaveClass('focused');
     fireEvent.pointerDown(left!);
     expect(left).toHaveClass('focused');
+  });
+
+  it('Новая сессия в своей панели: «+» of the right pane opens a draft as its last tab, the left pane is untouched', async () => {
+    const list = [session({ title: 'A' }), session({ title: 'B' }), session({ title: 'C' })];
+    setup(list);
+    act(() => useStore.setState({ ws: split(useStore.getState().ws, list[1]!.id, 'p1', 'right').ws }));
+    act(() => useStore.setState({ ws: { ...useStore.getState().ws, focus: 'p1' } }));
+    mockFetch({});
+    const [left, right] = [...document.querySelectorAll('section.leaf')] as HTMLElement[];
+    expect(within(left!).getByRole('button', { name: 'Новая сессия (Ctrl+Alt+N)' })).toBeInTheDocument();
+    within(right!).getByRole('button', { name: 'Новая сессия (Ctrl+Alt+N)' }).focus();
+    await userEvent.keyboard('{Enter}');
+    const ws = useStore.getState().ws;
+    expect(ws.focus).toBe('p2');
+    expect(ws.panes.p2!.tabs).toHaveLength(2);
+    expect(isDraftTab(ws.panes.p2!.tabs.at(-1)!)).toBe(true);
+    expect(ws.panes.p2!.active).toBe(ws.panes.p2!.tabs.at(-1));
+    expect(ws.panes.p1!.tabs).toEqual([list[0]!.id, list[2]!.id]);
+  });
+
+  it('Пустая панель: «+» stands after the hint and opens a draft in that pane', async () => {
+    setup([]);
+    mockFetch({});
+    const hint = screen.getByText('Открой сессию слева или перетащи сюда');
+    const plus = screen.getByRole('button', { name: 'Новая сессия (Ctrl+Alt+N)' });
+    expect(hint.compareDocumentPosition(plus) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(plus.closest('[role=tablist]')).toBeNull();
+    expect(plus).not.toHaveAttribute('data-sid');
+    await userEvent.click(plus);
+    const ws = useStore.getState().ws;
+    expect(isDraftTab(ws.panes[ws.focus]!.active!)).toBe(true);
   });
 
   it('phone: one pane without tab strip, «←» returns to the list', async () => {

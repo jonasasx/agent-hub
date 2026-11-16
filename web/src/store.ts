@@ -50,14 +50,13 @@ export type PendingResume = { kind: 'send'; text: string; clientUuid: string; at
  * `first` shows the one-line hint about projects.
  * `enroll` — «Подключить машину»; with `runnerId` — «Переподключить» / the command of a pending machine (a new code).
  */
-export type Modal =
-  null | { type: 'new'; runnerId?: string; first?: boolean } | { type: 'search' } | { type: 'fork'; sessionId: string; mode?: 'copy' | 'handoff' } | { type: 'enroll'; runnerId?: string };
+export type Modal = null | { type: 'search' } | { type: 'fork'; sessionId: string; mode?: 'copy' | 'handoff' } | { type: 'enroll'; runnerId?: string };
 
 /**
  * «Настройки» (change `multi-user`): `/settings/<tab>`; «Пользователи» — only for role admin. claude-subscriptions P12:
  * «Подписки» and «Расход» for every user, absent when the hub has no subscriptions API.
  */
-export type SettingsTab = 'machines' | 'subscriptions' | 'usage' | 'users' | 'security' | 'notifications' | 'language' | 'desktop';
+export type SettingsTab = 'index' | 'machines' | 'subscriptions' | 'usage' | 'users' | 'security' | 'notifications' | 'sessions' | 'language' | 'desktop';
 
 /** A runner of the user that can run sessions: connected at least once and not disabled. */
 export const usableRunner = (r: RunnerView) => r.state !== 'pending' && r.state !== 'disabled';
@@ -133,6 +132,10 @@ interface State {
   settingsTokenFor: string | null;
   /** desktop-download: GET /api/desktop/info; null — not loaded yet (the «Приложение» tab stays hidden). */
   desktopInfo: DesktopInfo | null;
+  /** profile-menu-grouping: the number of hidden project groups (the icon in the header «Проекты» while > 0). */
+  hiddenGroups: number;
+  /** The dialog «Скрытые группы», opened from the profile menu, the header «Проекты» or Ctrl K. */
+  hiddenProjectsOpen: boolean;
   pendingSwitch: PendingSwitch | null;
   pendingRestart: PendingRestart | null;
   /**
@@ -204,6 +207,8 @@ export const useStore = create<State>()((set, get) => ({
   subsError: false,
   settingsTokenFor: null,
   desktopInfo: null,
+  hiddenGroups: 0,
+  hiddenProjectsOpen: false,
   pendingSwitch: null,
   pendingRestart: null,
   limits: null,

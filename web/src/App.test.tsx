@@ -95,7 +95,7 @@ describe('App', () => {
     render(<App />);
     expect(await screen.findByRole('list', { name: 'Машины' })).toBeInTheDocument();
     expect(screen.getAllByRole('listitem').map(i => i.textContent)).toEqual(['X1', 'HP · не в сети', 'ВМ .3']);
-    expect(screen.getByText('Ничего не ждёт ответа')).toBeInTheDocument();
+    expect(screen.getByText('Нет активных сессий')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /Сейчас/ })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /^Проекты/ })).toBeInTheDocument();
     expect(FakeSocket.last?.url).toMatch(/\/ws\/ui$/);

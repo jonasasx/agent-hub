@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mcpErrorMessage } from './mcpErrors';
+import { mcpErrorMessage, mcpGatewayMessage } from './mcpErrors';
 
 describe('mcpErrorMessage', () => {
   it('explains timeouts and missing local commands in Russian', () => {
@@ -42,5 +42,23 @@ describe('mcpErrorMessage', () => {
     const error = mcpErrorMessage(new Error('Connection refused'), 'http');
     expect(error.message).toBe('Connection refused');
     expect(error.details).toBe('');
+  });
+});
+
+describe('mcpGatewayMessage', () => {
+  const issue = (status: 'failed' | 'needs-secret', error: string | null) => ({ serverId: 'id', status, error, observedAt: '2026-11-14T00:00:00Z' });
+
+  it('names the machine for a missing command and a missing secret', () => {
+    expect(mcpGatewayMessage(issue('failed', 'command not found: wsl.exe'), 'vm')).toEqual({
+      message: 'На машине vm нет команды wsl.exe. Установите её или выключите сервер для этой машины в реестре.',
+      details: 'command not found: wsl.exe',
+    });
+    expect(mcpGatewayMessage(issue('needs-secret', null), 'vm').message).toBe('Серверу на машине vm нужен секрет. Задайте его в реестре.');
+  });
+
+  it('explains exit codes and HTTP answers, keeps other texts as they are', () => {
+    expect(mcpGatewayMessage(issue('failed', 'MCP server process exited with code 1'), 'vm').message).toMatch(/^Машина vm: .*кодом 1/);
+    expect(mcpGatewayMessage(issue('failed', 'HTTP 502: Bad Gateway'), 'vm').message).toBe('Машина vm: Адрес не отвечает как MCP-сервер (HTTP 502).');
+    expect(mcpGatewayMessage(issue('failed', 'boom'), 'vm')).toEqual({ message: 'Машина vm: boom', details: '' });
   });
 });

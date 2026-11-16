@@ -107,6 +107,9 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
       '051_background_owner',
       '052_codex_subscription_logins',
       '053_queued_command_ts',
+      '054_session_context',
+      '055_user_idle_timeout',
+      '056_qwen_provider',
     ]);
     const second = await migrate(t.pool);
     expect(second).toEqual([]);
@@ -150,6 +153,7 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
       'runners',
       'schema_migrations',
       'security_events',
+      'session_context',
       'session_notes',
       'session_projects',
       'session_turns',
@@ -288,6 +292,25 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
       ]);
       expect((await q(`SELECT 1 FROM information_schema.tables WHERE table_name = 'mcp_registry_machine_overrides'`)).rowCount).toBe(0);
       await q(up);
+    } finally {
+      await fixture.drop();
+    }
+  });
+
+  it('056_qwen_provider: sessions and the last provider take qwen; down removes the sessions of qwen', async () => {
+    const fixture = await createTestDb();
+    try {
+      const q = (text: string, values: unknown[] = []) => fixture.pool.query(text, values);
+      const down = await readFile(`${MIGRATIONS_DIR}/056_qwen_provider.down.sql`, 'utf8');
+      const up = await readFile(`${MIGRATIONS_DIR}/056_qwen_provider.up.sql`, 'utf8');
+      const uid = (await q(`INSERT INTO users(email) VALUES ('m056@test.local') RETURNING id`)).rows[0].id;
+      await q(`INSERT INTO user_preferences(user_id, last_provider) VALUES ($1, 'qwen')`, [uid]);
+      await q(down);
+      expect((await q(`SELECT last_provider FROM user_preferences WHERE user_id = $1`, [uid])).rows[0].last_provider).toBeNull();
+      await expect(q(`UPDATE user_preferences SET last_provider = 'qwen' WHERE user_id = $1`, [uid])).rejects.toThrow();
+      await q(up);
+      await q(`UPDATE user_preferences SET last_provider = 'qwen' WHERE user_id = $1`, [uid]);
+      await expect(q(`UPDATE user_preferences SET last_provider = 'gemini' WHERE user_id = $1`, [uid])).rejects.toThrow();
     } finally {
       await fixture.drop();
     }
@@ -472,6 +495,9 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
         '051_background_owner',
         '052_codex_subscription_logins',
         '053_queued_command_ts',
+        '054_session_context',
+        '055_user_idle_timeout',
+        '056_qwen_provider',
       ]);
       expect((await q(`SELECT count(*)::int AS n FROM events`)).rows[0].n).toBe(3);
       expect((await q(`SELECT rel_key, runner_id, claude_session_id, acked_line::int AS l FROM transcript_files`)).rows[0]).toEqual({
@@ -551,6 +577,9 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
         '051_background_owner',
         '052_codex_subscription_logins',
         '053_queued_command_ts',
+        '054_session_context',
+        '055_user_idle_timeout',
+        '056_qwen_provider',
       ]);
       expect((await q(`SELECT git_remote FROM sessions ORDER BY git_remote`)).rows.map(r => r.git_remote)).toEqual([
         'git@git.example.com:a/b.git',

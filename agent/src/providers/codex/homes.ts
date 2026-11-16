@@ -76,6 +76,21 @@ export class CodexHomes {
     this.known.set(subscriptionId, authJson);
   }
 
+  /** A subscription home with a working sign-in, for work that needs none of the machine's own (the model list); null when there is none. */
+  async usableHome(): Promise<string | null> {
+    let names: string[];
+    try {
+      names = await readdir(this.root);
+    } catch {
+      return null;
+    }
+    for (const name of names.filter(n => HOME_NAME.test(n)).sort()) {
+      const home = join(this.root, name);
+      if (await this.hasAuth(home)) return home;
+    }
+    return null;
+  }
+
   /** The home has an auth.json: false only when it is absent, empty or not JSON — another read error is not a loss. */
   private async hasAuth(home: string): Promise<boolean> {
     const state = async (): Promise<'ok' | 'absent' | 'broken'> => {

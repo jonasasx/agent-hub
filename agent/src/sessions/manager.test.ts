@@ -1,6 +1,7 @@
 // Session manager logic against a scripted SDK (fast; the real SDK is covered by manager.sdk.test.ts).
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
+import { readFileSync } from 'node:fs';
 import type { CanUseTool, Options, PermissionResult, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { HubMessage, PayloadOf } from '@agent-hub/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -29,6 +30,8 @@ class FakeQuery {
   liveMcpServers: Record<string, unknown> = {};
   closed = false;
   setMcpServersFailure: Error | null = null;
+  /** The answer of getContextUsage; an Error is thrown. */
+  contextUsage: unknown = new Error('no context usage in this test');
   constructor(
     readonly options: Options,
     prompt: AsyncIterable<SDKUserMessage>,
@@ -74,6 +77,11 @@ class FakeQuery {
       },
       setPermissionMode: async (m: string) => void this.calls.push(`mode:${m}`),
       setModel: async (m?: string) => void this.calls.push(`model:${m}`),
+      getContextUsage: async (o: { detail?: string }) => {
+        this.calls.push(`context:${o.detail}`);
+        if (this.contextUsage instanceof Error) throw this.contextUsage;
+        return this.contextUsage;
+      },
       setMcpServers: async (servers: Record<string, unknown>) => {
         this.calls.push('mcp:set');
         if (this.setMcpServersFailure) throw this.setMcpServersFailure;
@@ -217,6 +225,48 @@ describe('SessionManager', () => {
     expect(sent.find(m => m.type === 'session.partial')!.payload).toEqual({ sessionId, messageId: 'msg_1', blockIndex: 0, textDelta: 'Hel' });
     expect(sent.find(m => m.type === 'session.result')!.payload).toMatchObject({ sessionId, subtype: 'success', isError: false, durationMs: 12 });
     expect(sent.at(-1)).toEqual({ type: 'session.state', payload: { sessionId, state: 'waiting', processAlive: true } });
+  });
+
+  // Requirement: Снимок контекстного окна (session-context-usage D2)
+  describe('session.context', () => {
+    const usage = JSON.parse(readFileSync(new URL('./fixtures/context-usage-summary.json', import.meta.url), 'utf8')) as Record<string, unknown>;
+    const result = { type: 'result', subtype: 'success', is_error: false, duration_ms: 1, total_cost_usd: 0 };
+
+    async function startedOn(hubProtocol: string) {
+      const t = setup({ extra: { hubProtocol: () => hubProtocol } });
+      const sessionId = randomUUID();
+      await t.mgr.handle(cmd('session.start', { sessionId, cwd: CWD, permissionMode: 'default', model: 'haiku', prompt: 'hi', promptUuid: randomUUID() }));
+      return { ...t, sessionId, q: t.queries[0]! };
+    }
+
+    it('scenario «Ход Claude»: after a result a summary snapshot goes to a 1.20 hub', async () => {
+      const { q, sent, sessionId } = await startedOn('1.20');
+      q.contextUsage = usage;
+      q.emit(result);
+      await tick();
+      expect(q.calls).toContain('context:summary');
+      const ctx = sent.find(m => m.type === 'session.context')!.payload;
+      expect(ctx).toMatchObject({ sessionId, usedTokens: 67331, windowTokens: 200000, percent: 34 });
+    });
+
+    it('scenario «Старый хаб»: a 1.19 hub gets no snapshot and the CLI is not asked', async () => {
+      const { q, sent } = await startedOn('1.19');
+      q.contextUsage = usage;
+      q.emit(result);
+      await tick();
+      expect(q.calls).not.toContain('context:summary');
+      expect(sent.some(m => m.type === 'session.context')).toBe(false);
+      expect(sent.some(m => m.type === 'session.result')).toBe(true);
+    });
+
+    it('scenario «Снимок не получен»: an error of getContextUsage sends nothing, the turn ends as usual', async () => {
+      const { q, sent, sessionId } = await startedOn('1.20');
+      q.emit(result);
+      await tick();
+      expect(q.calls).toContain('context:summary');
+      expect(sent.some(m => m.type === 'session.context')).toBe(false);
+      expect(sent.at(-1)).toEqual({ type: 'session.state', payload: { sessionId, state: 'waiting', processAlive: true } });
+    });
   });
 
   // Requirement (runner-enrollment): Запуск под root — Claude Code exits on --allow-dangerously-skip-permissions under root

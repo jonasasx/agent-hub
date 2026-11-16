@@ -36,6 +36,7 @@ async function main(): Promise<void> {
     vaultRoot: config.vaultRoot,
     claudeProjectsDir: config.claudeProjectsDir,
     stateDir: config.stateDir,
+    qwen: config.qwen,
     replMaxBytesPerSec: config.replMaxBytesPerSec,
     replHistoryInflight: config.replHistoryInflight,
     log,

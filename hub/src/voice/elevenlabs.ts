@@ -102,7 +102,7 @@ export class ScribeClient {
 
   /**
    * POST /v1/speech-to-text (multipart): `model_id`, `language_code`, `tag_audio_events=false`,
-   * `timestamps_granularity=none`, `file`. `enable_logging` is not sent (false is Enterprise-only, D3).
+   * `timestamps_granularity=none`, `no_verbatim=true` (no «э-э-э», false starts, non-speech sounds), `file`. `enable_logging` is not sent (false is Enterprise-only, D3).
    * `signal` — the client went away; the request is aborted and the promise rejects with kind `aborted`.
    */
   async transcribe(audio: Buffer, contentType: string, signal?: AbortSignal): Promise<{ text: string }> {
@@ -112,6 +112,7 @@ export class ScribeClient {
     form.append('language_code', this.o.language);
     form.append('tag_audio_events', 'false');
     form.append('timestamps_granularity', 'none');
+    form.append('no_verbatim', 'true');
     form.append('file', new Blob([new Uint8Array(audio.buffer, audio.byteOffset, audio.byteLength)], { type: contentType }), `voice.${EXT[mime] ?? 'webm'}`);
 
     const timeout = AbortSignal.timeout(this.o.timeoutMs);

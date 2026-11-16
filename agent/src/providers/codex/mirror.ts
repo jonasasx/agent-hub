@@ -9,8 +9,18 @@ import { join } from 'node:path';
 export const CODEX_MIRROR_DIR = 'agent-hub-codex';
 export const CODEX_ENTRYPOINT = 'agent-hub-codex';
 
-export function mirrorPath(projectsDir: string, sessionId: string): string {
-  return join(projectsDir, CODEX_MIRROR_DIR, `${sessionId}.jsonl`);
+/** Where a provider's mirror lives and how it signs its lines (change qwen-provider, design D3: one writer for both). */
+export interface MirrorKind {
+  dir: string;
+  entrypoint: string;
+  provider: 'codex' | 'qwen';
+  label: string;
+}
+
+export const CODEX_MIRROR: MirrorKind = { dir: CODEX_MIRROR_DIR, entrypoint: CODEX_ENTRYPOINT, provider: 'codex', label: 'Codex' };
+
+export function mirrorPath(projectsDir: string, sessionId: string, dir: string = CODEX_MIRROR_DIR): string {
+  return join(projectsDir, dir, `${sessionId}.jsonl`);
 }
 
 /** A stable UUID of a line: the same item written again gives the same uuid (design D4). */
@@ -25,10 +35,10 @@ export interface MirrorHeader {
 }
 
 /** The Codex thread of a mirror (its first line); null when there is no mirror or no header. */
-export async function readHeader(projectsDir: string, sessionId: string): Promise<MirrorHeader | null> {
+export async function readHeader(projectsDir: string, sessionId: string, dir: string = CODEX_MIRROR_DIR): Promise<MirrorHeader | null> {
   let text: string;
   try {
-    text = await readFile(mirrorPath(projectsDir, sessionId), 'utf8');
+    text = await readFile(mirrorPath(projectsDir, sessionId, dir), 'utf8');
   } catch {
     return null;
   }
@@ -45,8 +55,8 @@ export async function readHeader(projectsDir: string, sessionId: string): Promis
 }
 
 /** All lines of a mirror (fork copies them). */
-export async function readLines(projectsDir: string, sessionId: string): Promise<Array<Record<string, unknown>>> {
-  const text = await readFile(mirrorPath(projectsDir, sessionId), 'utf8');
+export async function readLines(projectsDir: string, sessionId: string, dir: string = CODEX_MIRROR_DIR): Promise<Array<Record<string, unknown>>> {
+  const text = await readFile(mirrorPath(projectsDir, sessionId, dir), 'utf8');
   return text
     .split('\n')
     .filter(l => l.trim())
@@ -179,9 +189,10 @@ export class MirrorWriter {
     private readonly now: () => number = Date.now,
     /** A failed write (disk full, folder removed): logged by the provider; the next lines are still tried. */
     private readonly onError: (err: Error) => void = () => undefined,
+    private readonly kind: MirrorKind = CODEX_MIRROR,
   ) {
-    this.path = mirrorPath(projectsDir, sessionId);
-    this.dir = join(projectsDir, CODEX_MIRROR_DIR);
+    this.path = mirrorPath(projectsDir, sessionId, kind.dir);
+    this.dir = join(projectsDir, kind.dir);
   }
 
   private readonly dir: string;
@@ -207,7 +218,7 @@ export class MirrorWriter {
       parentUuid: this.parent,
       isSidechain: false,
       userType: 'external',
-      entrypoint: CODEX_ENTRYPOINT,
+      entrypoint: this.kind.entrypoint,
       cwd: this.cwd,
       sessionId: this.sessionId,
       uuid,
@@ -227,7 +238,17 @@ export class MirrorWriter {
   }
 
   header(threadId: string, model: string | null): void {
-    this.write({ ...this.base(randomUUID()), type: 'system', subtype: 'agent_provider', provider: 'codex', threadId, model, content: `Codex · thread ${threadId}`, level: 'info', isMeta: true });
+    this.write({
+      ...this.base(randomUUID()),
+      type: 'system',
+      subtype: 'agent_provider',
+      provider: this.kind.provider,
+      threadId,
+      model,
+      content: `${this.kind.label} · thread ${threadId}`,
+      level: 'info',
+      isMeta: true,
+    });
   }
 
   user(text: string, uuid: string, images: Array<{ mime: string; data: Buffer }> = [], origin: 'human' | 'peer' = 'human'): void {
@@ -241,7 +262,7 @@ export class MirrorWriter {
     this.write({
       ...this.base(stableUuid(this.sessionId, itemId, 'assistant')),
       type: 'assistant',
-      message: { id: itemId, type: 'message', role: 'assistant', model: model ?? 'codex', content: blocks, stop_reason: null, usage: null },
+      message: { id: itemId, type: 'message', role: 'assistant', model: model ?? this.kind.provider, content: blocks, stop_reason: null, usage: null },
     });
   }
 
@@ -299,13 +320,14 @@ export class MirrorWriter {
   }
 
   /** A fork (design D11): the lines of the source with this session, new uuids and the new thread. */
-  copyFrom(lines: Array<Record<string, unknown>>, threadId: string): void {
+  copyFrom(lines: Array<Record<string, unknown>>, threadId: string, headerExtra: Record<string, unknown> = {}): void {
     for (const l of lines) {
       const uuid = randomUUID();
       const copy: Record<string, unknown> = { ...l, sessionId: this.sessionId, uuid, parentUuid: this.parent };
       if (l.type === 'system' && l.subtype === 'agent_provider') {
         copy.threadId = threadId;
-        copy.content = `Codex · thread ${threadId}`;
+        copy.content = `${this.kind.label} · thread ${threadId}`;
+        Object.assign(copy, headerExtra);
       }
       this.write(copy);
     }

@@ -185,7 +185,7 @@ function ProviderRegistry({ provider, tokenFor }: { provider: Provider; tokenFor
   const active = activeSubs(subs, provider);
   const retired = retiredSubs(subs, provider);
   const ids = active.map(s => s.id);
-  const defaultId = subs.byProvider?.[provider]?.defaultId ?? (provider === 'claude' ? subs.defaultId : null);
+  const defaultId = (provider === 'qwen' ? undefined : subs.byProvider?.[provider]?.defaultId) ?? (provider === 'claude' ? subs.defaultId : null);
   const order = async (next: string[] | null) => {
     if (!next) return;
     const r = await reorder(fullOrder(subs, provider, next));

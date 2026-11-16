@@ -88,6 +88,9 @@ describe('Rail', () => {
     render(<Rail side="left" onLogout={() => undefined} />);
     await userEvent.click(screen.getByRole('button', { name: 'Профиль' }));
     await userEvent.click(screen.getByRole('menuitem', { name: 'Сбросить раскладку окон' }));
+    expect(useDock.getState().dock).not.toEqual(defaultDock());
+    expect(screen.getByRole('menuitem', { name: 'Отмена' })).toHaveFocus();
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Сбросить' }));
     expect(useDock.getState().dock).toEqual(defaultDock());
     expect(JSON.stringify(useStore.getState().ws)).toBe(before);
   });

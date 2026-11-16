@@ -4,7 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import type { FastifyBaseLogger } from 'fastify';
-import { PROVIDERS, codexCredentialSchema, type Provider } from '@agent-hub/shared';
+import { SUBSCRIPTION_PROVIDERS, codexCredentialSchema, type SubscriptionProvider } from '@agent-hub/shared';
 import type { CreateSubscriptionRequest, PatchSubscriptionRequest, SubscriptionUsageResponse, SubscriptionView, SubscriptionsResponse } from '@agent-hub/shared';
 import type { Db } from '../db/db.js';
 import type { UiGateway } from '../ui/uiGateway.js';
@@ -41,7 +41,7 @@ export interface SubscriptionCredFull {
   id: string;
   name: string;
   token: string;
-  provider: Provider;
+  provider: SubscriptionProvider;
   /** The version of the token (subscriptions.token_updated_at, ms precision): a process remembers what it got (QA B2). */
   tokenUpdatedAt: Date;
 }
@@ -83,7 +83,7 @@ export class SubscriptionService {
     const subs = await listSubscriptions(this.o.db, userId);
     const now = this.now();
     const byProvider = {} as SubscriptionsResponse['byProvider'];
-    for (const p of PROVIDERS) {
+    for (const p of SUBSCRIPTION_PROVIDERS) {
       const lastChoiceId = await lastChoiceOf(this.o.db, userId, p);
       byProvider[p] = { lastChoiceId, defaultId: defaultOf(subs, lastChoiceId, p)?.id ?? null };
     }
@@ -145,7 +145,7 @@ export class SubscriptionService {
   }
 
   /** 409 name_taken before a Codex sign-in starts: the name is unique among the active subscriptions of a provider. */
-  async assertNameFree(userId: string, provider: Provider, name: string): Promise<void> {
+  async assertNameFree(userId: string, provider: SubscriptionProvider, name: string): Promise<void> {
     const taken = await this.o.db
       .selectFrom('subscriptions')
       .select('id')
@@ -287,7 +287,7 @@ export class SubscriptionService {
   // ---------- choice and launch ----------
 
   /** The active subscriptions of the user, by position. */
-  async active(userId: string, provider: Provider = 'claude'): Promise<SubscriptionMeta[]> {
+  async active(userId: string, provider: SubscriptionProvider = 'claude'): Promise<SubscriptionMeta[]> {
     return (await listSubscriptions(this.o.db, userId)).filter(s => s.retired_at === null && s.provider === provider);
   }
 
@@ -296,7 +296,7 @@ export class SubscriptionService {
     return (await listSubscriptions(this.o.db, userId)).filter(s => s.retired_at === null);
   }
 
-  async defaultFor(userId: string, provider: Provider = 'claude'): Promise<SubscriptionMeta | null> {
+  async defaultFor(userId: string, provider: SubscriptionProvider = 'claude'): Promise<SubscriptionMeta | null> {
     return defaultOf(await listSubscriptions(this.o.db, userId), await lastChoiceOf(this.o.db, userId, provider), provider);
   }
 
@@ -315,7 +315,7 @@ export class SubscriptionService {
   }
 
   /** An explicitly chosen subscription for a launch: own and active, else 422 subscription_unavailable. */
-  async requireActive(userId: string, id: string, provider: Provider = 'claude'): Promise<SubscriptionMeta> {
+  async requireActive(userId: string, id: string, provider: SubscriptionProvider = 'claude'): Promise<SubscriptionMeta> {
     const s = await getSubscription(this.o.db, userId, id);
     if (!s || s.retired_at !== null || s.provider !== provider) throw new HttpError(422, 'subscription_unavailable', { key: 'hub.subscriptions.unavailable' });
     return s;
@@ -326,7 +326,7 @@ export class SubscriptionService {
    * change (an agent older than 1.4, no key, an empty registry, or `null` asked for explicitly). `id` absent — the
    * default subscription; given — that one, checked. The token is decrypted here and nowhere else.
    */
-  async credFor(userId: string, runner: { protocol_version: string | null }, id?: string | null, provider: Provider = 'claude'): Promise<SubscriptionCredFull | null> {
+  async credFor(userId: string, runner: { protocol_version: string | null }, id?: string | null, provider: SubscriptionProvider = 'claude'): Promise<SubscriptionCredFull | null> {
     const supported = provider === 'codex' ? supportsCodexSubscriptions(runner.protocol_version) : supportsSubscriptions(runner.protocol_version);
     if (!supported || !this.key || id === null) return null;
     const s = id !== undefined ? await this.requireActive(userId, id, provider) : await this.defaultFor(userId, provider);
@@ -407,13 +407,13 @@ export class SubscriptionService {
   }
 
   /** Active subscriptions without a limit and without a rejected token, except `exceptId`, by position. */
-  async alternatives(userId: string, exceptId: string | null, provider: Provider = 'claude'): Promise<SubscriptionMeta[]> {
+  async alternatives(userId: string, exceptId: string | null, provider: SubscriptionProvider = 'claude'): Promise<SubscriptionMeta[]> {
     const now = this.now();
     return (await this.active(userId, provider)).filter(s => s.id !== exceptId && !limitActive(s, now) && s.token_rejected_at === null);
   }
 
   /** The next subscription for an auto switch (P7): after `fromId` in the registry order, wrapping, not in `tried`. */
-  async nextForAutoSwitch(userId: string, fromId: string, tried: Set<string>, provider: Provider = 'claude'): Promise<SubscriptionMeta | null> {
+  async nextForAutoSwitch(userId: string, fromId: string, tried: Set<string>, provider: SubscriptionProvider = 'claude'): Promise<SubscriptionMeta | null> {
     const active = await this.active(userId, provider);
     const now = this.now();
     const i = active.findIndex(s => s.id === fromId);

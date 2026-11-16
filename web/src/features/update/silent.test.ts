@@ -45,7 +45,6 @@ describe('canReloadSilently — each condition of D4', () => {
     ['an attachment over the composer', () => useAttachments.setState({ byKey: { s1: [attachment] } }), 'attachments'],
     ['a sent message without the hub’s line', () => useAttachments.setState({ optimistic: { s1: [{ clientUuid: 'c1', text: 'привет', images: [] }] } }), 'unconfirmed'],
     ['dictation running', () => useVoice.setState({ active: { id: 1, sessionId: 's1', paneId: 'p1', phase: 'recording', startedAt: 0, mime: 'audio/webm' } as never }), 'voice'],
-    ['the new-session form', () => useStore.setState({ modal: { type: 'new' } }), 'modal'],
     ['the fork form', () => useStore.setState({ modal: { type: 'fork', sessionId: 's1' } }), 'modal'],
     ['the token form opened from a note', () => useStore.setState({ settingsTokenFor: 'sub1' }), 'tokenForm'],
     ['a resume waiting for «Продолжить всё равно»', () => useStore.setState({ pendingResume: { s1: { kind: 'wake' } } }), 'resume'],

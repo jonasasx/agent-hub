@@ -214,6 +214,7 @@ export default {
   'hub.sessions.notFound': '세션을 찾을 수 없습니다',
   'hub.sessions.notImage': 'PNG, JPEG, GIF, WebP 이미지가 아닙니다',
   'hub.sessions.notRunning': '세션에서 실행 중인 턴이 없습니다',
+  'hub.sessions.turnRunning': '세션에서 턴 또는 백그라운드 작업이 실행 중이라 지금은 절전할 수 없습니다',
   'hub.sessions.noteCrashed': 'Claude Code 프로세스가 비정상 종료되었습니다',
   'hub.sessions.noteCrashedWith': 'Claude Code 프로세스가 비정상 종료되었습니다: {error}',
   'hub.sessions.noteDeliveredAfterAll': '메시지가 결국 세션에 전달되었습니다: {quote}',
@@ -304,4 +305,5 @@ export default {
   'hub.voiceTalk.long': '긴 작업이라 계속 진행합니다. 끝나면 알려 드릴게요.',
   'hub.voiceTalk.offline': '세션의 컴퓨터가 오프라인입니다.',
   'hub.voiceTalk.failed': '세션에 메시지를 보내지 못했습니다.',
+  'hub.sessions.qwenEndpointDown': '{label}: {name}의 모델 엔드포인트가 응답하지 않거나 키를 거부합니다. agent.env를 확인하세요',
 } satisfies Dict;

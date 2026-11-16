@@ -8,12 +8,12 @@
  */
 import { useEffect, useState } from 'react';
 import { ApiError, api } from '../../api/client';
-import { PROVIDER_LABELS, type ExtraProvider, type ProviderLoginStartView, type RunnerView } from '../../api/types';
+import { PROVIDER_LABELS, type ExtraProvider, type DeviceLoginProvider, type ProviderLoginStartView, type RunnerView } from '../../api/types';
 import { t, useT } from '../../i18n';
 import { useStore } from '../../store';
 import { loadSubscriptions } from '../subscriptions/actions';
 
-type LoginEnd = { runnerId: string; provider: ExtraProvider; loginId: string; ok: boolean; error?: string; subscriptionId?: string };
+type LoginEnd = { runnerId: string; provider: DeviceLoginProvider; loginId: string; ok: boolean; error?: string; subscriptionId?: string };
 const listeners = new Set<(e: LoginEnd) => void>();
 
 /** WS provider.login (workspace/actions.ts): the end of a sign-in, to the open flows. */
@@ -151,6 +151,18 @@ export function ProviderStatusRow({ r, provider }: { r: RunnerView; provider: Ex
   const tr = useT();
   const st = r.providers?.find(p => p.id === provider);
   if (!st) return null;
+  // qwen-provider D2: no sign-in at all — the status is the reachability of the model endpoint, no buttons
+  if (provider === 'qwen')
+    return (
+      <div className="prov-row">
+        <dt>{PROVIDER_LABELS[provider]}</dt>
+        <dd className="ag">
+          <span className="mc-ver">{st.version ? <span className="num">{st.version}</span> : '—'}</span>
+          {st.login === 'ok' ? <span className="tag ok">{tr('machines.qwen.ok')}</span> : <span className="tag bad">{tr('machines.qwen.down')}</span>}
+          <span className="hint">{tr('machines.qwen.hint')}</span>
+        </dd>
+      </div>
+    );
   return (
     <div className="prov-row">
       <dt>{PROVIDER_LABELS[provider]}</dt>

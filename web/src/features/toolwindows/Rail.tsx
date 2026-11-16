@@ -3,8 +3,7 @@
  * a group is a place of the column (several icons are tabs of the place). A click opens the window or hides the open one,
  * a drag moves it. The left rail starts with the brand and keeps the theme and the profile at its foot.
  */
-import { useState } from 'react';
-import { applyTheme, currentTheme } from '../theme/theme';
+import { toggleTheme, useTheme } from '../theme/theme';
 import { ProfileMenu } from '../sidebar/ProfileMenu';
 import { useBadges, type Badge } from './badges';
 import { WIN_TITLE, isOpen, type Side, type WinId } from './dock';
@@ -43,12 +42,8 @@ function RailIcon({ id, side, badge }: { id: WinId; side: Side; badge?: Badge })
 
 function ThemeButton() {
   const t = useT();
-  const [theme, setTheme] = useState(currentTheme);
-  const toggle = () => {
-    const next = theme === 'dark' ? 'light' : 'dark';
-    applyTheme(next);
-    setTheme(next);
-  };
+  const theme = useTheme();
+  const toggle = toggleTheme;
   return (
     <button
       type="button"

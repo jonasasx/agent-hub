@@ -56,6 +56,9 @@ export function startPhoneHistory(): () => void {
   if (isChat(history.state) || isWin(history.state)) history.replaceState(null, '', location.href);
   const unsub = useStore.subscribe((s, prev) => {
     if (fromPop || s.device !== 'phone') return;
+    // «Настройки» are their own entry (`/settings/<tab>`): a chat entry over it would keep the settings address after
+    // they close, and a reload («Обновить» of a new build) would open «Машины» instead of the screen the user was on
+    if (s.settings) return;
     const sid = activeSid();
     if (s.inChat && !prev.inChat) {
       if (isChat(history.state)) history.replaceState({ ahView: 'chat', sid }, '', location.href);

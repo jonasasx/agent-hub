@@ -105,4 +105,7 @@ export default {
   'machines.defaultDir.hint': '此机器上的会话从这里启动；项目文件夹相对于它设置。',
   'machines.defaultDir.failed': '无法更改默认文件夹',
   'machines.menu.defaultDir': '默认文件夹…',
+  'machines.qwen.ok': '端点可用',
+  'machines.qwen.down': '端点无响应或拒绝密钥',
+  'machines.qwen.hint': '无需登录：地址和密钥在机器的 agent.env 中设置',
 } satisfies Dict;

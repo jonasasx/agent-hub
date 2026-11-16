@@ -15,6 +15,8 @@ import type {
   PermissionKind,
   ProjectSuggestionView,
   QuestionView,
+  SessionContextPayload,
+  SessionContextView,
 } from '@agent-hub/shared';
 import { supportsSubscriptions } from '../subscriptions/repo.js';
 import { render } from '../i18n.js';
@@ -55,6 +57,8 @@ export type SessionRow = Selectable<SessionsTable> & {
   catalog_project_source?: 'explicit' | 'auto' | 'manual' | null;
   catalog_project_reason?: string | null;
   project_suggestion?: ProjectSuggestionView | null;
+  /** change session-sleep-controls D2: the owner's default idle timeout (user_preferences); NULL — the hub's. */
+  user_idle_timeout_min?: number | null;
 };
 
 /**
@@ -113,14 +117,22 @@ export function sleepInputOf(r: SessionRow): SleepInput {
   };
 }
 
-/** When the session falls asleep (status.ts sleepsAt over sleepInputOf). */
-export function sessionSleepsAt(r: SessionRow, defaults: TimeoutDefaults): Date | null {
-  return sleepsAt(sleepInputOf(r), defaults);
+/** The hub's defaults with the owner's idle timeout over them (session-sleep-controls D2). */
+export function rowDefaults(r: SessionRow, defaults: TimeoutDefaults): TimeoutDefaults {
+  const own = r.user_idle_timeout_min;
+  if (own === null || own === undefined) return defaults;
+  return { idle: own, permission: defaults.permission };
 }
 
-export function toSessionView(r: SessionRow, defaults: TimeoutDefaults, projects?: ProjectLookup, now: number = Date.now(), subscriptionsEnabled = false): SessionView {
+/** When the session falls asleep (status.ts sleepsAt over sleepInputOf). */
+export function sessionSleepsAt(r: SessionRow, defaults: TimeoutDefaults): Date | null {
+  return sleepsAt(sleepInputOf(r), rowDefaults(r, defaults));
+}
+
+export function toSessionView(r: SessionRow, hubDefaults: TimeoutDefaults, projects?: ProjectLookup, now: number = Date.now(), subscriptionsEnabled = false): SessionView {
   const external = isExternalActive(r, now);
-  const sleeps = sessionSleepsAt(r, defaults);
+  const sleeps = sessionSleepsAt(r, hubDefaults);
+  const defaults = rowDefaults(r, hubDefaults);
   const catalogProject = r.catalog_project_id && r.catalog_project_name ? { id: r.catalog_project_id, name: r.catalog_project_name } : null;
   return {
     id: r.id,
@@ -152,7 +164,8 @@ export function toSessionView(r: SessionRow, defaults: TimeoutDefaults, projects
     permissionMode: r.permission_mode as UiPermissionMode,
     model: r.model,
     idleTimeoutMin: r.idle_timeout_min,
-    effectiveIdleTimeoutMin: r.status === 'working' ? (r.idle_timeout_min ?? defaults.idle) : effectiveIdleTimeoutMin(r.status, r.idle_timeout_min, defaults),
+    // only waiting/permission count down; any other status shows the timeout the next wait will get
+    effectiveIdleTimeoutMin: r.status === 'waiting' || r.status === 'permission' ? effectiveIdleTimeoutMin(r.status, r.idle_timeout_min, defaults) : (r.idle_timeout_min ?? defaults.idle),
     sleepsAt: iso(sleeps),
     lastInputAt: iso(r.last_input_at),
     lastTurnEndAt: iso(r.last_turn_end_at),
@@ -176,6 +189,8 @@ export function toSessionView(r: SessionRow, defaults: TimeoutDefaults, projects
     subscriptionMode: subscriptionModeOf(r, subscriptionsEnabled),
     // mcp-management M8: failed + needs-auth of the last MCP snapshot (the mark in the head and the sidebar)
     mcpProblems: r.mcp_problems ?? 0,
+    // session-context-usage D4: the fill of the context window from the last snapshot
+    context: r.context_used !== null && r.context_window ? { usedTokens: r.context_used, windowTokens: r.context_window, percent: Math.round((r.context_used / r.context_window) * 100) } : null,
     createdAt: r.created_at.toISOString(),
   };
 }
@@ -253,6 +268,7 @@ export function selectSessions(db: Db) {
       >`(SELECT cp.name FROM session_projects sp JOIN catalog_projects cp ON cp.id = sp.project_id AND cp.user_id = sp.user_id WHERE sp.session_id = s.id AND sp.user_id = s.user_id)`.as(
         'catalog_project_name',
       ),
+      sql<number | null>`(SELECT up.idle_timeout_min FROM user_preferences up WHERE up.user_id = s.user_id)`.as('user_idle_timeout_min'),
     ]);
 }
 
@@ -265,6 +281,33 @@ export async function getSession(db: Db, id: string, userId?: string): Promise<S
 
 /** The stored columns of a session, without the computed ones of selectSessions (no correlated subqueries). */
 export type SessionBase = Selectable<SessionsTable>;
+
+/** session-context-usage D3: stores the snapshot when newer than the stored one; false — older, nothing written. */
+export async function storeSessionContext(db: Db, sessionId: string, p: SessionContextPayload): Promise<boolean> {
+  const at = new Date(p.observedAt);
+  const { sessionId: _, ...snapshot } = p;
+  return db.transaction().execute(async tx => {
+    const r = await tx
+      .updateTable('sessions')
+      .set({ context_used: p.usedTokens, context_window: p.windowTokens, context_at: at })
+      .where('id', '=', sessionId)
+      .where(eb => eb.or([eb('context_at', 'is', null), eb('context_at', '<', at)]))
+      .executeTakeFirst();
+    if (Number(r.numUpdatedRows) === 0) return false;
+    await tx
+      .insertInto('session_context')
+      .values({ session_id: sessionId, snapshot: JSON.stringify(snapshot), observed_at: at })
+      .onConflict(oc => oc.column('session_id').doUpdateSet({ snapshot: JSON.stringify(snapshot), observed_at: at }))
+      .execute();
+    return true;
+  });
+}
+
+/** session-context-usage D4: the breakdown of the last snapshot; null — none yet. */
+export async function getSessionContext(db: Db, sessionId: string): Promise<SessionContextView | null> {
+  const r = await db.selectFrom('session_context').select(['snapshot', 'observed_at']).where('session_id', '=', sessionId).executeTakeFirst();
+  return r ? { ...r.snapshot, observedAt: r.observed_at.toISOString() } : null;
+}
 
 /**
  * The hot path of the agent's stream (session.partial, chunks, states): one indexed row by (runner, Claude session),

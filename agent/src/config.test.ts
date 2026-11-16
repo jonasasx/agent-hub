@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { isAllowedHubUrl, loadAgentConfig } from './config.js';
+import { isAllowedHubUrl, loadAgentConfig, qwenFromEnv } from './config.js';
 import { createLogger } from './log.js';
 import { buildHello, osName } from './machine.js';
 
@@ -55,7 +55,7 @@ describe('logger', () => {
 describe('hello payload', () => {
   it('describes this machine with protocol and versions', () => {
     const h = buildHello({ vaultRoot: 'C:\\vault' });
-    expect(h.protocol).toBe('1.19');
+    expect(h.protocol).toBe('1.21');
     expect(h.capabilities).toContain('fs.list-dirs');
     expect(h.agentVersion).toMatch(/^\d+\.\d+\.\d+$/);
     expect(h.sdkVersion).toBe('0.3.310');
@@ -70,5 +70,15 @@ describe('hello payload', () => {
     expect(loadAgentConfig(env).replHistoryInflight).toBe(8);
     expect(loadAgentConfig({ ...env, REPL_HISTORY_INFLIGHT: '2' }).replHistoryInflight).toBe(2);
     expect(() => loadAgentConfig({ ...env, REPL_HISTORY_INFLIGHT: '0' })).toThrow(/REPL_HISTORY_INFLIGHT/);
+  });
+
+  it('reads the Qwen endpoint only when the address and the key are both set (qwen-provider D1)', () => {
+    const base = { HUB_URL: 'wss://hub.internal.example.com/ws/agent', AGENT_TOKEN: TOKEN };
+    expect(loadAgentConfig(base).qwen).toBeNull();
+    expect(loadAgentConfig({ ...base, QWEN_OPENAI_BASE_URL: 'http://127.0.0.1:8080/v1' }).qwen).toBeNull();
+    expect(loadAgentConfig({ ...base, QWEN_OPENAI_API_KEY: 'k' }).qwen).toBeNull();
+    const c = loadAgentConfig({ ...base, QWEN_OPENAI_BASE_URL: 'http://127.0.0.1:8080/v1/', QWEN_OPENAI_API_KEY: 'k', QWEN_MODEL: 'qwen3.8-flash-next' });
+    expect(c.qwen).toEqual({ baseUrl: 'http://127.0.0.1:8080/v1', apiKey: 'k', model: 'qwen3.8-flash-next' });
+    expect(qwenFromEnv({ QWEN_OPENAI_BASE_URL: ' http://h/v1 ', QWEN_OPENAI_API_KEY: ' k ' })).toEqual({ baseUrl: 'http://h/v1', apiKey: 'k', model: null });
   });
 });

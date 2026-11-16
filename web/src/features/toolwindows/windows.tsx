@@ -4,6 +4,7 @@
  */
 import type { ComponentType, ReactNode } from 'react';
 import { useStore } from '../../store';
+import { openDraft } from '../workspace/actions';
 import { FilesWindow } from '../files/FilesWindow';
 import { MachinesWindow } from '../machines/MachinesWindow';
 import { refreshLimits } from '../limits/actions';
@@ -44,7 +45,7 @@ export const WINDOWS: Record<WinId, WinDef> = {
     fit: false,
     Body: SessionsWindow,
     actions: () => [
-      { icon: IconPlus, title: t('workspace.toolwindows.newSession'), run: () => useStore.setState({ modal: { type: 'new' } }) },
+      { icon: IconPlus, title: t('workspace.toolwindows.newSession'), run: () => openDraft() },
       { icon: IconSearch, title: t('workspace.toolwindows.search'), run: () => useStore.setState({ modal: { type: 'search' } }) },
     ],
   },

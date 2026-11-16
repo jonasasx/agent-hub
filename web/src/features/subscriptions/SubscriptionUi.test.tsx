@@ -5,13 +5,13 @@ import userEvent from '@testing-library/user-event';
 import type { HubEvent, SessionView } from '../../api/types';
 import { useStore } from '../../store';
 import { mockFetch, resetStore, runner, session } from '../../test/factories';
-import { NewSessionModal } from '../newSession/NewSessionModal';
+import { DraftView } from '../newSession/DraftView';
+import { openDraft } from '../workspace/actions';
 import { ForkModal } from '../fork/ForkModal';
 import { Chat } from '../chat/Chat';
 import { SwitchConfirm } from './SwitchConfirm';
 import { Settings } from '../settings/Settings';
 import { SUB_A, SUB_B, SUB_C, subView, subsResponse } from './fixtures';
-import { connectorsHint } from './model';
 
 const R14 = [
   runner({ protocolVersion: '1.4' }),
@@ -24,7 +24,16 @@ function base(subs = subsResponse()) {
   useStore.setState({ runners: R14, models: MODELS, subs });
 }
 
-describe('«Подписка» in «Новая сессия»', () => {
+function showDraft() {
+  act(() => openDraft());
+  const ws = useStore.getState().ws;
+  render(<DraftView draftId={ws.panes[ws.focus]!.active!} paneId={ws.focus} />);
+}
+
+const subChip = () => screen.getByRole('button', { name: /^Подписка:/ });
+const launchPosts = (calls: ReturnType<typeof mockFetch>) => calls.filter(c => c.url === '/api/sessions' && c.method === 'POST');
+
+describe('«Подписка» in the new-session draft', () => {
   beforeEach(() => {
     resetStore();
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -35,53 +44,46 @@ describe('«Подписка» in «Новая сессия»', () => {
     vi.unstubAllGlobals();
   });
 
-  it('Пустой реестр: no field, the body has no subscriptionId', async () => {
+  it('Пустой реестр: no chip, the body has no subscriptionId', async () => {
     base(subsResponse({ subscriptions: [], defaultId: null }));
     const calls = mockFetch({ 'POST /api/sessions': () => ({ status: 201, body: session() }) });
-    render(<NewSessionModal onClose={vi.fn()} />);
-    expect(screen.queryByLabelText('Подписка')).not.toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText('Первое сообщение'), 'привет');
-    await userEvent.click(screen.getByRole('button', { name: 'Запустить' }));
-    await vi.waitFor(() => expect(calls.find(c => c.method === 'POST')).toBeDefined());
-    expect(calls.find(c => c.method === 'POST')!.body).not.toHaveProperty('subscriptionId');
+    showDraft();
+    expect(screen.queryByRole('button', { name: /^Подписка:/ })).not.toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText('Первое сообщение'), 'привет{Enter}');
+    await vi.waitFor(() => expect(launchPosts(calls)).toHaveLength(1));
+    expect(launchPosts(calls)[0]!.body).not.toHaveProperty('subscriptionId');
   });
 
-  it('Предвыбор в форме: the last choice B is selected, a limit is marked; the start goes with the chosen id', async () => {
+  it('Предвыбор: the last choice B is shown, a limit is marked; the launch goes with the chosen id', async () => {
     const until = new Date(Date.now() + 3_600_000).toISOString();
-    base(subsResponse({ subscriptions: [subView({ limitResetsAt: until }), subView({ id: SUB_B, name: 'Pro рабочая', position: 1 })], lastChoiceId: SUB_B, defaultId: SUB_B, connectorsHint: true }));
+    base(subsResponse({ subscriptions: [subView({ limitResetsAt: until }), subView({ id: SUB_B, name: 'Pro рабочая', position: 1 })], lastChoiceId: SUB_B, defaultId: SUB_B }));
     const calls = mockFetch({ 'POST /api/sessions': () => ({ status: 201, body: session() }) });
-    render(<NewSessionModal onClose={vi.fn()} />);
-    const field = screen.getByLabelText('Подписка');
-    expect(field).toHaveValue(SUB_B);
-    expect(
-      within(field)
-        .getAllByRole('option')
-        .map(o => o.textContent),
-    ).toEqual([expect.stringMatching(/^Max личная \(лимит до \d\d:\d\d\)$/), 'Pro рабочая']);
-    expect(screen.getByText(connectorsHint())).toBeInTheDocument();
-    // another window changed the last choice: the untouched form follows it
+    showDraft();
+    expect(subChip()).toHaveAccessibleName('Подписка: Pro рабочая');
+    // another window changed the last choice: the untouched draft follows it
     act(() => useStore.setState({ subs: subsResponse({ lastChoiceId: SUB_A, defaultId: SUB_A }) }));
-    expect(field).toHaveValue(SUB_A);
-    await userEvent.selectOptions(field, SUB_B);
-    await userEvent.type(screen.getByLabelText('Первое сообщение'), 'привет');
-    await userEvent.click(screen.getByRole('button', { name: 'Запустить' }));
-    await vi.waitFor(() => expect(calls.find(c => c.method === 'POST')?.body).toMatchObject({ subscriptionId: SUB_B, runnerId: 'x1' }));
+    expect(subChip()).toHaveAccessibleName('Подписка: Max личная');
+    act(() => useStore.setState({ subs: subsResponse({ subscriptions: [subView({ limitResetsAt: until }), subView({ id: SUB_B, name: 'Pro рабочая', position: 1 })] }) }));
+    await userEvent.click(subChip());
+    expect(screen.getAllByRole('menuitemradio').map(o => o.textContent)).toEqual([expect.stringMatching(/^Max личная \(лимит до \d\d:\d\d\)$/), 'Pro рабочая']);
+    await userEvent.click(screen.getByRole('menuitemradio', { name: 'Pro рабочая' }));
+    await userEvent.type(screen.getByLabelText('Первое сообщение'), 'привет{Enter}');
+    await vi.waitFor(() => expect(launchPosts(calls)[0]?.body).toMatchObject({ subscriptionId: SUB_B, runnerId: 'x1' }));
   });
 
-  it('Устаревший агент: a hint instead of the field, no subscriptionId', async () => {
+  it('Устаревший агент: a note instead of the chip, no subscriptionId', async () => {
     base();
     useStore.setState({ runners: [runner({ protocolVersion: '1.3' })] });
     const calls = mockFetch({ 'POST /api/sessions': () => ({ status: 201, body: session() }) });
-    render(<NewSessionModal onClose={vi.fn()} />);
-    expect(screen.queryByRole('combobox', { name: 'Подписка' })).not.toBeInTheDocument();
-    expect(screen.getByText('Агент на X1 устарел — сессия пойдёт под входом машины — обновите агента')).toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText('Первое сообщение'), 'привет');
-    await userEvent.click(screen.getByRole('button', { name: 'Запустить' }));
-    await vi.waitFor(() => expect(calls.find(c => c.method === 'POST')).toBeDefined());
-    expect(calls.find(c => c.method === 'POST')!.body).not.toHaveProperty('subscriptionId');
+    showDraft();
+    expect(screen.queryByRole('button', { name: /^Подписка:/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('note')).toHaveTextContent('Агент на X1 устарел — сессия пойдёт под входом машины — обновите агента');
+    await userEvent.type(screen.getByLabelText('Первое сообщение'), 'привет{Enter}');
+    await vi.waitFor(() => expect(launchPosts(calls)).toHaveLength(1));
+    expect(launchPosts(calls)[0]!.body).not.toHaveProperty('subscriptionId');
   });
 
-  it('Выбранная подписка выведена: 422 subscription_unavailable — the list is reloaded and the text is under the field', async () => {
+  it('Выбранная подписка выведена: 422 subscription_unavailable — the list is reloaded, the banner names both, the chip is highlighted', async () => {
     base();
     const calls = mockFetch({
       'POST /api/sessions': () => ({ status: 422, body: { error: 'subscription_unavailable' } }),
@@ -90,52 +92,76 @@ describe('«Подписка» in «Новая сессия»', () => {
         body: subsResponse({ subscriptions: [subView({ retired: true }), subView({ id: SUB_B, name: 'Pro рабочая', position: 1 })], defaultId: SUB_B }),
       }),
     });
-    const onClose = vi.fn();
-    render(<NewSessionModal onClose={onClose} />);
-    await userEvent.type(screen.getByLabelText('Первое сообщение'), 'привет');
-    await userEvent.click(screen.getByRole('button', { name: 'Запустить' }));
-    // M2: the text names the subscription that left and the one the field shows now, not a bare error next to it
-    expect(await screen.findByText('Подписка «Max личная» недоступна — выбрана «Pro рабочая», проверьте и запустите снова')).toBeInTheDocument();
-    await vi.waitFor(() => expect(screen.getByLabelText('Подписка')).toHaveValue(SUB_B));
-    // a new pick clears it
-    await userEvent.selectOptions(screen.getByLabelText('Подписка'), SUB_B);
-    expect(screen.queryByText(/недоступна/)).not.toBeInTheDocument();
+    showDraft();
+    await userEvent.type(screen.getByLabelText('Первое сообщение'), 'привет{Enter}');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Подписка «Max личная» недоступна — выбрана «Pro рабочая», проверьте и запустите снова');
+    expect(screen.getByLabelText('Первое сообщение')).toHaveValue('привет');
+    expect(subChip()).toHaveAttribute('aria-invalid', 'true');
+    expect(subChip()).toHaveAccessibleName('Подписка: Pro рабочая');
     expect(calls.some(c => c.url === '/api/subscriptions')).toBe(true);
-    expect(onClose).not.toHaveBeenCalled();
+    // a new pick clears it
+    await userEvent.click(subChip());
+    await userEvent.click(screen.getByRole('menuitemradio', { name: 'Pro рабочая' }));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(subChip()).not.toHaveAttribute('aria-invalid');
   });
 
-  it('Явный выбор выведен в другом окне: no silent replacement — a disabled «(выведена)» option, the text, «Запустить» blocked until a new pick', async () => {
+  it('Явный выбор выведен в другом окне: no silent replacement — the chip keeps it and is highlighted, the launch is refused until a new pick', async () => {
     base();
     const calls = mockFetch({ 'POST /api/sessions': () => ({ status: 201, body: session() }) });
-    render(<NewSessionModal onClose={vi.fn()} />);
-    const field = screen.getByLabelText('Подписка') as HTMLSelectElement;
-    await userEvent.selectOptions(field, SUB_B);
+    showDraft();
+    await userEvent.click(subChip());
+    await userEvent.click(screen.getByRole('menuitemradio', { name: 'Pro рабочая' }));
     await userEvent.type(screen.getByLabelText('Первое сообщение'), 'привет');
     // subscriptions.changed from another window: «Pro рабочая» retired
     act(() => useStore.setState({ subs: subsResponse({ subscriptions: [subView(), subView({ id: SUB_B, name: 'Pro рабочая', position: 1, retired: true })] }) }));
-    expect(field).toHaveValue(SUB_B);
-    expect(field.selectedOptions[0]).toBeDisabled();
-    expect(field.selectedOptions[0]).toHaveTextContent('Pro рабочая (выведена)');
-    expect(screen.getByText('Подписка «Pro рабочая» выведена — выберите другую')).toBeInTheDocument();
-    expect(field).toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByRole('button', { name: 'Запустить' })).toBeDisabled();
-    // Ctrl+Enter does not get around it
-    await userEvent.type(screen.getByLabelText('Первое сообщение'), '{Control>}{Enter}{/Control}');
-    expect(calls.some(c => c.method === 'POST')).toBe(false);
-    await userEvent.selectOptions(field, SUB_A);
-    expect(screen.queryByText(/выведена — выберите другую/)).not.toBeInTheDocument();
+    expect(subChip()).toHaveAccessibleName('Подписка: Pro рабочая');
+    expect(subChip()).toHaveAttribute('aria-invalid', 'true');
+    await userEvent.keyboard('{Enter}');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Подписка «Pro рабочая» выведена — выберите другую');
+    expect(launchPosts(calls)).toHaveLength(0);
+    await userEvent.click(subChip());
+    expect(screen.queryByRole('menuitemradio', { name: /Pro рабочая/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('menuitemradio', { name: 'Max личная' }));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Запустить' }));
-    await vi.waitFor(() => expect(calls.find(c => c.method === 'POST')?.body).toMatchObject({ subscriptionId: SUB_A }));
+    await vi.waitFor(() => expect(launchPosts(calls)[0]?.body).toMatchObject({ subscriptionId: SUB_A }));
   });
 
-  it('Автопредвыбор (поле не трогали) по-прежнему тихо следует за умолчанием хаба', () => {
+  it('Автопредвыбор (чип не трогали) по-прежнему тихо следует за умолчанием хаба', () => {
     base();
-    render(<NewSessionModal onClose={vi.fn()} />);
-    expect(screen.getByLabelText('Подписка')).toHaveValue(SUB_A);
+    mockFetch({});
+    showDraft();
+    expect(subChip()).toHaveAccessibleName('Подписка: Max личная');
     act(() => useStore.setState({ subs: subsResponse({ subscriptions: [subView({ retired: true }), subView({ id: SUB_B, name: 'Pro рабочая', position: 1 })], defaultId: SUB_B }) }));
-    expect(screen.getByLabelText('Подписка')).toHaveValue(SUB_B);
-    expect(screen.queryByText(/выведена/)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Запустить' })).toBeEnabled();
+    expect(subChip()).toHaveAccessibleName('Подписка: Pro рабочая');
+    expect(subChip()).not.toHaveAttribute('aria-invalid');
+  });
+
+  it('C3: the preselected last choice stays, a known limit or a rejected token is a note in the chip list', async () => {
+    const until = new Date(Date.now() + 2 * 3_600_000);
+    base(
+      subsResponse({
+        subscriptions: [
+          subView({ limitResetsAt: until.toISOString() }),
+          subView({ id: SUB_B, name: 'Pro рабочая', position: 1, tokenRejected: true }),
+          subView({ id: SUB_C, name: 'Третья', position: 2 }),
+        ],
+        lastChoiceId: SUB_A,
+        defaultId: SUB_A,
+      }),
+    );
+    mockFetch({});
+    showDraft();
+    expect(subChip()).toHaveAccessibleName('Подписка: Max личная');
+    await userEvent.click(subChip());
+    expect(screen.getByText(/^Лимит до \d\d:\d\d — первый ход упрётся в лимит$/)).toHaveClass('chip-note');
+    await userEvent.click(screen.getByRole('menuitemradio', { name: /^Pro рабочая/ }));
+    await userEvent.click(subChip());
+    expect(screen.getByText('Токен отклонён — замените токен')).toHaveClass('chip-note');
+    await userEvent.click(screen.getByRole('menuitemradio', { name: /^Третья/ }));
+    await userEvent.click(subChip());
+    expect(document.querySelector('.chip-note')).toBeNull();
   });
 
   it('Handoff: an explicit choice retired meanwhile blocks «Запустить handoff»', async () => {
@@ -149,31 +175,6 @@ describe('«Подписка» in «Новая сессия»', () => {
     act(() => useStore.setState({ subs: subsResponse({ subscriptions: [subView(), subView({ id: SUB_B, name: 'Pro рабочая', position: 1, retired: true })] }) }));
     expect(screen.getByText('Подписка «Pro рабочая» выведена — выберите другую')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Запустить handoff' })).toBeDisabled();
-  });
-
-  it('C3: the preselected last choice stays, a known limit or a rejected token is a warning under the field', async () => {
-    const until = new Date(Date.now() + 2 * 3_600_000);
-    base(
-      subsResponse({
-        subscriptions: [
-          subView({ limitResetsAt: until.toISOString() }),
-          subView({ id: SUB_B, name: 'Pro рабочая', position: 1, tokenRejected: true }),
-          subView({ id: SUB_C, name: 'Третья', position: 2 }),
-        ],
-        lastChoiceId: SUB_A,
-        defaultId: SUB_A,
-      }),
-    );
-    render(<NewSessionModal onClose={vi.fn()} />);
-    const field = screen.getByLabelText('Подписка');
-    expect(field).toHaveValue(SUB_A);
-    const warn = screen.getByText(/^Лимит до \d\d:\d\d — первый ход упрётся в лимит$/);
-    expect(warn).toHaveClass('sub-warn', 'warn');
-    expect(field.getAttribute('aria-describedby')).toContain(warn.id);
-    await userEvent.selectOptions(field, SUB_B);
-    expect(screen.getByText('Токен отклонён — замените токен')).toHaveClass('sub-warn', 'bad');
-    await userEvent.selectOptions(field, SUB_C);
-    expect(document.querySelector('.sub-warn')).toBeNull();
   });
 
   it('Handoff под другой подпиской: the handoff form has the field, the copy does not', async () => {

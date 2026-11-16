@@ -214,6 +214,7 @@ export default {
   'hub.sessions.notFound': 'Sitzung nicht gefunden',
   'hub.sessions.notImage': 'Die Datei ist kein PNG-, JPEG-, GIF- oder WebP-Bild',
   'hub.sessions.notRunning': 'In der Sitzung läuft kein Durchlauf',
+  'hub.sessions.turnRunning': 'In der Sitzung läuft ein Durchlauf oder Hintergrundarbeit: Sie kann jetzt nicht schlafen',
   'hub.sessions.noteCrashed': 'Der Claude-Code-Prozess ist abgestürzt',
   'hub.sessions.noteCrashedWith': 'Der Claude-Code-Prozess ist abgestürzt: {error}',
   'hub.sessions.noteDeliveredAfterAll': 'Die Nachricht ist doch noch in der Sitzung angekommen: {quote}',
@@ -308,4 +309,5 @@ export default {
   'hub.voiceTalk.long': 'Die Aufgabe dauert länger, ich arbeite weiter und sage Bescheid, wenn ich fertig bin.',
   'hub.voiceTalk.offline': 'Der Rechner der Sitzung ist offline.',
   'hub.voiceTalk.failed': 'Die Nachricht konnte nicht an die Sitzung gesendet werden.',
+  'hub.sessions.qwenEndpointDown': '{label}: Der Modell-Endpunkt auf {name} antwortet nicht oder lehnt den Schlüssel ab. Prüfen Sie agent.env',
 } satisfies Dict;

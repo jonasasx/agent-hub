@@ -105,4 +105,7 @@ export default {
   'machines.defaultDir.hint': 'Las sesiones de esta máquina empiezan aquí; la carpeta del proyecto se indica respecto a ella.',
   'machines.defaultDir.failed': 'No se pudo cambiar la carpeta predeterminada',
   'machines.menu.defaultDir': 'Carpeta predeterminada…',
+  'machines.qwen.ok': 'endpoint disponible',
+  'machines.qwen.down': 'el endpoint no responde o rechaza la clave',
+  'machines.qwen.hint': 'sin inicio de sesión: la dirección y la clave están en agent.env de la máquina',
 } satisfies Dict;

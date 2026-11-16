@@ -1,6 +1,6 @@
 {
   "name": "@agent-hub/agent",
-  "version": "0.8.19",
+  "version": "0.8.22",
   "private": true,
   "type": "module",
   "scripts": {
@@ -22,5 +22,8 @@
     "@types/cross-spawn": "^6.0.6",
     "@types/ws": "^8.18.2",
     "esbuild": "^0.28.2"
+  },
+  "optionalDependencies": {
+    "@qwen-code/sdk": "0.1.34"
   }
 }

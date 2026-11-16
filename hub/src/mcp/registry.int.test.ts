@@ -1213,6 +1213,55 @@ describe('MCP registry draft tools', () => {
     expect(logs.slice(beforeLogs).join('\n')).not.toContain('MCP gateway status update rejected');
   });
 
+  it('Причина ошибки сервера реестра в панели сессии: the gateway reason of the session machine reaches the panel', async () => {
+    const name = `registry_gateway_reason_${randomUUID().slice(0, 8)}`;
+    const created = await t.hub.app.inject({
+      method: 'POST',
+      url: '/api/mcp/registry',
+      cookies: { ah_session: cookie },
+      headers: { origin: PUBLIC_URL },
+      payload: { server: { ...candidate(name).server, command: 'wsl.exe' } },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const serverId = (created.json() as { id: string }).id;
+    const otherRunner = randomUUID();
+    await t.addRunner(otherRunner, `mcp_gateway_other_${otherRunner.slice(0, 8)}`);
+    const sdkError = 'SdkHttpError dialing http://127.0.0.1:1/mcp (CLIENT_HTTP_NOT_IMPLEMENTED)';
+    await t.tdb.pool.query(`update sessions set mcp_servers=$2::jsonb, mcp_observed_at=now() where id=$1`, [
+      sessionId,
+      JSON.stringify([
+        { name, status: 'failed', transport: 'http', toolCount: 0, error: sdkError },
+        { name: 'agent-hub', status: 'failed', transport: 'http', toolCount: 0, error: 'boom' },
+      ]),
+    ]);
+    const insert = (machine: string, session: string | null, status: string, error: string | null, at: number) =>
+      t.tdb.pool.query(`insert into mcp_gateway_statuses(server_id,machine_id,session_id,status,error,observed_at) values($1,$2,$3,$4,$5,$6)`, [
+        serverId,
+        machine,
+        session,
+        status,
+        error,
+        new Date(at),
+      ]);
+    const panel = async () => {
+      const response = await t.hub.app.inject({ method: 'GET', url: `/api/sessions/${sessionId}/mcp`, cookies: { ah_session: cookie } });
+      expect(response.statusCode, response.body).toBe(200);
+      return (response.json() as { servers: Array<Record<string, unknown>> }).servers;
+    };
+    const now = Date.now();
+    await insert(otherRunner, null, 'failed', 'command not found: elsewhere', now - 1000);
+    expect((await panel()).find(s => s.name === name)?.gateway).toBeUndefined();
+    await insert(runnerId, null, 'failed', 'command not found: wsl.exe', now - 500);
+    const servers = await panel();
+    expect(servers.find(s => s.name === name)).toMatchObject({
+      error: sdkError,
+      gateway: { serverId, status: 'failed', error: 'command not found: wsl.exe', observedAt: new Date(now - 500).toISOString() },
+    });
+    expect(servers.find(s => s.name === 'agent-hub')?.gateway).toBeUndefined();
+    await insert(runnerId, sessionId, 'ready', null, now);
+    expect((await panel()).find(s => s.name === name)?.gateway).toBeUndefined();
+  });
+
   it('gates connection checks for protocol 1.12 agents', async () => {
     const oldRunnerId = randomUUID();
     const oldToken = await t.addRunner(oldRunnerId, 'mcp_old_agent');

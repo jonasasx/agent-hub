@@ -8,7 +8,8 @@ import type { HubEvent, SessionView } from '../../api/types';
 import { useStore } from '../../store';
 import { RUNNERS, mockFetch, resetStore, session } from '../../test/factories';
 import { Chat } from '../chat/Chat';
-import { NewSessionModal } from '../newSession/NewSessionModal';
+import { DraftView } from '../newSession/DraftView';
+import { openDraft } from '../workspace/actions';
 import { addFiles, useAttachments } from './attachments';
 import { ImageGroup, Lightbox, picOf, useLightbox } from './ImagePreview';
 import type { Codec } from './normalize';
@@ -399,7 +400,7 @@ describe('attachments in the composer (3.18)', () => {
     expect(screen.queryByRole('button', { name: 'Повторить' })).toBeNull();
   });
 
-  it('502 attachment_delivery_failed at start: the form keeps the text and the thumbnail; «Повторить» starts the session', async () => {
+  it('502 attachment_delivery_failed at start: the draft keeps the text and the thumbnail; «Повторить» starts the session', async () => {
     fakeUploads();
     vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: () => 'blob:n', revokeObjectURL: () => undefined }));
     useStore.setState({ runners: RUNNERS, models: [{ value: 'haiku', displayName: 'Haiku 5.5' }] });
@@ -410,18 +411,19 @@ describe('attachments in the composer (3.18)', () => {
       '/api/sessions/': () => ({ status: 200, body: { events: [], before: null } }),
       '/api/sidebar': () => ({ status: 200, body: { now: [], projects: [], runners: RUNNERS } }),
     });
-    const onClose = vi.fn();
-    render(<NewSessionModal onClose={onClose} />);
-    act(() => addFiles('new', [pngFile()], codec));
-    await waitFor(() => expect(useAttachments.getState().byKey.new?.[0]?.status).toBe('ready'));
+    act(() => openDraft());
+    const ws = useStore.getState().ws;
+    const draftId = ws.panes[ws.focus]!.active!;
+    render(<DraftView draftId={draftId} paneId={ws.focus} />);
+    act(() => addFiles(draftId, [pngFile()], codec));
+    await waitFor(() => expect(useAttachments.getState().byKey[draftId]?.[0]?.status).toBe('ready'));
     await userEvent.type(screen.getByLabelText('Первое сообщение'), 'какой код?');
     await userEvent.click(screen.getByRole('button', { name: 'Запустить' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Изображения не дошли до X1 — сессия не запущена');
     expect(screen.getByLabelText('Первое сообщение')).toHaveValue('какой код?');
-    expect(useAttachments.getState().byKey.new).toHaveLength(1);
-    expect(onClose).not.toHaveBeenCalled();
+    expect(useAttachments.getState().byKey[draftId]).toHaveLength(1);
     await userEvent.click(screen.getByRole('button', { name: 'Повторить' }));
-    await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
+    await vi.waitFor(() => expect(useStore.getState().ws.panes[ws.focus]!.active).toBe(created.id));
     const posts = calls.filter(c => c.url === '/api/sessions' && c.method === 'POST');
     expect(posts[1]!.body).toMatchObject({ prompt: 'какой код?', attachments: [{ sha256: SHA(1) }] });
   });

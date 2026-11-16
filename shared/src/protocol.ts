@@ -52,11 +52,17 @@ import { fsListPayload, fsReadChunkPayload, fsReadPayload } from './files.js';
  * (`projectRoots` in mcp.import.preview), `projectIds` honoured by the agent, static `oauthClientId`.
  * 1.18 (change `agent-project-tools`, design D1): ops `projects`, `project_create`, `project_update` in peers.request.
  * 1.19 (change `session-machine-context`, design D1): the hub name of the session's machine `machineName` in session.start/resume.
+ * 1.20 (change `session-context-usage`, design D1): message session.context — a snapshot of a session's context window.
+ * 1.21 (change `qwen-provider`, design D7): the provider `qwen` (an OpenAI-compatible endpoint, no subscriptions) in session.start/resume/fork and hello.providers.
  * Minor versions talk to each other (D3); images need 1.2 on the agent, subscriptions 1.4, self-update 1.5, limits 1.6,
  * MCP management 1.7, MCP sign-out 1.8, session peers 1.9, providers other than Claude 1.10, negotiated fs.list-dirs 1.13, fs.browse 1.14,
  * the project catalogue in the session context 1.15, file download 1.16.
  */
-export const PROTOCOL_VERSION = '1.19';
+export const PROTOCOL_VERSION = '1.21';
+/** The first protocol version whose agents run sessions of the provider `qwen` (change `qwen-provider`, design D7). */
+export const QWEN_PROTOCOL = '1.21';
+/** The first protocol version whose hubs take session.context (session-context-usage D1). */
+export const CONTEXT_PROTOCOL = '1.20';
 /** The first protocol version whose agents take `machineName` in session.start/resume (session-machine-context D1). */
 export const MACHINE_NAME_PROTOCOL = '1.19';
 /** The first protocol version whose agents give sessions the project catalogue tools (agent-project-tools D5). */
@@ -171,12 +177,18 @@ export const protectedDirsSchema = z.enum(['ok', 'denied', 'n/a']);
 export type ProtectedDirs = z.infer<typeof protectedDirsSchema>;
 
 /** agent-providers D1: the vendor of a session. Absent in a command — `claude` (hubs and agents before 1.10). */
-export const PROVIDERS = ['claude', 'codex'] as const;
+export const PROVIDERS = ['claude', 'codex', 'qwen'] as const;
 export const providerSchema = z.enum(PROVIDERS);
 export type Provider = z.infer<typeof providerSchema>;
+/** Providers whose sessions run under a subscription of the registry; qwen has none (qwen-provider D6). */
+export const SUBSCRIPTION_PROVIDERS = ['claude', 'codex'] as const;
+export type SubscriptionProvider = (typeof SUBSCRIPTION_PROVIDERS)[number];
 /** Providers other than Claude an agent reports (Claude has hello.claude). */
-export const extraProviderSchema = z.enum(['codex']);
+export const extraProviderSchema = z.enum(['codex', 'qwen']);
 export type ExtraProvider = z.infer<typeof extraProviderSchema>;
+/** Providers with a device-code sign-in; qwen has none, its sign-in is the reachability of the endpoint (qwen-provider D2). */
+export const deviceLoginProviderSchema = z.enum(['codex']);
+export type DeviceLoginProvider = z.infer<typeof deviceLoginProviderSchema>;
 export const providerLoginSchema = z.enum(['ok', 'missing', 'rejected', 'unknown']);
 export type ProviderLogin = z.infer<typeof providerLoginSchema>;
 /** 1.10 (agent-providers D2): a provider of the machine — CLI version, sign-in and its account. Never a token. */
@@ -392,6 +404,48 @@ export type McpSnapshot = z.infer<typeof mcpSnapshotSchema>;
 
 /** 1.7 mcp.status: a snapshot of a live session's MCP servers; sent on change (and in reply to mcp.status.get). */
 export const mcpStatusPayload = z.object({ sessionId, snapshot: mcpSnapshotSchema });
+/** 1.20 session.context: a category of the context window (`/context`); `kind` of an unknown category reads as 'used'. */
+export const contextCategorySchema = z.object({
+  id: z.string().min(1).max(64),
+  name: z.string().max(100),
+  kind: z.enum(['used', 'free', 'buffer', 'deferred']).catch('used'),
+  tokens: nonNegInt,
+});
+export type ContextCategory = z.infer<typeof contextCategorySchema>;
+
+/**
+ * 1.20 session.context: the context window of a live session after a finished turn (session-context-usage D1). Claude
+ * sends categories and lists sorted by tokens desc, Codex only used and window tokens.
+ */
+export const sessionContextPayload = z.object({
+  sessionId,
+  /** ms since epoch, when the agent read the usage. */
+  observedAt: z.number().nonnegative(),
+  model: z.string().max(200).nullable(),
+  usedTokens: nonNegInt,
+  windowTokens: z.number().int().positive(),
+  /** may exceed 100 */
+  percent: nonNegInt,
+  categories: z.array(contextCategorySchema).max(30).optional(),
+  mcpServers: z
+    .array(z.object({ name: z.string().max(200), tools: nonNegInt, loadedTools: nonNegInt, tokens: nonNegInt }))
+    .max(100)
+    .optional(),
+  memoryFiles: z
+    .array(z.object({ path: z.string().max(1000), type: z.string().max(32), tokens: nonNegInt }))
+    .max(100)
+    .optional(),
+  skills: z
+    .array(z.object({ name: z.string().max(200), source: z.string().max(64), tokens: nonNegInt }))
+    .max(300)
+    .optional(),
+  agents: z
+    .array(z.object({ agentType: z.string().max(200), source: z.string().max(64), tokens: nonNegInt }))
+    .max(200)
+    .optional(),
+});
+export type SessionContextPayload = z.infer<typeof sessionContextPayload>;
+
 /** 1.7 mcp.auth.done: the end of a sign-in attempt after the callback (submit + reconnect), for the UI and the sleep lock. */
 export const mcpAuthDonePayload = z.object({
   sessionId,
@@ -778,7 +832,7 @@ export const sessionForkPayload = z.object({ sourceSessionId: sessionId, cwd: no
  * ProviderLoginStart. The end comes as provider.login.done.
  */
 export const providerLoginStartPayload = z.object({
-  provider: extraProviderSchema,
+  provider: deviceLoginProviderSchema,
   /** 1.11: the sign-in is for a subscription of the registry: it runs in a temporary CODEX_HOME and the auth.json goes to the hub. */
   forSubscription: z.boolean().optional(),
 });
@@ -789,11 +843,11 @@ export const providerLoginStartResultSchema = z.object({
   expiresAt: z.number().nonnegative(),
 });
 export type ProviderLoginStart = z.infer<typeof providerLoginStartResultSchema>;
-export const providerLoginCancelPayload = z.object({ provider: extraProviderSchema, loginId: nonEmpty });
-export const providerLogoutPayload = z.object({ provider: extraProviderSchema });
+export const providerLoginCancelPayload = z.object({ provider: deviceLoginProviderSchema, loginId: nonEmpty });
+export const providerLogoutPayload = z.object({ provider: deviceLoginProviderSchema });
 /** 1.10 agent → hub: the device-code sign-in ended (ok, or why not). */
 export const providerLoginDonePayload = z.object({
-  provider: extraProviderSchema,
+  provider: deviceLoginProviderSchema,
   loginId: nonEmpty,
   ok: z.boolean(),
   error: z.string().max(500).optional(),
@@ -919,6 +973,7 @@ export const agentMessageSchema = z.discriminatedUnion('type', [
   msg('agent.update.result', agentUpdateResultPayload),
   msg('limits.event', limitsEventPayload),
   msg('mcp.status', mcpStatusPayload),
+  msg('session.context', sessionContextPayload),
   msg('mcp.auth.done', mcpAuthDonePayload),
   msg('mcp.registry.ack', mcpRegistryAckPayload),
   reply('mcp.registry.validate.result', mcpRegistryValidateResultPayload),

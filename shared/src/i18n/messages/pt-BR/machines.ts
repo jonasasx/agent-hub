@@ -105,4 +105,7 @@ export default {
   'machines.defaultDir.hint': 'As sessões desta máquina começam aqui; a pasta do projeto é definida em relação a ela.',
   'machines.defaultDir.failed': 'Não foi possível alterar a pasta padrão',
   'machines.menu.defaultDir': 'Pasta padrão…',
+  'machines.qwen.ok': 'endpoint disponível',
+  'machines.qwen.down': 'o endpoint não responde ou recusa a chave',
+  'machines.qwen.hint': 'sem login: o endereço e a chave ficam no agent.env da máquina',
 } satisfies Dict;

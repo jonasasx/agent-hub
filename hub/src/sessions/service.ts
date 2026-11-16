@@ -43,7 +43,7 @@ import {
   projectDir,
   providerLoginStartResultSchema,
   type CopyUnavailableReason,
-  type ExtraProvider,
+  type DeviceLoginProvider,
   type Provider,
   type ProviderLoginStart,
 } from '@agent-hub/shared';
@@ -61,6 +61,7 @@ import {
   permissionEvent,
   selectSessions,
   sessionSleepsAt,
+  storeSessionContext,
   toSessionView,
   type SessionBase,
   type SessionRow,
@@ -116,6 +117,8 @@ export function assertProviderReady(runner: Pick<RunnerRow, 'name' | 'providers'
   const label = PROVIDER_LABELS[provider];
   if (!p) throw new HttpError(422, 'provider_unavailable', { key: 'hub.sessions.providerUnavailable', params: { label, name: runner.name } });
   // provider-parity: under a subscription of the registry the machine's own sign-in is not needed
+  // qwen-provider D2: Qwen has no sign-in, «not ok» means the endpoint of the machine does not answer or refuses the key
+  if (provider === 'qwen' && p.login !== 'ok') throw new HttpError(422, 'provider_login_required', { key: 'hub.sessions.qwenEndpointDown', params: { label, name: runner.name } });
   if (!underSubscription && p.login !== 'ok') throw new HttpError(422, 'provider_login_required', { key: 'hub.sessions.providerNoSubscription', params: { label } });
 }
 
@@ -367,6 +370,33 @@ export class SessionService {
     this.o.ui.broadcast(userId, { type: 'projects.changed' });
   }
 
+  /** The hub's idle timeout (env IDLE_TIMEOUT_MIN): «как в хабе» in Settings → Sessions. */
+  get hubIdleTimeoutMin(): number {
+    return this.defaults.idle;
+  }
+
+  /**
+   * session-sleep-controls D3: the user's default idle timeout changed — the windows get the new countdown of the
+   * awake sessions; the sleep itself comes with the next checkIdle pass (≤30 s).
+   */
+  async idleDefaultsChanged(userId: string): Promise<void> {
+    const rows = await this.o.db.selectFrom('sessions').select('id').where('user_id', '=', userId).where('status', 'in', ['waiting', 'permission']).where('process_alive', '=', true).execute();
+    for (const r of rows) await this.upsert(r.id).catch(() => undefined);
+  }
+
+  /** POST /api/sessions/:id/sleep. Requirement: Ручное усыпление сессии (session-sleep-controls D4). */
+  async sleepNow(userId: string, id: string): Promise<SessionView> {
+    return this.withSession(userId, id, async s => {
+      this.assertWritable(s);
+      // a turn, subagents, background commands and hub children are not killed
+      if (s.status === 'working' || Number(s.children_working ?? 0) > 0) throw new HttpError(409, 'turn_running', { key: 'hub.sessions.turnRunning' });
+      if (!s.process_alive || (s.status !== 'waiting' && s.status !== 'permission')) throw new HttpError(409, 'not_running', { key: 'hub.sessions.notRunning' });
+      await this.onlineRunner(userId, s.runner_id);
+      await this.sleep(s);
+      return this.upsert(s.id);
+    });
+  }
+
   view(r: SessionRow): SessionView {
     const v = toSessionView(r, this.defaults, this.o.projects?.catalog, this.now().getTime(), this.o.subscriptions?.enabled ?? false);
     // the countdown follows the sleep rule, an MCP sign-in hold included
@@ -419,7 +449,8 @@ export class SessionService {
 
   /** The subscription of a launch on `runner` (P6): null — the machine login. `id` undefined — the default one. */
   private async credFor(userId: string, runner: RunnerRow | undefined, id?: string | null, provider: Provider = 'claude'): Promise<SubscriptionCredFull | null> {
-    if (!this.o.subscriptions || !runner) return null;
+    // qwen-provider D6: Qwen has no subscriptions, the endpoint of the machine is its only credential
+    if (!this.o.subscriptions || !runner || provider === 'qwen') return null;
     return this.o.subscriptions.credFor(userId, runner, id, provider);
   }
 
@@ -459,6 +490,8 @@ export class SessionService {
     if (provider === 'claude') return DEFAULT_MODELS[0]!.value;
     const runner = await this.ownedRunner(userId, runnerId);
     const own = runner.providers?.find(p => p.id === provider)?.models?.[0]?.value;
+    // qwen-provider D2: the models are those of the endpoint of this very machine, other machines' lists do not apply
+    if (provider === 'qwen' && !own) throw new HttpError(422, 'provider_login_required', { key: 'hub.sessions.qwenEndpointDown', params: { label: PROVIDER_LABELS[provider], name: runner.name } });
     const rows = own ? [] : await this.o.db.selectFrom('runners').select('providers').where('user_id', '=', userId).orderBy('created_at').execute();
     const reported = rows.flatMap(r => r.providers ?? []).find(p => p.id === provider && p.login === 'ok' && p.models?.length)?.models?.[0]?.value;
     const first = own ?? reported ?? (await this.listModels(userId, provider))[0]?.value;
@@ -469,7 +502,7 @@ export class SessionService {
   // ---------- providers of the machine (agent-providers D10) ----------
 
   /** POST /api/runners/:id/providers/:provider/login: a device-code sign-in on the machine; the end comes as WS provider.login. */
-  async providerLoginStart(userId: string, runnerId: string, provider: ExtraProvider): Promise<ProviderLoginStart> {
+  async providerLoginStart(userId: string, runnerId: string, provider: DeviceLoginProvider): Promise<ProviderLoginStart> {
     const { runner, conn } = await this.onlineRunner(userId, runnerId);
     if (!runner.providers?.some(p => p.id === provider))
       throw new HttpError(422, 'provider_unavailable', { key: 'hub.sessions.providerUnavailable', params: { label: PROVIDER_LABELS[provider], name: runner.name } });
@@ -566,7 +599,7 @@ export class SessionService {
   }
 
   /** DELETE /api/runners/:id/providers/:provider/login/:loginId: the sign-in is cancelled on the machine. */
-  async providerLoginCancel(userId: string, runnerId: string, provider: ExtraProvider, loginId: string): Promise<void> {
+  async providerLoginCancel(userId: string, runnerId: string, provider: DeviceLoginProvider, loginId: string): Promise<void> {
     const { runner, conn } = await this.onlineRunner(userId, runnerId);
     try {
       await conn.request('provider.login.cancel', { provider, loginId }, 30_000);
@@ -576,7 +609,7 @@ export class SessionService {
   }
 
   /** POST /api/runners/:id/providers/:provider/logout. */
-  async providerLogout(userId: string, runnerId: string, provider: ExtraProvider): Promise<void> {
+  async providerLogout(userId: string, runnerId: string, provider: DeviceLoginProvider): Promise<void> {
     const { runner, conn } = await this.onlineRunner(userId, runnerId);
     try {
       await conn.request('provider.logout', { provider }, 60_000);
@@ -1165,6 +1198,12 @@ export class SessionService {
       }
       case 'session.result':
         return this.onResult(runnerId, m.payload);
+      case 'session.context': {
+        // session-context-usage D3: the last snapshot, the ring of every open window through session.upsert
+        const s = await findSessionByClaudeId(this.o.db, runnerId, m.payload.sessionId);
+        if (s && (await storeSessionContext(this.o.db, s.id, m.payload))) await this.upsert(s.id);
+        return;
+      }
       case 'session.exited':
         return this.onExited(runnerId, m.payload);
       case 'permission.request':
@@ -1313,6 +1352,8 @@ export class SessionService {
       await this.emitEvents(s, [await addNote(this.o.db, s.id, 'error', text)]);
       return false;
     }
+    // qwen-provider D6: Qwen has no subscriptions, nothing below applies to it
+    if (s.provider === 'qwen') return false;
     if (!subs || !sub) {
       // the machine login (or no registry): the reason in plain text, no switch offered from here
       const text: I18nText =
@@ -1387,6 +1428,7 @@ export class SessionService {
 
   /** The alternatives of a failure note: without the subscriptions that already failed in this turn (auto switch). */
   private async alternativesAfter(s: SessionBase, failedId: string): Promise<string[]> {
+    if (s.provider === 'qwen') return [];
     const tried = this.triedInTurn.get(s.id);
     return (await this.o.subscriptions!.alternatives(s.user_id, failedId, s.provider)).filter(a => !tried?.has(a.id)).map(a => a.id);
   }
@@ -1429,6 +1471,8 @@ export class SessionService {
     const plan = await this.withSession(userId, id, async s => {
       this.assertWritable(s);
       const { runner } = await this.onlineRunner(userId, s.runner_id);
+      // qwen-provider D6: no subscription to switch to
+      if (s.provider === 'qwen') throw new HttpError(422, 'subscription_unavailable', { key: 'hub.sessions.subUnavailable' });
       if (!(s.provider === 'codex' ? supportsCodexSubscriptions(runner.protocol_version) : supportsSubscriptions(runner.protocol_version))) {
         throw new HttpError(409, 'agent_outdated', { key: 'hub.sessions.agentOutdatedSub', params: { name: runner.name } });
       }
