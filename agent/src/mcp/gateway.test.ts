@@ -2168,6 +2168,19 @@ describe('McpGateway protocol families', () => {
     expect(internals.entries.size).toBe(0);
     expect(statuses.filter(status => status.status === 'stopped')).toHaveLength(1);
   });
+
+  it('counts sessions, not processes, against the per-session limit: the stateless client of the session holding the server is not refused', async () => {
+    gateway = new McpGateway(createLogger({ level: 'error', write: () => undefined }), () => undefined, { ...limits, maxPerServerSessions: 1, idleMs: 60_000 });
+    await gateway.start();
+    const serverId = randomUUID();
+    gateway.setRegistry({ protocol: '1.13', revision: 1, generatedAt: 1, registryEnabled: true, servers: [server(serverId, 'per-session')] });
+    const sessionId = randomUUID(),
+      bearer = randomUUID() + randomUUID();
+    // The handshake process is started ahead; the client then speaks the stateless revision and needs a second process of the same session.
+    await gateway.startManaged(serverId, sessionId, bearer);
+    expect(await client(gateway, serverId, sessionId, bearer).stateless(1)).toMatchObject({ result: { served: '2026-07-28' } });
+    await expect(gateway.startManaged(serverId, randomUUID(), randomUUID() + randomUUID())).rejects.toThrow('(1 of 1)');
+  });
 });
 
 describe('McpGateway limits from the hub', () => {

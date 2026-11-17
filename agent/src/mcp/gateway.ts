@@ -747,11 +747,14 @@ export class McpGateway {
     this.restartHistory.set(key, history);
     if (history.length >= this.limits.maxRestarts) throw this.refuse(cfg, session, 'MCP server restart limit reached; retry later', { kind: 'restart-limit' });
     if (cfg.mode === 'per-session') {
-      const busy = [...this.entries.keys()].filter(k => k.startsWith(`${cfg.id}:${cfg.revision}:`));
+      // The limit counts sessions, not processes: a session that already runs the server in the other protocol family is not refused.
+      const busy = [...this.entries].filter(([k]) => k.startsWith(`${cfg.id}:${cfg.revision}:`));
+      const sessions = new Set(busy.map(([, e]) => e.sessionId));
       const limit = this.limits.maxPerServerSessions;
-      if (busy.length >= limit) {
-        const message = `MCP per-session process limit reached for this server (${busy.length} of ${limit})`;
-        throw this.refuse(cfg, session, message, { kind: 'server-limit', limit, inUse: busy.length }, busy);
+      if (!sessions.has(session) && sessions.size >= limit) {
+        const message = `MCP per-session process limit reached for this server (${sessions.size} of ${limit})`;
+        const keys = busy.map(([k]) => k);
+        throw this.refuse(cfg, session, message, { kind: 'server-limit', limit, inUse: sessions.size }, keys);
       }
     }
     const capped = cfg.mode !== 'machine-shared' || this.validationOrigins.has(cfg.id);
