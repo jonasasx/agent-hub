@@ -11,6 +11,8 @@ import { create } from 'zustand';
 import { useT } from '../../i18n';
 import { useDialog } from '../ui/a11y';
 import { blobUrl, imageCaption, type ImageRef } from './format';
+import { copyImage, downloadImage } from './imageActions';
+import { ImageMenu } from './ImageMenu';
 import { MAX_SCALE, canPan, clampOffset, clampScale, fitScale, stepScale, wheelFactor, zoomAt, type Offset, type Size } from './zoom';
 
 /** One picture: a stored image (`sha256`) or a local object URL (an optimistic attachment). */
@@ -91,6 +93,7 @@ export function ImagePreview({ pic, onOpen, label }: { pic: Pic; onOpen: (el: HT
   // the natural size of an image the hub gave no size for, once it has loaded
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(() => naturalSizes.get(pic.src) ?? null);
   const img = useRef<HTMLImageElement>(null);
+  const [menu, setMenu] = useState<MenuAt>(null);
   const known = !!(pic.width && pic.height);
   const ratio = known ? `${pic.width} / ${pic.height}` : undefined;
   const box = known ? previewBox(pic.width, pic.height) : previewBox(natural?.w, natural?.h);
@@ -136,12 +139,17 @@ export function ImagePreview({ pic, onOpen, label }: { pic: Pic; onOpen: (el: HT
         }}
         className={`img-open${loaded ? ' loaded' : ''}`}
         onClick={e => onOpen(e.currentTarget)}
+        onContextMenu={e => {
+          e.preventDefault();
+          setMenu({ x: e.clientX, y: e.clientY });
+        }}
         aria-label={t('chat.images.open', { label: label.toLowerCase() })}
         aria-busy={!loaded}
       >
         <img ref={img} src={src} alt="" loading="lazy" decoding="async" width={pic.width} height={pic.height} style={box.img} onLoad={onLoaded} onError={() => setFailed(true)} />
       </button>
       {pic.caption && <span className="img-cap">{pic.caption}</span>}
+      {menu && <ImageMenu pic={pic} x={menu.x} y={menu.y} onClose={() => setMenu(null)} />}
     </span>
   );
 }
@@ -181,6 +189,9 @@ interface View {
   offset: Offset;
 }
 
+/** Where the context menu of a picture is open (client point), null when closed. */
+export type MenuAt = { x: number; y: number } | null;
+
 /** A gesture of the pointers on the stage (design D2). */
 interface Gesture {
   kind: 'pan' | 'swipe' | 'pinch';
@@ -202,6 +213,7 @@ function LightboxDialog({ pics, index }: { pics: Pic[]; index: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState(false);
+  const [menu, setMenu] = useState<MenuAt>(null);
   const pic = pics[index]!;
   // the natural size: from the hub at once, from the picture itself once it has loaded
   const [natural, setNatural] = useState<Size>({ w: pic.width ?? 0, h: pic.height ?? 0 });
@@ -236,6 +248,7 @@ function LightboxDialog({ pics, index }: { pics: Pic[]; index: number }) {
     if (next < 0 || next >= pics.length) return;
     setZoom(null);
     setFailed(false);
+    setMenu(null);
     setNatural({ w: pics[next]!.width ?? 0, h: pics[next]!.height ?? 0 });
     useLightbox.setState({ index: next });
   };
@@ -421,6 +434,16 @@ function LightboxDialog({ pics, index }: { pics: Pic[]; index: number }) {
             </button>
           </span>
         )}
+        {!failed && (
+          <>
+            <button type="button" className="btn" onClick={() => void copyImage(pic.src)}>
+              {t('chat.images.copy')}
+            </button>
+            <button type="button" className="btn" onClick={() => void downloadImage(pic.src)}>
+              {t('chat.images.download')}
+            </button>
+          </>
+        )}
         {pic.original && (
           <a className="btn" href={pic.original} target="_blank" rel="noopener noreferrer">
             {t('chat.images.openOriginal')}
@@ -430,7 +453,18 @@ function LightboxDialog({ pics, index }: { pics: Pic[]; index: number }) {
           {t('chat.images.close')}
         </button>
       </div>
-      <div className="lb-stage" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onCancel}>
+      <div
+        className="lb-stage"
+        onContextMenu={e => {
+          if ((e.target as HTMLElement).closest('button, a')) return;
+          e.preventDefault();
+          if (!failed) setMenu({ x: e.clientX, y: e.clientY });
+        }}
+        onPointerDown={onDown}
+        onPointerMove={onMove}
+        onPointerUp={onUp}
+        onPointerCancel={onCancel}
+      >
         <div
           ref={frame}
           className={`lb-frame${known ? ' sized' : ''}${pannable ? ' pannable' : ''}`}
@@ -477,6 +511,7 @@ function LightboxDialog({ pics, index }: { pics: Pic[]; index: number }) {
           </>
         )}
       </div>
+      {menu && <ImageMenu pic={pic} x={menu.x} y={menu.y} onClose={() => setMenu(null)} />}
     </div>,
     document.body,
   );

@@ -42,13 +42,19 @@ await build({
   logLevel: 'warning',
 });
 
-// Runtime manifest for the installed app: the SDK and the Codex CLI (agent-providers D5) are installed from npm.
+// Runtime manifest for the installed app: the SDK and the Codex CLI (agent-providers D5) are installed from npm,
+// Qwen Code (qwen-provider) as an optional dependency — a failed install leaves the agent working without the provider.
 const sdk = pkg.dependencies['@anthropic-ai/claude-agent-sdk'];
 const codex = pkg.dependencies['@openai/codex'];
-await writeFile(
-  new URL('./dist/package.json', import.meta.url),
-  JSON.stringify({ name: 'agent-hub-agent', version: pkg.version, private: true, type: 'module', dependencies: { '@anthropic-ai/claude-agent-sdk': sdk, '@openai/codex': codex } }, null, 2) + '\n',
-);
+const manifest = {
+  name: 'agent-hub-agent',
+  version: pkg.version,
+  private: true,
+  type: 'module',
+  dependencies: { '@anthropic-ai/claude-agent-sdk': sdk, '@openai/codex': codex },
+  optionalDependencies: pkg.optionalDependencies,
+};
+await writeFile(new URL('./dist/package.json', import.meta.url), JSON.stringify(manifest, null, 2) + '\n');
 await copyFile(new URL('./scripts/s4u-check.mjs', import.meta.url), new URL('./dist/s4u-check.mjs', import.meta.url));
 console.log(`agent ${pkg.version} bundled to dist/agent.mjs`);
 

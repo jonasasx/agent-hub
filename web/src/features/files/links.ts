@@ -12,6 +12,11 @@ const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]+:/;
 // `INDEX.md:3`, `a.ts:42:7` look like a scheme to the URL parser: a name with a dot followed by a line number is a file
 const NAME_WITH_LINE = /^[^/\\?#:]*\.[^/\\?#:]*:\d+(?::\d+)?(?:[?#].*)?$/;
 
+/** Codex writes Windows paths as `/C:/x`: the drive path without the leading slash, any other path as is. */
+export function withoutDriveSlash(path: string): string {
+  return /^[\\/][A-Za-z]:[\\/]/.test(path) ? path.slice(1) : path;
+}
+
 /** A relative file name with a line tail (`INDEX.md:3`) — not a URL scheme. */
 export function isNameWithLine(href: string): boolean {
   return NAME_WITH_LINE.test(href);
@@ -51,6 +56,7 @@ export function fileLinkTarget(href: string | undefined, base: string | null, un
   if (!ref) return null;
   ref = stripTail(ref);
   if (!ref) return null;
+  ref = withoutDriveSlash(ref);
   const winAbs = WIN_ABS.test(ref);
   const unixAbs = !winAbs && /^[\\/]/.test(ref);
   if (unixAbs && !unix) return null;

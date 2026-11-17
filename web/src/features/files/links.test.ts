@@ -1,6 +1,6 @@
 // Requirement (file-explorer): Ссылки на файлы — which link targets are files of the machine.
 import { describe, expect, it } from 'vitest';
-import { fileLinkKind, fileLinkResolver, fileLinkTarget } from './links';
+import { fileLinkKind, fileLinkResolver, fileLinkTarget, withoutDriveSlash } from './links';
 
 describe('fileLinkTarget', () => {
   const win = 'C:\\Users\\ivan\\vault';
@@ -9,6 +9,20 @@ describe('fileLinkTarget', () => {
   it('takes absolute Windows paths with either slash', () => {
     expect(fileLinkTarget('C:\\Users\\ivan\\vault\\AGENTS.md', win, false)).toBe('C:\\Users\\ivan\\vault\\AGENTS.md');
     expect(fileLinkTarget('C:/Users/ivan/x.md', win, false)).toBe('C:\\Users\\ivan\\x.md');
+  });
+
+  it('takes Windows paths with a leading slash, as Codex writes them', () => {
+    expect(fileLinkTarget('/C:/Users/ivan/work/status-max.md', win, false)).toBe('C:\\Users\\ivan\\work\\status-max.md');
+    expect(fileLinkTarget('/C:/Users/ivan/a.ts:42', win, false)).toBe('C:\\Users\\ivan\\a.ts');
+    expect(fileLinkTarget('/c:\\x\\a.md', win, false)).toBe('c:\\x\\a.md');
+  });
+
+  it('withoutDriveSlash drops only the slash before a drive', () => {
+    expect(withoutDriveSlash('/C:/x/a.png')).toBe('C:/x/a.png');
+    expect(withoutDriveSlash('\\d:\\x')).toBe('d:\\x');
+    expect(withoutDriveSlash('/home/u/a.png')).toBe('/home/u/a.png');
+    expect(withoutDriveSlash('/C:')).toBe('/C:');
+    expect(withoutDriveSlash('//C:/x')).toBe('//C:/x');
   });
 
   it('resolves relative paths from the base, folding . and ..', () => {

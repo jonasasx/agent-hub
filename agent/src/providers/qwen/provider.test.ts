@@ -48,7 +48,7 @@ afterEach(async () => {
   for (const p of providers.splice(0)) await p.stopAll(500);
 });
 
-function setup(o: { apiKey?: string; hubProtocol?: string } = {}) {
+function setup(o: { apiKey?: string; hubProtocol?: string; images?: Array<{ mime: string; data: Buffer }> } = {}) {
   const projectsDir = mkdtempSync(join(tmpdir(), 'ah-qwen-unit-'));
   const cwd = mkdtempSync(join(tmpdir(), 'ah-qwen-cwd-'));
   dirs.push(projectsDir, cwd);
@@ -66,8 +66,8 @@ function setup(o: { apiKey?: string; hubProtocol?: string } = {}) {
     },
     log,
     projectsDir,
-    agentVersion: '0.8.22',
-    images: async () => [],
+    agentVersion: '0.8.24',
+    images: async () => o.images ?? [],
     hubProtocol: () => o.hubProtocol ?? '1.21',
     stopGraceMs: 2_000,
   });
@@ -154,6 +154,29 @@ describe('QwenProvider with the real SDK', () => {
       const asked = mock.requests.filter(q => q.url === '/v1/chat/completions').at(-1)!;
       expect(asked.authorization).toBe(`Bearer ${mock.apiKey}`);
       expect(asked.body?.model).toBe('qwen3.8-flash-next');
+    },
+    TURN_MS,
+  );
+
+  it(
+    'an image goes to the model as an image part through an @path file, the folder is removed on stop',
+    async () => {
+      // a 1x1 PNG
+      const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+      const t = setup({ images: [{ mime: 'image/png', data: png }] });
+      const before = mock.requests.length;
+      const { sessionId } = await started(t, 'default', 'what is on the picture?');
+      await until(() => t.of(sessionId, 'session.result').length === 1, 'the result of the image turn');
+      // the first chat request of this test is the turn itself (later ones may be the CLI's own background tasks)
+      const body = JSON.stringify(mock.requests.slice(before).find(q => q.url === '/v1/chat/completions')!.body);
+      expect(body).toContain(`data:image/png;base64,${png.toString('base64')}`);
+      expect(body).toContain('what is on the picture?');
+      // no permission request: the image folder is a workspace directory
+      expect(t.of(sessionId, 'permission.request')).toHaveLength(0);
+      const dir = join(tmpdir(), 'agent-hub-qwen', sessionId);
+      expect(existsSync(join(dir, '1.png'))).toBe(true);
+      await t.p.stopAll(2_000);
+      await until(() => !existsSync(dir), 'the image folder removed');
     },
     TURN_MS,
   );

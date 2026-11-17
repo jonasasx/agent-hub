@@ -37,3 +37,17 @@ describe('ImagePreview without the size (review M4a)', () => {
     expect(await frameOf(300, 600)).toEqual(['160px', '120px']);
   });
 });
+
+describe('the context menu of a picture', () => {
+  it('opens on a right click of the preview with the three actions and closes on Esc', async () => {
+    const { render, fireEvent, screen } = await import('@testing-library/react');
+    const { ImagePreview } = await import('./ImagePreview');
+    const r = render(<ImagePreview pic={{ src: '/api/blobs/x', original: '/api/blobs/x' }} label="Изображение" onOpen={() => undefined} />);
+    expect(fireEvent.contextMenu(r.container.querySelector('.img-open')!, { clientX: 20, clientY: 30 })).toBe(false);
+    const items = screen.getAllByRole('menuitem').map(b => b.textContent);
+    expect(items).toEqual(['Копировать', 'Скачать', 'Открыть оригинал']);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    r.unmount();
+  });
+});

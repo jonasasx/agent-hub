@@ -71,6 +71,8 @@ export interface QwenQueryOptions {
   includePartialMessages?: boolean;
   authType?: 'openai';
   stderr?: (message: string) => void;
+  /** Extra workspace directories (CLI --include-directories): @path references outside cwd are read from them. */
+  includeDirectories?: string[];
 }
 
 /** A client tool of the SDK MCP server (zod raw shape, handler with MCP content). */

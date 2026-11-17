@@ -255,6 +255,15 @@ describe('Markdown images (3.19 web)', () => {
     expect(await screen.findByText('PNG · 300×200 · 2 КБ')).toBeInTheDocument();
   });
 
+  it('Путь Windows с ведущим слэшем: `/C:/…` goes to the machine as `C:/…`', async () => {
+    const s = session();
+    const calls = mockFetch({ 'POST /api/sessions/': () => ({ status: 404, body: { error: 'file_not_found', message: 'Файл не найден на X1' } }) });
+    show(s, answer('![график](/C:/Users/alice/vault/.tmp/chart.png)'));
+    expect(screen.getByText('график · C:/Users/alice/vault/.tmp/chart.png')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Показать изображение' }));
+    expect(calls[0]).toMatchObject({ url: `/api/sessions/${s.id}/images`, body: { path: 'C:/Users/alice/vault/.tmp/chart.png' } });
+  });
+
   it('Файла нет или машина офлайн: the reason instead of the preview', async () => {
     mockFetch({ 'POST /api/sessions/': () => ({ status: 404, body: { error: 'file_not_found', message: 'Файл не найден на X1' } }) });
     show(session(), answer('![x](/home/ubuntu/x.png)'));

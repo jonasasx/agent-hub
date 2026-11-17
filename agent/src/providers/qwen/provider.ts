@@ -2,6 +2,9 @@
 // commands mapped to the SDK, the mirror transcript written for the hub. The model is an OpenAI-compatible endpoint
 // (llama-server); there is no sign-in, the endpoint status is the sign-in status.
 import { randomUUID } from 'node:crypto';
+import { mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   CONTEXT_PROTOCOL,
   PEERS_PROTOCOL,
@@ -122,13 +125,18 @@ class QwenSession {
   sdkSessionId = '';
   exitError: string | null = null;
   peers: PeerToolDef[] = [];
+  /** Images of the turns as files: the CLI reads them by @path (it turns base64 image blocks into text). */
+  imageDir: string;
+  imageSeq = 0;
 
   constructor(
     readonly id: string,
     readonly cwd: string,
     public mode: PermissionMode,
     public model: string | null,
-  ) {}
+  ) {
+    this.imageDir = join(tmpdir(), 'agent-hub-qwen', id);
+  }
 }
 
 export interface QwenProviderDeps {
@@ -322,6 +330,9 @@ export class QwenProvider implements SessionProvider {
       err => this.d.log.error('qwen mirror write failed', { sessionId: s.id, error: err.message }),
       QWEN_MIRROR,
     );
+    await mkdir(s.imageDir, { recursive: true });
+    // the long form: the CLI compares @paths with its workspace directories after resolving them (Windows 8.3 names)
+    s.imageDir = await realpath(s.imageDir);
     this.sessions.set(s.id, s);
     this.d.log.info(resume ? 'resuming qwen session' : 'starting qwen session', { sessionId: s.id, cwd: s.cwd, mode: s.mode, model: s.model });
 
@@ -371,6 +382,7 @@ export class QwenProvider implements SessionProvider {
       includePartialMessages: true,
       abortController: s.abort,
       stderr: line => this.d.log.debug('qwen cli', { sessionId: s.id, line: redactKey(line, this.d.config.apiKey).slice(0, 500) }),
+      includeDirectories: [s.imageDir],
     };
     if (s.model) options.model = s.model;
     if (s.peers.length)
@@ -396,12 +408,28 @@ export class QwenProvider implements SessionProvider {
     return redactKey(redactText(err instanceof Error ? err.message : String(err)), this.d.config.apiKey);
   }
 
+  /**
+   * Images go to the CLI as @path references to files in the session's image folder (an include directory): the CLI
+   * reads them as inline image parts. Base64 image blocks of the SDK message are turned into JSON text by the CLI.
+   */
+  private async imageRefs(s: QwenSession, images: Image[]): Promise<string[]> {
+    if (!images.length) return [];
+    await mkdir(s.imageDir, { recursive: true });
+    return Promise.all(
+      images.map(async i => {
+        const sub = i.mime.split('/')[1] ?? 'png';
+        const file = join(s.imageDir, `${++s.imageSeq}.${sub === 'jpeg' ? 'jpg' : sub}`);
+        await writeFile(file, i.data);
+        return '@' + file.replace(/\\/g, '/').replace(/ /g, '\\ ');
+      }),
+    );
+  }
+
   /** A user message: a new turn or more input of the running one; the SDK queues it itself. */
   private async sendInput(s: QwenSession, text: string, uuid: string, images: Image[]): Promise<unknown> {
     s.mirror.user(text, uuid, images, /^<peer-message\b/.test(text.trim()) ? 'peer' : 'human');
-    const content = images.length
-      ? [...images.map(i => ({ type: 'image', source: { type: 'base64', media_type: i.mime, data: i.data.toString('base64') } })), ...(text ? [{ type: 'text', text }] : [])]
-      : text;
+    const refs = await this.imageRefs(s, images);
+    const content = refs.length ? [...refs, text].filter(Boolean).join(' ') : text;
     if (s.outstanding === 0) {
       s.turnStartedAt = this.clock();
       s.lastText = '';
@@ -607,6 +635,7 @@ export class QwenProvider implements SessionProvider {
     for (const q of s.pending.values()) q.resolve({ behavior: 'deny' });
     s.pending.clear();
     if (this.sessions.get(s.id) === s) this.sessions.delete(s.id);
+    void rm(s.imageDir, { recursive: true, force: true }).catch(() => undefined);
     const stopped = !!s.stopping;
     const errorText = stopped ? undefined : redactText(s.exitError ?? 'The Qwen process exited unexpectedly');
     this.d.log.info('qwen session exited', { sessionId: s.id, reason: stopped ? 'stopped' : 'crashed', ...(errorText ? { error: errorText } : {}) });

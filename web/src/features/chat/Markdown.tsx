@@ -10,7 +10,7 @@ import { t, useT } from '../../i18n';
 import { ApiError, api } from '../../api/client';
 import { ImageGroup, picOf } from '../images/ImagePreview';
 import type { ImageRef } from '../images/format';
-import { isNameWithLine, type FileLinkResolver } from '../files/links';
+import { isNameWithLine, withoutDriveSlash, type FileLinkResolver } from '../files/links';
 import { openFileLink } from '../files/fileActions';
 import { useStore } from '../../store';
 import { openSession } from '../workspace/actions';
@@ -97,7 +97,7 @@ function MdImg({ src, alt }: { src?: unknown; alt?: string }) {
     if (href) return <img className="md-file-img" src={href} alt={alt ?? ''} loading="lazy" />;
     return <span className="md-img-blocked">{alt ? `[${alt}]` : `[${t('chat.md.outsideFolder')}]`}</span>;
   }
-  if (isAbsoluteLocalPath(url)) return <LocalImage path={url} alt={alt ?? ''} />;
+  if (isAbsoluteLocalPath(url)) return <LocalImage path={withoutDriveSlash(url)} alt={alt ?? ''} />;
   if (/^https?:\/\//i.test(url))
     return (
       <a href={url} target="_blank" rel="noreferrer noopener" className="md-ext-img">

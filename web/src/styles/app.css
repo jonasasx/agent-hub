@@ -1200,6 +1200,8 @@ select.mini:disabled, .modal select.input:disabled, .modal .input:disabled, .sub
 .toast.upd .tt b { margin-bottom: 0; }
 .toast.upd .tt .u-warn { display: block; margin-top: 2px; color: var(--warn); font-size: 12.5px; }
 .toast.upd .u-acts { display: flex; gap: 8px; justify-content: flex-end; }
+/* a toast raised from the lightbox (copy/download of a picture) must be seen above it (50) */
+body:has(.lightbox) .toasts { z-index: 55; }
 /* profile menu: from the left edge of the panel, may be wider than it (version rows on one line), over the toasts (40) */
 .side-top .pm { position: relative; }
 .side-top .pm > .menu { position: fixed; left: 12px; top: 50px; min-width: 276px; width: max-content; max-height: calc(100vh - 66px); z-index: 45; }
