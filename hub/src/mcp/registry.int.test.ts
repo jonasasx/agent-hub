@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { MCP_REGISTRY_CAPABILITIES, OAUTH_LOOPBACK_REDIRECT_URI, type SessionView } from '@agent-hub/shared';
+import { MCP_GATEWAY_LIMITS_CAPABILITY, MCP_REGISTRY_CAPABILITIES, OAUTH_LOOPBACK_REDIRECT_URI, type SessionView } from '@agent-hub/shared';
 import { agentSend, autoReply, connectFakeAgent, PUBLIC_URL, startTestHub, waitFor, type FakeAgent, type TestHub } from '../test/harness.js';
 import { decryptToken, tokenKey } from '../subscriptions/crypto.js';
+import { upsertUser } from '../auth/sessions.js';
+import { addRunner } from '../runners/repo.js';
 
 describe('MCP registry draft tools', () => {
   let t: TestHub;
@@ -1260,6 +1262,119 @@ describe('MCP registry draft tools', () => {
     expect(servers.find(s => s.name === 'agent-hub')?.gateway).toBeUndefined();
     await insert(runnerId, sessionId, 'ready', null, now);
     expect((await panel()).find(s => s.name === name)?.gateway).toBeUndefined();
+  });
+
+  it('mcp-gateway-session-limits: a refusal reason of a session is stored and reaches the status and the panel with the busy sessions', async () => {
+    const name = `registry_gateway_limit_${randomUUID().slice(0, 8)}`;
+    const created = await t.hub.app.inject({
+      method: 'POST',
+      url: '/api/mcp/registry',
+      cookies: { ah_session: cookie },
+      headers: { origin: PUBLIC_URL },
+      payload: { server: candidate(name).server },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const serverId = (created.json() as { id: string }).id;
+    const busy = randomUUID();
+    await t.tdb.pool.query(`insert into mcp_gateway_statuses(server_id,machine_id,session_id,status,observed_at) values($1,$2,$3,'ready',now())`, [serverId, runnerId, busy]);
+    agentSend(agent, 'mcp.gateway.status', {
+      serverId,
+      machineId: runnerId,
+      sessionId,
+      status: 'failed',
+      error: 'MCP per-session process limit reached for this server (4 of 4)',
+      reason: { kind: 'server-limit', limit: 4, inUse: 4 },
+      observedAt: Date.now(),
+    });
+    const gateway = await waitFor(async () => {
+      const response = await t.hub.app.inject({ method: 'GET', url: '/api/mcp/registry/status', cookies: { ah_session: cookie } });
+      const rows = (response.json() as { gateways: Array<Record<string, unknown>> }).gateways;
+      return rows.find(row => row.serverId === serverId && row.sessionId === sessionId && row.status === 'failed') ?? null;
+    });
+    expect(gateway).toMatchObject({ reason: { kind: 'server-limit', limit: 4, inUse: 4 } });
+    await t.tdb.pool.query(`update sessions set mcp_servers=$2::jsonb, mcp_observed_at=now() where id=$1`, [
+      sessionId,
+      JSON.stringify([{ name, status: 'failed', transport: 'http', toolCount: 0, error: 'HTTP 503' }]),
+    ]);
+    const panel = await t.hub.app.inject({ method: 'GET', url: `/api/sessions/${sessionId}/mcp`, cookies: { ah_session: cookie } });
+    expect(panel.statusCode, panel.body).toBe(200);
+    const server = (panel.json() as { servers: Array<Record<string, unknown>> }).servers.find(row => row.name === name);
+    expect(server?.gateway).toMatchObject({ serverId, status: 'failed', reason: { kind: 'server-limit', limit: 4, inUse: 4 }, busySessionIds: [busy] });
+  });
+
+  it('mcp-gateway-session-limits: the owner saves machine limits, the agent gets them in the snapshot, bad values and foreign machines are refused', async () => {
+    const machineId = randomUUID();
+    const token = await t.addRunner(machineId, `mcp_gateway_limits_${machineId.slice(0, 8)}`);
+    const limitsAgent = connectAgent(token, { protocol: '1.13', capabilities: [...MCP_REGISTRY_CAPABILITIES, MCP_GATEWAY_LIMITS_CAPABILITY] });
+    autoReply(limitsAgent, () => ({}));
+    await limitsAgent.next('welcome');
+    const url = `/api/mcp/registry/machines/${machineId}/gateway-limits`;
+    const put = (payload: Record<string, unknown>) => t.hub.app.inject({ method: 'PUT', url, cookies: { ah_session: cookie }, headers: { origin: PUBLIC_URL }, payload });
+    const initial = await t.hub.app.inject({ method: 'GET', url, cookies: { ah_session: cookie } });
+    expect(initial.statusCode, initial.body).toBe(200);
+    expect(initial.json()).toEqual({ machineId, limits: {}, defaults: { maxPerServerSessions: 4, maxProcesses: 8, idleMs: 60_000 }, supported: true });
+    const before = limitsAgent.messages.filter(message => message.type === 'mcp.registry.sync').length;
+    const saved = await put({ maxPerServerSessions: 8, maxProcesses: null, idleMs: null });
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(saved.json()).toMatchObject({ limits: { maxPerServerSessions: 8 } });
+    const snapshot = await waitFor(
+      () =>
+        limitsAgent.messages
+          .filter(message => message.type === 'mcp.registry.sync')
+          .slice(before)
+          .at(-1)?.payload ?? null,
+    );
+    expect(snapshot.gatewayLimits).toEqual({ maxPerServerSessions: 8 });
+    const status = await t.hub.app.inject({ method: 'GET', url: '/api/mcp/registry/status', cookies: { ah_session: cookie } });
+    const agentRow = (status.json() as { agents: Array<Record<string, unknown>> }).agents.find(row => row.machineId === machineId);
+    expect(agentRow?.gatewayLimits).toEqual({ maxPerServerSessions: 8 });
+
+    const tooMany = await put({ maxPerServerSessions: 8, maxProcesses: 500, idleMs: null });
+    expect(tooMany.statusCode, tooMany.body).toBe(400);
+    const stored = await t.tdb.pool.query<{ mcp_gateway_limits: unknown }>(`select mcp_gateway_limits from runners where id=$1`, [machineId]);
+    expect(stored.rows[0]!.mcp_gateway_limits).toEqual({ maxPerServerSessions: 8 });
+
+    const reset = await put({ maxPerServerSessions: null, maxProcesses: null, idleMs: null });
+    expect(reset.statusCode, reset.body).toBe(200);
+    expect(reset.json()).toMatchObject({ limits: {} });
+    const cleared = await t.tdb.pool.query<{ mcp_gateway_limits: unknown }>(`select mcp_gateway_limits from runners where id=$1`, [machineId]);
+    expect(cleared.rows[0]!.mcp_gateway_limits).toBeNull();
+
+    const bob = await upsertUser(t.tdb.db, 'bob-limits@example.com');
+    const foreignId = randomUUID();
+    await addRunner(t.tdb.db, { id: foreignId, userId: bob.id, name: 'bob machine', os: null });
+    const foreign = await t.hub.app.inject({
+      method: 'PUT',
+      url: `/api/mcp/registry/machines/${foreignId}/gateway-limits`,
+      cookies: { ah_session: cookie },
+      headers: { origin: PUBLIC_URL },
+      payload: { maxPerServerSessions: 8, maxProcesses: null, idleMs: null },
+    });
+    expect(foreign.statusCode, foreign.body).toBe(404);
+    const foreignStored = await t.tdb.pool.query<{ mcp_gateway_limits: unknown }>(`select mcp_gateway_limits from runners where id=$1`, [foreignId]);
+    expect(foreignStored.rows[0]!.mcp_gateway_limits).toBeNull();
+  });
+
+  it('mcp-gateway-session-limits: an agent without the capability is reported as unsupported and gets no limits', async () => {
+    const before = agent.messages.filter(message => message.type === 'mcp.registry.sync').length;
+    const response = await t.hub.app.inject({
+      method: 'PUT',
+      url: `/api/mcp/registry/machines/${runnerId}/gateway-limits`,
+      cookies: { ah_session: cookie },
+      headers: { origin: PUBLIC_URL },
+      payload: { maxPerServerSessions: 2, maxProcesses: null, idleMs: null },
+    });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({ supported: false, limits: { maxPerServerSessions: 2 } });
+    const snapshot = await waitFor(
+      () =>
+        agent.messages
+          .filter(message => message.type === 'mcp.registry.sync')
+          .slice(before)
+          .at(-1)?.payload ?? null,
+    );
+    expect(snapshot.gatewayLimits).toBeUndefined();
+    await t.tdb.pool.query(`update runners set mcp_gateway_limits=null where id=$1`, [runnerId]);
   });
 
   it('gates connection checks for protocol 1.12 agents', async () => {

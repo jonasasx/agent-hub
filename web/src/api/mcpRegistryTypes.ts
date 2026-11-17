@@ -1,4 +1,5 @@
 import type { infer as Infer } from 'zod';
+import type { McpGatewayLimits } from '@agent-hub/shared';
 import {
   mcpDraftConnectSchema,
   mcpDraftCreateSchema,
@@ -65,6 +66,14 @@ export interface McpRegistryResponse {
 }
 
 export type McpRegistryAgentStatus = Infer<typeof mcpRegistryAgentStatusSchema>;
+
+/** mcp-gateway-session-limits: GET/PUT /api/mcp/registry/machines/:machineId/gateway-limits. */
+export interface McpGatewayLimitsView {
+  machineId: string;
+  limits: McpGatewayLimits;
+  defaults: Required<McpGatewayLimits>;
+  supported: boolean;
+}
 
 export interface McpRegistryStatus {
   revision: number;

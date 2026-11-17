@@ -320,4 +320,21 @@ export default {
   'mcp.wizard.confirmSaveUnchecked': '확인 없이 서버를 저장할까요? 미확인으로 표시됩니다.',
   'mcp.wizard.title': '서버 추가 · {total}단계 중 {step}단계',
   'mcp.wizard.notDone': '완료되지 않음',
+  'mcp.gateway.serverLimit': {
+    other: '{machine}에서 {server}의 프로세스 {count}개가 모두 사용 중입니다',
+  },
+  'mcp.gateway.machineLimit': {
+    other: '{machine}에서 머신의 MCP 프로세스 {count}개가 모두 사용 중입니다',
+  },
+  'mcp.gateway.inUse': '현재 실행 중: {inUse}.',
+  'mcp.gateway.busy': '프로세스 사용 중:',
+  'mcp.gateway.hint.shared': '레지스트리에서 서버를 «머신 공유» 모드로 전환하세요. 프로세스 하나가 모든 세션을 처리합니다.',
+  'mcp.gateway.hint.sleep': '{server}를 사용하는 다른 세션을 절전하거나 닫으세요.',
+  'mcp.gateway.hint.raise': '설정 → 머신에서 한도를 높이세요.',
+  'mcp.gateway.backoff': '{machine}: 서버 프로세스가 중단되어 게이트웨이가 곧 다시 시작합니다. 1분 후 서버를 다시 연결하세요.',
+  'mcp.gateway.restartLimit': '{machine}: 서버 프로세스가 연속으로 너무 많이 중단되었습니다. 레지스트리에서 명령과 설정을 확인하세요.',
+  'mcp.gateway.unavailable': '{machine}: 서버 명령을 사용할 수 없습니다. 설치하거나 레지스트리에서 이 머신의 서버를 끄세요.',
+  'mcp.list.processes': '프로세스: {count}',
+  'mcp.list.processesLabel': '{machine}에서 {server} 프로세스를 점유한 세션',
+  'mcp.list.processSession': '세션 {id}',
 } satisfies Dict;

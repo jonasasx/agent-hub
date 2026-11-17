@@ -325,4 +325,23 @@ export default {
   'mcp.wizard.confirmSaveUnchecked': 'Den Server ungeprüft speichern? Er wird als ungeprüft markiert.',
   'mcp.wizard.title': 'Server hinzufügen · Schritt {step} von {total}',
   'mcp.wizard.notDone': 'Nicht abgeschlossen',
+  'mcp.gateway.serverLimit': {
+    one: 'Auf {machine} ist der einzige erlaubte Prozess von {server} belegt',
+    other: 'Auf {machine} sind alle {count} Prozesse von {server} belegt',
+  },
+  'mcp.gateway.machineLimit': {
+    one: 'Auf {machine} ist der einzige erlaubte MCP-Prozess belegt',
+    other: 'Auf {machine} sind alle {count} MCP-Prozesse des Rechners belegt',
+  },
+  'mcp.gateway.inUse': 'Aktuell laufen: {inUse}.',
+  'mcp.gateway.busy': 'Prozesse belegt von:',
+  'mcp.gateway.hint.shared': 'Stellen Sie den Server in der Registry auf den Modus „Gemeinsam pro Rechner“ um: ein Prozess bedient alle Sitzungen.',
+  'mcp.gateway.hint.sleep': 'Versetzen Sie andere Sitzungen mit {server} in den Ruhezustand oder schließen Sie sie.',
+  'mcp.gateway.hint.raise': 'Erhöhen Sie das Limit unter Einstellungen → Rechner.',
+  'mcp.gateway.backoff': '{machine}: Der Serverprozess ist abgestürzt, das Gateway startet ihn gleich neu. Verbinden Sie den Server in einer Minute neu.',
+  'mcp.gateway.restartLimit': '{machine}: Der Serverprozess ist zu oft hintereinander abgestürzt. Prüfen Sie Befehl und Einstellungen in der Registry.',
+  'mcp.gateway.unavailable': '{machine}: Der Serverbefehl ist nicht verfügbar. Installieren Sie ihn oder schalten Sie den Server für diesen Rechner in der Registry ab.',
+  'mcp.list.processes': 'Prozesse: {count}',
+  'mcp.list.processesLabel': 'Sitzungen mit Prozessen von {server} auf {machine}',
+  'mcp.list.processSession': 'Sitzung {id}',
 } satisfies Dict;

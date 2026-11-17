@@ -189,19 +189,35 @@ export async function gatewayIssues(db: Db, s: { id: string; user_id: string; ru
   const rows = await db
     .selectFrom('mcp_gateway_statuses')
     .innerJoin('mcp_registry_servers', 'mcp_registry_servers.id', 'mcp_gateway_statuses.server_id')
-    .select(['mcp_registry_servers.name', 'mcp_gateway_statuses.server_id', 'mcp_gateway_statuses.status', 'mcp_gateway_statuses.error', 'mcp_gateway_statuses.observed_at'])
+    .select([
+      'mcp_registry_servers.name',
+      'mcp_gateway_statuses.server_id',
+      'mcp_gateway_statuses.session_id',
+      'mcp_gateway_statuses.status',
+      'mcp_gateway_statuses.error',
+      'mcp_gateway_statuses.reason',
+      'mcp_gateway_statuses.observed_at',
+    ])
     .where('mcp_registry_servers.user_id', '=', s.user_id)
     .where('mcp_gateway_statuses.machine_id', '=', s.runner_id)
-    .where(eb => eb.or([eb('mcp_gateway_statuses.session_id', 'is', null), eb('mcp_gateway_statuses.session_id', '=', s.id)]))
     .orderBy('mcp_gateway_statuses.observed_at', 'desc')
     .execute();
+  // mcp-gateway-session-limits: a row of this session wins over the machine row — another session's process start must not hide its refusal.
+  const own = rows.filter(r => r.session_id === s.id);
+  const machine = rows.filter(r => r.session_id === null);
   const seen = new Set<string>();
   const issues = new Map<string, McpServerGatewayIssue>();
-  for (const r of rows) {
+  for (const r of [...own, ...machine]) {
     if (seen.has(r.name)) continue;
     seen.add(r.name);
     if (r.status !== 'failed' && r.status !== 'needs-secret') continue;
-    issues.set(r.name, { serverId: r.server_id, status: r.status, error: r.error, observedAt: r.observed_at.toISOString() });
+    const issue: McpServerGatewayIssue = { serverId: r.server_id, status: r.status, error: r.error, observedAt: r.observed_at.toISOString() };
+    if (r.reason) issue.reason = r.reason;
+    // The sessions whose processes hold the server's limit, for the links in the panel.
+    if (r.reason?.kind === 'server-limit') {
+      issue.busySessionIds = rows.filter(row => row.server_id === r.server_id && row.status === 'ready' && row.session_id && row.session_id !== s.id).map(row => row.session_id!);
+    }
+    issues.set(r.name, issue);
   }
   return issues;
 }

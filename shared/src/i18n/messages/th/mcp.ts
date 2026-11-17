@@ -320,4 +320,21 @@ export default {
   'mcp.wizard.confirmSaveUnchecked': 'บันทึกเซิร์ฟเวอร์โดยไม่ตรวจสอบใช่ไหม ระบบจะทำเครื่องหมายว่ายังไม่ได้ตรวจสอบ',
   'mcp.wizard.title': 'เพิ่มเซิร์ฟเวอร์ · ขั้นตอนที่ {step} จาก {total}',
   'mcp.wizard.notDone': 'ยังไม่เสร็จสมบูรณ์',
+  'mcp.gateway.serverLimit': {
+    other: 'บน {machine} โปรเซสของ {server} ทั้ง {count} ตัวถูกใช้งานอยู่',
+  },
+  'mcp.gateway.machineLimit': {
+    other: 'บน {machine} โปรเซส MCP ของเครื่องทั้ง {count} ตัวถูกใช้งานอยู่',
+  },
+  'mcp.gateway.inUse': 'กำลังทำงานอยู่: {inUse}',
+  'mcp.gateway.busy': 'โปรเซสถูกใช้โดย:',
+  'mcp.gateway.hint.shared': 'สลับเซิร์ฟเวอร์เป็นโหมด "ใช้ร่วมกันบนเครื่อง" ในรีจิสทรี: โปรเซสเดียวให้บริการทุกเซสชัน',
+  'mcp.gateway.hint.sleep': 'พักหรือปิดเซสชันอื่นที่ใช้ {server}',
+  'mcp.gateway.hint.raise': 'เพิ่มขีดจำกัดใน การตั้งค่า → เครื่อง',
+  'mcp.gateway.backoff': '{machine}: โปรเซสของเซิร์ฟเวอร์ล่ม เกตเวย์จะเริ่มใหม่ในไม่ช้า เชื่อมต่อเซิร์ฟเวอร์ใหม่ในอีกหนึ่งนาที',
+  'mcp.gateway.restartLimit': '{machine}: โปรเซสของเซิร์ฟเวอร์ล่มติดต่อกันหลายครั้งเกินไป ตรวจสอบคำสั่งและการตั้งค่าในรีจิสทรี',
+  'mcp.gateway.unavailable': '{machine}: ไม่มีคำสั่งของเซิร์ฟเวอร์ ติดตั้งคำสั่งหรือปิดเซิร์ฟเวอร์สำหรับเครื่องนี้ในรีจิสทรี',
+  'mcp.list.processes': 'โปรเซส: {count}',
+  'mcp.list.processesLabel': 'เซสชันที่ถือโปรเซสของ {server} บน {machine}',
+  'mcp.list.processSession': 'เซสชัน {id}',
 } satisfies Dict;

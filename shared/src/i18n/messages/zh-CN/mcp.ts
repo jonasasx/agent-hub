@@ -320,4 +320,21 @@ export default {
   'mcp.wizard.confirmSaveUnchecked': '要在不检查的情况下保存服务器吗？它将被标记为未检查。',
   'mcp.wizard.title': '添加服务器 · 第 {step} 步，共 {total} 步',
   'mcp.wizard.notDone': '未完成',
+  'mcp.gateway.serverLimit': {
+    other: '{machine} 上 {server} 的全部 {count} 个进程均已占用',
+  },
+  'mcp.gateway.machineLimit': {
+    other: '{machine} 上全部 {count} 个 MCP 进程均已占用',
+  },
+  'mcp.gateway.inUse': '当前运行：{inUse}。',
+  'mcp.gateway.busy': '占用进程的会话：',
+  'mcp.gateway.hint.shared': '在注册表中将服务器切换为“机器共享”模式：一个进程服务所有会话。',
+  'mcp.gateway.hint.sleep': '让使用 {server} 的其他会话休眠或关闭它们。',
+  'mcp.gateway.hint.raise': '在“设置 → 机器”中提高限制。',
+  'mcp.gateway.backoff': '{machine}：服务器进程崩溃，网关稍后会重启它。请一分钟后重新连接服务器。',
+  'mcp.gateway.restartLimit': '{machine}：服务器进程连续崩溃次数过多。请在注册表中检查其命令和设置。',
+  'mcp.gateway.unavailable': '{machine}：服务器命令不可用。请安装它，或在注册表中为此机器关闭该服务器。',
+  'mcp.list.processes': '进程：{count}',
+  'mcp.list.processesLabel': '在 {machine} 上占用 {server} 进程的会话',
+  'mcp.list.processSession': '会话 {id}',
 } satisfies Dict;

@@ -110,6 +110,7 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
       '054_session_context',
       '055_user_idle_timeout',
       '056_qwen_provider',
+      '057_mcp_gateway_limits',
     ]);
     const second = await migrate(t.pool);
     expect(second).toEqual([]);
@@ -498,6 +499,7 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
         '054_session_context',
         '055_user_idle_timeout',
         '056_qwen_provider',
+        '057_mcp_gateway_limits',
       ]);
       expect((await q(`SELECT count(*)::int AS n FROM events`)).rows[0].n).toBe(3);
       expect((await q(`SELECT rel_key, runner_id, claude_session_id, acked_line::int AS l FROM transcript_files`)).rows[0]).toEqual({
@@ -580,6 +582,7 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
         '054_session_context',
         '055_user_idle_timeout',
         '056_qwen_provider',
+        '057_mcp_gateway_limits',
       ]);
       expect((await q(`SELECT git_remote FROM sessions ORDER BY git_remote`)).rows.map(r => r.git_remote)).toEqual([
         'git@git.example.com:a/b.git',
@@ -847,7 +850,8 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
     try {
       await migrate(t8.pool);
       const withMcp = await schema();
-      const of027 = (r: Record<string, unknown>) => String(r.column_name).startsWith('mcp_') && r.column_name !== 'mcp_project_root' && !String(r.column_name).startsWith('mcp_import');
+      const of027 = (r: Record<string, unknown>) =>
+        String(r.column_name).startsWith('mcp_') && r.column_name !== 'mcp_project_root' && !String(r.column_name).startsWith('mcp_import') && r.column_name !== 'mcp_gateway_limits';
       const added = withMcp.filter(of027);
       expect(added.map(r => `${r.table_name}.${r.column_name}:${r.data_type}`)).toEqual([
         'runners.mcp_observed_at:timestamp with time zone',

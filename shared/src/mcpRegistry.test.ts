@@ -30,6 +30,10 @@ import {
   mcpImportCommitResponseSchema,
   MCP_IMPORT_V2_CAPABILITY,
   mcpRegistryStatusSchema,
+  mcpGatewayLimitsSchema,
+  mcpGatewayLimitsUpdateSchema,
+  MCP_GATEWAY_LIMITS_CAPABILITY,
+  AGENT_CAPABILITIES,
   mcpRegistryValidateResultPayload,
   parseAgentMessage,
   parseHubMessage,
@@ -356,5 +360,35 @@ describe('MCP registry protocol 1.13 contracts', () => {
     expect(mcpImportCommitResponseSchema.parse({ imported: 1, servers: [{ serverId, name: 'local', decision: 'add-machine' }] }).imported).toBe(1);
     const agent = { machineId: 'x1', machineName: 'X1', online: true, protocolVersion: '1.17', capabilities: [], importState: 'auto-pending' };
     expect(mcpRegistryStatusSchema.parse({ revision: 0, agents: [agent], gateways: [] }).agents[0]?.importState).toBe('auto-pending');
+  });
+});
+
+describe('MCP gateway session limits (mcp-gateway-session-limits)', () => {
+  const sessionId = '00000000-0000-4000-8000-000000000003';
+
+  it('carries a limit refusal with the session and the reason', () => {
+    const status = mcpGatewayStatusSchema.parse({
+      serverId,
+      machineId,
+      sessionId,
+      status: 'failed',
+      error: 'MCP per-session process limit reached for this server',
+      reason: { kind: 'server-limit', limit: 4, inUse: 4 },
+      observedAt: 1,
+    });
+    expect(status.reason).toEqual({ kind: 'server-limit', limit: 4, inUse: 4 });
+    expect(mcpGatewayStatusSchema.safeParse({ serverId, machineId, status: 'failed', reason: { kind: 'other' }, observedAt: 1 }).success).toBe(false);
+  });
+
+  it('bounds the machine limits and lets the snapshot carry them', () => {
+    expect(mcpGatewayLimitsSchema.parse({ maxPerServerSessions: 8 })).toEqual({ maxPerServerSessions: 8 });
+    expect(mcpGatewayLimitsSchema.safeParse({ maxProcesses: 500 }).success).toBe(false);
+    expect(mcpGatewayLimitsSchema.safeParse({ idleMs: 9_999 }).success).toBe(false);
+    expect(mcpGatewayLimitsSchema.safeParse({ maxPerServerSessions: 1.5 }).success).toBe(false);
+    expect(mcpGatewayLimitsUpdateSchema.parse({ maxPerServerSessions: 8, maxProcesses: null, idleMs: null }).maxProcesses).toBeNull();
+    expect(mcpGatewayLimitsUpdateSchema.safeParse({ maxPerServerSessions: 0, maxProcesses: null, idleMs: null }).success).toBe(false);
+    const snapshot = mcpRegistrySnapshotSchema.parse({ protocol: '1.13', revision: 1, generatedAt: 1, servers: [], gatewayLimits: { maxPerServerSessions: 8 } });
+    expect(snapshot.gatewayLimits?.maxPerServerSessions).toBe(8);
+    expect(AGENT_CAPABILITIES).toContain(MCP_GATEWAY_LIMITS_CAPABILITY);
   });
 });

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { SubagentStatus } from './subagents.js';
 import type { FsAgentErrorCode, FsEntry } from './files.js';
 import type { I18nText, Locale } from './i18n/index.js';
+import type { McpGatewayFailureReason } from './mcpRegistry.js';
 import { LOCAL_PATH_MESSAGE, isAbsoluteLocalPath } from './paths.js';
 import { normalizeProjectFolder } from './folders.js';
 import {
@@ -1510,6 +1511,10 @@ export interface McpServerGatewayIssue {
   serverId: string;
   status: 'failed' | 'needs-secret';
   error: string | null;
+  /** mcp-gateway-session-limits: why the gateway refused to start the server's process for the session. */
+  reason?: McpGatewayFailureReason;
+  /** mcp-gateway-session-limits: other sessions holding a `ready` process of the server on the machine (`server-limit` only). */
+  busySessionIds?: string[];
   observedAt: string;
 }
 

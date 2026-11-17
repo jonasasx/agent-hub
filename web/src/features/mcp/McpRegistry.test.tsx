@@ -1414,4 +1414,26 @@ describe('MCP registry wizard', () => {
       { name: 'url-token', value: 'url-secret-payload' },
     ]);
   });
+
+  it('mcp-gateway-session-limits: the card counts the running processes of a per-session server per machine with links to their sessions', async () => {
+    const sessions = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'];
+    const gateway = (sessionId: string | undefined, status: string) => ({ serverId: id, machineId: id, status, observedAt: Date.now(), ...(sessionId ? { sessionId } : {}) });
+    mockFetch({
+      'GET /api/mcp/registry/status': reply({
+        revision: 1,
+        agents: [{ machineId: id, machineName: 'X1', online: true, protocolVersion: '1.13', capabilities: [], registryEnabled: true }],
+        gateways: [gateway(sessions[0], 'ready'), gateway(sessions[1], 'ready'), gateway('33333333-3333-4333-8333-333333333333', 'stopped')],
+        oauth: [],
+      }),
+      'GET /api/mcp/registry': reply({ revision: 1, servers: [{ ...draft().server, name: 'mattermost', mode: 'per-session' }], drafts: [] }),
+      'GET /api/catalog/projects': reply([]),
+      'POST /api/sessions/resolve': reply({ sessions: sessions.map((ref, i) => ({ ref, id: ref, title: `Сессия ${i + 1}`, runnerName: 'X1' })) }),
+    });
+    render(<McpRegistry onClose={() => undefined} />);
+    const line = await screen.findByLabelText('Сессии, которые держат процессы mattermost на X1');
+    expect(line).toHaveTextContent('X1: Процессов: 2');
+    expect(await within(line).findByRole('link', { name: 'Сессия 1' })).toHaveAttribute('href', `/s/${sessions[0]}`);
+    expect(within(line).getByRole('link', { name: 'Сессия 2' })).toBeInTheDocument();
+    expect(screen.queryByText(/stopped|остановлен/i)).not.toBeInTheDocument();
+  });
 });

@@ -39,6 +39,12 @@ import {
   mcpRegistryMachineOverrideRequestSchema,
   mcpRegistryMachineOverrideResponseSchema,
   MCP_IMPORT_V2_CAPABILITY,
+  MCP_GATEWAY_DEFAULT_LIMITS,
+  MCP_GATEWAY_LIMITS_CAPABILITY,
+  mcpGatewayFailureReasonSchema,
+  mcpGatewayLimitsSchema,
+  mcpGatewayLimitsUpdateSchema,
+  type McpGatewayLimits,
   platformOfHome,
   projectDir,
   mcpRegistryOAuthValidateRequestSchema,
@@ -75,6 +81,11 @@ function parse<T extends z.ZodType>(schema: T, value: unknown): z.infer<T> {
   const r = schema.safeParse(value);
   if (!r.success) throw new HttpError(400, 'invalid_request', r.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; '));
   return r.data;
+}
+/** A stored jsonb value keeps only the fields still valid under the current bounds. */
+function savedLimits(value: unknown): McpGatewayLimits {
+  const parsed = mcpGatewayLimitsSchema.safeParse(value);
+  return parsed.success ? parsed.data : {};
 }
 const safe = (c: Cfg) => ({ ...c, secrets: (Array.isArray(c.secrets) ? c.secrets : []).map((s: Cfg) => ({ ...s, masked: true, state: s.state ?? 'set' })) });
 const URL_SECRET_PLACEHOLDER = '__AGENT_HUB_SECRET__';
@@ -991,6 +1002,7 @@ export class McpRegistryService {
           'mcp_gateway_statuses.status',
           'mcp_gateway_statuses.endpoint',
           'mcp_gateway_statuses.error',
+          'mcp_gateway_statuses.reason',
           'mcp_gateway_statuses.observed_at',
         ])
         .where('mcp_registry_servers.user_id', '=', userId)
@@ -1001,7 +1013,7 @@ export class McpRegistryService {
         .execute(),
       this.o.db
         .selectFrom('runners')
-        .select(['id', 'name', 'online', 'protocol_version', 'state', 'mcp_import_state', 'mcp_imported_at', 'mcp_import_report'])
+        .select(['id', 'name', 'online', 'protocol_version', 'state', 'mcp_import_state', 'mcp_imported_at', 'mcp_import_report', 'mcp_gateway_limits'])
         .where('user_id', '=', userId)
         .where('state', '!=', 'pending')
         .orderBy('name')
@@ -1044,6 +1056,7 @@ export class McpRegistryService {
         importState: runner.mcp_import_state,
         importedAt: runner.mcp_imported_at ? new Date(runner.mcp_imported_at).getTime() : null,
         importReport: (runner.mcp_import_report ?? null) as { imported: string[]; skipped: string[] } | null,
+        ...(runner.mcp_gateway_limits ? { gatewayLimits: savedLimits(runner.mcp_gateway_limits) } : {}),
       })),
       gateways: q.map(x => ({
         serverId: x.server_id,
@@ -1052,6 +1065,7 @@ export class McpRegistryService {
         status: x.status,
         ...(x.endpoint ? { endpoint: x.endpoint } : {}),
         ...(x.error ? { error: x.error.slice(0, 500) } : {}),
+        ...(x.reason ? { reason: x.reason } : {}),
         observedAt: new Date(x.observed_at).getTime(),
       })),
       sessionUpdates: updates.map(x => ({
@@ -1064,6 +1078,32 @@ export class McpRegistryService {
         updatedAt: new Date(x.updated_at).getTime(),
       })),
     };
+  }
+  /** mcp-gateway-session-limits: the machine's saved limits, the agent defaults and whether its agent can apply them. */
+  async gatewayLimits(userId: string, machineId: string) {
+    const runner = await this.o.db.selectFrom('runners').select(['id', 'mcp_gateway_limits']).where('id', '=', machineId).where('user_id', '=', userId).executeTakeFirst();
+    if (!runner) throw new HttpError(404, 'not_found', 'Machine not found');
+    return {
+      machineId,
+      limits: runner.mcp_gateway_limits ? savedLimits(runner.mcp_gateway_limits) : {},
+      defaults: { ...MCP_GATEWAY_DEFAULT_LIMITS },
+      supported: this.caps(machineId)?.has(MCP_GATEWAY_LIMITS_CAPABILITY) === true,
+    };
+  }
+  /** Only the owner of the machine; `null` resets a field to the agent default. The machine gets a new snapshot. */
+  async setGatewayLimits(userId: string, machineId: string, body: unknown) {
+    const update = parse(mcpGatewayLimitsUpdateSchema, body);
+    const runner = await this.o.db.selectFrom('runners').select('id').where('id', '=', machineId).where('user_id', '=', userId).executeTakeFirst();
+    if (!runner) throw new HttpError(404, 'not_found', 'Machine not found');
+    const limits: McpGatewayLimits = {};
+    if (update.maxPerServerSessions !== null) limits.maxPerServerSessions = update.maxPerServerSessions;
+    if (update.maxProcesses !== null) limits.maxProcesses = update.maxProcesses;
+    if (update.idleMs !== null) limits.idleMs = update.idleMs;
+    const stored = Object.keys(limits).length ? JSON.stringify(limits) : null;
+    await this.o.db.updateTable('runners').set({ mcp_gateway_limits: stored }).where('id', '=', machineId).where('user_id', '=', userId).execute();
+    await this.audit(userId, 'api', 'gateway.limits', null, undefined, { machineId, ...limits });
+    await this.syncRunner(machineId, userId);
+    return this.gatewayLimits(userId, machineId);
   }
   /** D2: one row per active machine — whether the server reaches it and whether it has its own config there. */
   private async serverMachines(userId: string, servers: Array<{ id: string; config: Cfg }>) {
@@ -2276,9 +2316,17 @@ export class McpRegistryService {
     const conn = this.o.agents.get(runnerId);
     if (!conn) return;
     if (!this.caps(runnerId)?.has('mcp.registry.v1')) return;
-    const machine = await this.o.db.selectFrom('runners').select('mcp_import_state').where('user_id', '=', userId).where('id', '=', runnerId).where('state', '=', 'active').executeTakeFirst();
+    const machine = await this.o.db
+      .selectFrom('runners')
+      .select(['mcp_import_state', 'mcp_gateway_limits'])
+      .where('user_id', '=', userId)
+      .where('id', '=', runnerId)
+      .where('state', '=', 'active')
+      .executeTakeFirst();
     if (!machine) return;
     const r = await this.list(userId);
+    // mcp-gateway-session-limits D2/D3: only an agent with the capability gets the limits; a missing field is its default.
+    const gatewayLimits = this.caps(runnerId)?.has(MCP_GATEWAY_LIMITS_CAPABILITY) && machine.mcp_gateway_limits ? savedLimits(machine.mcp_gateway_limits) : undefined;
     // D1: a machine is on the registry once its local config is imported; before that it gets nothing.
     r.registryEnabled = machine.mcp_import_state === 'done';
     if (!r.registryEnabled) r.servers = [];
@@ -2318,6 +2366,7 @@ export class McpRegistryService {
       {
         ...r,
         projectOverrides: overrides.map(row => ({ projectId: row.project_id, serverId: row.server_id, enabled: false })),
+        ...(gatewayLimits && Object.keys(gatewayLimits).length ? { gatewayLimits } : {}),
       },
       { id: randomUUID() },
     );
@@ -2568,6 +2617,7 @@ export class McpRegistryService {
       .execute();
     const secretValues = secretRows.map(row => decryptSecret(this.o.key, userId, row.id, row.ciphertext));
     const safeError = typeof payload.error === 'string' ? (redactValues(payload.error, secretValues) as string) : null;
+    const reason = mcpGatewayFailureReasonSchema.safeParse(payload.reason);
     await this.o.db
       .insertInto('mcp_gateway_statuses')
       .values({
@@ -2577,6 +2627,7 @@ export class McpRegistryService {
         status: String(payload.status) as 'stopped' | 'starting' | 'ready' | 'needs-secret' | 'failed',
         endpoint: payload.endpoint == null ? null : String(payload.endpoint),
         error: safeError,
+        reason: reason.success ? JSON.stringify(reason.data) : null,
         observed_at: new Date(Math.min(Number(payload.observedAt), Date.now())),
       })
       .onConflict(conflict =>
@@ -2587,6 +2638,7 @@ export class McpRegistryService {
             status: eb.ref('excluded.status'),
             endpoint: eb.ref('excluded.endpoint'),
             error: eb.ref('excluded.error'),
+            reason: eb.ref('excluded.reason'),
             observed_at: eb.ref('excluded.observed_at'),
           }))
           .whereRef('mcp_gateway_statuses.observed_at', '<=', 'excluded.observed_at'),
@@ -2598,6 +2650,10 @@ export class McpRegistryService {
 export function registerMcpRegistryApi(app: FastifyInstance, service: McpRegistryService) {
   app.get('/api/mcp/registry', async req => service.view(req.user!.id));
   app.get('/api/mcp/registry/status', async req => service.status(req.user!.id));
+  app.get('/api/mcp/registry/machines/:machineId/gateway-limits', async req => service.gatewayLimits(req.user!.id, (req.params as { machineId: string }).machineId));
+  app.put('/api/mcp/registry/machines/:machineId/gateway-limits', async req => {
+    return service.setGatewayLimits(req.user!.id, (req.params as { machineId: string }).machineId, req.body);
+  });
   app.put('/api/mcp/registry/servers/:id/machines/:machineId', async req => {
     const params = req.params as { id: string; machineId: string };
     return service.setMachineOverride(req.user!.id, params.id, params.machineId, req.body);

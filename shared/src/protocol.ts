@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import {
   MCP_IMPORT_V2_CAPABILITY,
+  MCP_GATEWAY_LIMITS_CAPABILITY,
   MCP_REGISTRY_CAPABILITIES,
   mcpGatewayStartPayload,
   mcpGatewayStatusPayload,
@@ -79,7 +80,15 @@ export const DOWNLOAD_PROTOCOL = '1.16';
 export const MCP_REGISTRY_PROTOCOL = '1.13';
 /** The agent takes provider.credentials.sync and removes the Codex homes of retired subscriptions (provider-parity R3). */
 export const CODEX_HOMES_SYNC_CAPABILITY = 'codex.homes.sync' as const;
-export const AGENT_CAPABILITIES = [...MCP_REGISTRY_CAPABILITIES, 'fs.list-dirs', 'fs.browse', 'fs.download', MCP_IMPORT_V2_CAPABILITY, CODEX_HOMES_SYNC_CAPABILITY] as const;
+export const AGENT_CAPABILITIES = [
+  ...MCP_REGISTRY_CAPABILITIES,
+  'fs.list-dirs',
+  'fs.browse',
+  'fs.download',
+  MCP_IMPORT_V2_CAPABILITY,
+  CODEX_HOMES_SYNC_CAPABILITY,
+  MCP_GATEWAY_LIMITS_CAPABILITY,
+] as const;
 export const HUB_CAPABILITIES = [...MCP_REGISTRY_CAPABILITIES, 'fs.list-dirs', 'fs.browse', 'fs.download', CODEX_HOMES_SYNC_CAPABILITY] as const;
 /** The first protocol version whose agents give sessions `session_spawn` and send `resultText` (hub-subagents D2). */
 export const SPAWN_PROTOCOL = '1.12';

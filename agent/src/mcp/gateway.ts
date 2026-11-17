@@ -9,6 +9,7 @@ import type { Logger } from '../log.js';
 import type { RegistrySnapshot } from './registryCache.js';
 import type { PayloadOf } from '@agent-hub/shared';
 import type { HubMessage } from '@agent-hub/shared';
+import type { McpGatewayFailureReason } from '@agent-hub/shared';
 
 interface GatewayLimits {
   maxProcesses: number;
@@ -92,6 +93,8 @@ interface ProcessEntry {
   stopping: boolean;
   /** Counted against maxProcesses: per-session and validation processes. A machine-shared server has one process per protocol family at most. */
   capped: boolean;
+  /** The hub session that owns a per-session process; its statuses carry it. */
+  sessionId?: string;
 }
 
 interface StartGenerationState {
@@ -144,11 +147,14 @@ export class McpGateway {
   private unavailableExecutables = new Map<string, number>();
   private oauthAccess: ((serverId: string) => Promise<string | null>) | null = null;
   private oauthRefresh: ((serverId: string) => Promise<string | null>) | null = null;
+  private limits: GatewayLimits;
   constructor(
     private readonly log: Logger,
     private readonly emitStatus: (payload: unknown) => void = () => undefined,
-    private readonly limits: GatewayLimits = DEFAULT_LIMITS,
-  ) {}
+    private readonly baseLimits: GatewayLimits = DEFAULT_LIMITS,
+  ) {
+    this.limits = baseLimits;
+  }
   async start(): Promise<void> {
     if (this.server) return;
     const s = createServer((req, res) => void this.handle(req, res));
@@ -166,6 +172,7 @@ export class McpGateway {
   }
   setRegistry(snapshot: RegistrySnapshot): void {
     this.registryEnabled = snapshot.registryEnabled !== false;
+    this.applyLimits(snapshot.gatewayLimits);
     const next = new Map(snapshot.servers.map(x => [x.id, x]));
     if (snapshot.registryEnabled === false) {
       for (const pending of this.pendingSecretDeliveries.values()) clearTimeout(pending.timer);
@@ -192,6 +199,14 @@ export class McpGateway {
         this.armPendingDelivery(id, delivery);
       }
     }
+  }
+  /** Hub limits replace the defaults for the next starts; running processes keep running even above a lowered limit. */
+  private applyLimits(limits: RegistrySnapshot['gatewayLimits']): void {
+    const next = { ...this.baseLimits };
+    if (limits?.maxPerServerSessions !== undefined) next.maxPerServerSessions = limits.maxPerServerSessions;
+    if (limits?.maxProcesses !== undefined) next.maxProcesses = limits.maxProcesses;
+    if (limits?.idleMs !== undefined) next.idleMs = limits.idleMs;
+    this.limits = next;
   }
   setServerConfig(server: ServerConfig): void {
     const old = this.config.get(server.id);
@@ -723,16 +738,31 @@ export class McpGateway {
       if (entry.exited) throw this.processExitError(entry);
       return entry;
     }
-    if (this.unavailableExecutables.get(key) === cfg.revision) throw new Error('MCP server executable is unavailable; check the command and runtime installation');
+    if (this.unavailableExecutables.get(key) === cfg.revision) {
+      throw this.refuse(cfg, session, 'MCP server executable is unavailable; check the command and runtime installation', { kind: 'unavailable' });
+    }
     const now = Date.now();
-    if ((this.retryAfter.get(key) ?? 0) > now) throw new Error('MCP server is in restart backoff; retry shortly');
+    if ((this.retryAfter.get(key) ?? 0) > now) throw this.refuse(cfg, session, 'MCP server is in restart backoff; retry shortly', { kind: 'backoff' });
     const history = (this.restartHistory.get(key) ?? []).filter(at => now - at < this.limits.backoffWindowMs);
     this.restartHistory.set(key, history);
-    if (history.length >= this.limits.maxRestarts) throw new Error('MCP server restart limit reached; retry later');
-    if (cfg.mode === 'per-session' && [...this.entries.keys()].filter(k => k.startsWith(`${cfg.id}:${cfg.revision}:`)).length >= this.limits.maxPerServerSessions)
-      throw new Error('MCP per-session process limit reached for this server');
+    if (history.length >= this.limits.maxRestarts) throw this.refuse(cfg, session, 'MCP server restart limit reached; retry later', { kind: 'restart-limit' });
+    if (cfg.mode === 'per-session') {
+      const busy = [...this.entries.keys()].filter(k => k.startsWith(`${cfg.id}:${cfg.revision}:`));
+      const limit = this.limits.maxPerServerSessions;
+      if (busy.length >= limit) {
+        const message = `MCP per-session process limit reached for this server (${busy.length} of ${limit})`;
+        throw this.refuse(cfg, session, message, { kind: 'server-limit', limit, inUse: busy.length }, busy);
+      }
+    }
     const capped = cfg.mode !== 'machine-shared' || this.validationOrigins.has(cfg.id);
-    if (capped && [...this.entries.values()].filter(e => e.capped).length >= this.limits.maxProcesses) throw new Error('MCP process limit reached; stop an unused server and retry');
+    if (capped) {
+      const busy = [...this.entries].filter(([, e]) => e.capped).map(([k]) => k);
+      const limit = this.limits.maxProcesses;
+      if (busy.length >= limit) {
+        const message = `MCP process limit reached (${busy.length} of ${limit}); stop an unused server and retry`;
+        throw this.refuse(cfg, session, message, { kind: 'machine-limit', limit, inUse: busy.length }, busy);
+      }
+    }
     if (!this.hasRequiredSecrets(cfg)) {
       this.reportStatus(cfg.id, { serverId: cfg.id, status: 'needs-secret', observedAt: Date.now() });
       throw new Error('MCP server needs a configured secret');
@@ -776,12 +806,13 @@ export class McpGateway {
       streams: new Map(),
       stopping: false,
       capped,
+      ...(cfg.mode === 'per-session' ? { sessionId: session } : {}),
     };
     this.entries.set(key, entry);
     child.stdout?.on('data', (chunk: Buffer) => this.lines(entry!, chunk));
     child.once('spawn', () => {
       resolveStarted();
-      this.reportStatus(cfg.id, { serverId: cfg.id, status: 'ready', endpoint: this.endpoint, observedAt: Date.now() });
+      this.reportProcess(entry!, { serverId: cfg.id, status: 'ready', endpoint: this.endpoint, observedAt: Date.now() });
       entry!.healthyTimer = setTimeout(() => this.restartHistory.delete(key), this.limits.healthyResetMs);
       entry!.healthyTimer.unref();
     });
@@ -801,11 +832,34 @@ export class McpGateway {
       if (entry!.child.pid === undefined) rejectStarted(this.processExitError(entry!));
       this.fail(entry!, key, cfg.id, entry!.exitReason, false);
     });
-    this.reportStatus(cfg.id, { serverId: cfg.id, status: 'starting', observedAt: Date.now() });
+    this.reportProcess(entry, { serverId: cfg.id, status: 'starting', observedAt: Date.now() });
     this.log.info('MCP stdio process starting', { server: cfg.name, mode: cfg.mode, family });
     await started;
     if (entry.exited) throw this.processExitError(entry);
     return entry;
+  }
+
+  /** A refused start reaches the hub as a failed status of the session (per-session) or of the machine, with the reason. */
+  private refuse(cfg: ServerConfig, session: string, message: string, reason: McpGatewayFailureReason, busy?: string[]): Error {
+    const scope = cfg.mode === 'per-session' ? { sessionId: session } : {};
+    if (busy) this.log.warn('MCP gateway limit reached', { server: cfg.name, mode: cfg.mode, ...reason, busy: busy.map(key => this.describeKey(key)) });
+    this.reportStatus(cfg.id, { serverId: cfg.id, revision: cfg.revision, ...scope, status: 'failed', error: message, reason, observedAt: Date.now() });
+    return new Error(message);
+  }
+
+  /** `<server>:<revision>[:@stateless][:<session>]` as server name, protocol family and session for the log. */
+  private describeKey(key: string): string {
+    const [serverId = key, revision, ...rest] = key.split(':');
+    const family = rest[0] === '@stateless' ? 'stateless' : 'legacy';
+    const session = rest[0] === '@stateless' ? rest[1] : rest[0];
+    const name = this.config.get(serverId)?.name ?? serverId;
+    return `${name}@${revision ?? '?'}/${family}${session ? `/${session}` : ''}`;
+  }
+
+  /** The machine row keeps its status as before; a per-session process also updates the row of its session. */
+  private reportProcess(entry: ProcessEntry, payload: { serverId: string } & Record<string, unknown>): void {
+    this.reportStatus(entry.serverId, payload);
+    if (entry.sessionId) this.reportStatus(entry.serverId, { ...payload, sessionId: entry.sessionId });
   }
 
   private processExitError(entry: ProcessEntry): Error {
@@ -916,7 +970,7 @@ export class McpGateway {
       const revision = this.config.get(serverId)?.revision;
       if (revision !== undefined) this.unavailableExecutables.set(key, revision);
     }
-    this.reportStatus(serverId, { serverId, status: 'failed', error: reason.slice(0, 500), observedAt: Date.now() });
+    this.reportProcess(e, { serverId, status: 'failed', error: reason.slice(0, 500), observedAt: Date.now() });
     if (terminal || !e.sessions.size) return;
     const now = Date.now(),
       history = (this.restartHistory.get(key) ?? []).filter(at => now - at < this.limits.backoffWindowMs);
@@ -988,7 +1042,11 @@ export class McpGateway {
     this.validationChildren.delete(validationId);
   }
   private kill(e: ProcessEntry): void {
+    const wasStopping = e.stopping;
     e.stopping = true;
+    // The session's process row goes stopped unless its other protocol family still runs.
+    const sibling = [...this.entries.values()].some(other => other !== e && !other.stopping && other.serverId === e.serverId && other.sessionId === e.sessionId);
+    if (e.sessionId && !wasStopping && !sibling) this.reportStatus(e.serverId, { serverId: e.serverId, sessionId: e.sessionId, status: 'stopped', observedAt: Date.now() });
     if (e.timer) clearTimeout(e.timer);
     if (e.healthyTimer) clearTimeout(e.healthyTimer);
     for (const pending of e.pending.values()) {

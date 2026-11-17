@@ -1,4 +1,5 @@
 // HTTP client for the hub API (design.md D10).
+import type { McpGatewayLimitsUpdate } from '@agent-hub/shared';
 import type {
   AdminUserView,
   DeviceLoginProvider,
@@ -70,6 +71,7 @@ import type {
   McpProjectOverrideUpdate,
   McpRegistryResponse,
   McpRegistryServerUpdate,
+  McpGatewayLimitsView,
   McpRegistryStatus,
   McpRegistryOAuthCompleteRequest,
   McpRegistryOAuthCompleteResponse,
@@ -323,6 +325,8 @@ export const api = {
   mcpRegistryImportPreview: (body: McpImportPreviewRequest) => request<McpImportPreviewResponse>('/api/mcp/registry/import/preview', json('POST', body)),
   mcpRegistryImportCommit: (body: McpRegistryImportCommitRequest) => request<McpImportCommitResponse>('/api/mcp/registry/import/commit', json('POST', body)),
   mcpRegistryStatus: () => request<McpRegistryStatus>('/api/mcp/registry/status'),
+  mcpGatewayLimits: (machineId: string) => request<McpGatewayLimitsView>(`/api/mcp/registry/machines/${enc(machineId)}/gateway-limits`),
+  mcpSetGatewayLimits: (machineId: string, body: McpGatewayLimitsUpdate) => request<McpGatewayLimitsView>(`/api/mcp/registry/machines/${enc(machineId)}/gateway-limits`, json('PUT', body)),
   mcpRegistryOAuthComplete: (id: string, body: McpRegistryOAuthCompleteRequest) => request<McpRegistryOAuthCompleteResponse>(`/api/mcp/registry/servers/${enc(id)}/oauth/complete`, json('POST', body)),
   mcpRegistryOAuthStart: (id: string, body: McpRegistryOAuthStartRequest) => request<McpRegistryOAuthStartResponse>(`/api/mcp/registry/servers/${enc(id)}/oauth/start`, json('POST', body)),
   mcpRegistryOAuthRevoke: (id: string, body: McpRegistryOAuthRevokeRequest) => request<McpRegistryOAuthRevokeResponse>(`/api/mcp/registry/servers/${enc(id)}/oauth/revoke`, json('POST', body)),

@@ -1,6 +1,6 @@
 // Component tests of «Настройки → Машины» (change `multi-user`, spec runner-enrollment «Экран «Машины»»).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { RunnerView } from '../../api/types';
 import { useStore } from '../../store';
@@ -238,5 +238,46 @@ describe('MachinesPage', () => {
     await userEvent.click(within(x1).getByRole('button', { name: 'Импортировать MCP' }));
     expect(await screen.findByText('Импорт MCP с машины X1')).toBeInTheDocument();
     expect(await screen.findByText('В настройках Claude Code и Codex на этой машине MCP-серверов нет.')).toBeInTheDocument();
+  });
+
+  it('mcp-gateway-session-limits: the owner saves 8, a value out of bounds is refused, an old agent gets disabled fields', async () => {
+    const agent = (machineId: string, capabilities: string[]) => ({ machineId, machineName: machineId, online: true, protocolVersion: '1.13', capabilities, registryEnabled: true });
+    const defaults = { maxPerServerSessions: 4, maxProcesses: 8, idleMs: 60_000 };
+    const calls = mockFetch({
+      'GET /api/runners': () => ({ status: 200, body: { runners: machines(), agentVersion: '0.3.0' } }),
+      'GET /api/mcp/registry/status': () => ({
+        status: 200,
+        body: { revision: 1, agents: [agent('x1', ['mcp.gateway.limits']), agent('mac', [])], gateways: [], oauth: [] },
+      }),
+      'GET /api/mcp/registry/machines/x1/gateway-limits': () => ({ status: 200, body: { machineId: 'x1', limits: {}, defaults, supported: true } }),
+      'GET /api/mcp/registry/machines/mac/gateway-limits': () => ({ status: 200, body: { machineId: 'mac', limits: {}, defaults, supported: false } }),
+      'PUT /api/mcp/registry/machines/x1/gateway-limits': () => ({
+        status: 200,
+        body: { machineId: 'x1', limits: { maxPerServerSessions: 8 }, defaults, supported: true },
+      }),
+    });
+    render(<MachinesPage />);
+    await screen.findByRole('listitem', { name: 'X1' });
+    const x1 = await within(card('X1')).findByTestId('machine-gateway-limits');
+    const perServer = within(x1).getByLabelText('Процессов одного сервера «На сессию»');
+    expect(perServer).toHaveAttribute('placeholder', '4');
+    expect(within(x1).getByLabelText('Остановить простаивающий процесс через, с')).toHaveAttribute('placeholder', '60');
+
+    await userEvent.type(within(x1).getByLabelText('Процессов MCP на машине'), '500');
+    await userEvent.click(within(x1).getByRole('button', { name: 'Сохранить лимиты' }));
+    expect(within(x1).getByRole('alert')).toHaveTextContent('Введите целое число от 1 до 64');
+    expect(calls.some(c => c.method === 'PUT')).toBe(false);
+
+    await userEvent.clear(within(x1).getByLabelText('Процессов MCP на машине'));
+    await userEvent.type(perServer, '8');
+    await userEvent.click(within(x1).getByRole('button', { name: 'Сохранить лимиты' }));
+    await waitFor(() => expect(calls.find(c => c.method === 'PUT')?.body).toEqual({ maxPerServerSessions: 8, maxProcesses: null, idleMs: null }));
+    await waitFor(() => expect(perServer).toHaveValue(8));
+    expect(within(x1).queryByRole('alert')).not.toBeInTheDocument();
+
+    const mac = await within(card('MacBook')).findByTestId('machine-gateway-limits');
+    expect(within(mac).getByLabelText('Процессов одного сервера «На сессию»')).toBeDisabled();
+    expect(within(mac).getByRole('button', { name: 'Сохранить лимиты' })).toBeDisabled();
+    expect(within(mac).getByText('Обновите агента, чтобы менять лимиты')).toBeInTheDocument();
   });
 });

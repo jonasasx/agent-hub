@@ -772,8 +772,9 @@ describe('McpGateway', () => {
   });
 
   it.each(['machine-shared', 'per-session'] as const)('preserves other session process during a late timeout (%s)', async mode => {
-    const statuses: Array<{ status?: string; serverId?: string; revision?: number }> = [];
-    gateway = new McpGateway(createLogger({ level: 'error', write: () => undefined }), status => statuses.push(status as { status?: string; serverId?: string; revision?: number }));
+    type Status = { status?: string; serverId?: string; sessionId?: string; revision?: number };
+    const statuses: Status[] = [];
+    gateway = new McpGateway(createLogger({ level: 'error', write: () => undefined }), status => statuses.push(status as Status));
     await gateway.start();
     const serverId = randomUUID();
     const firstSession = randomUUID();
@@ -838,7 +839,8 @@ describe('McpGateway', () => {
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
     });
     expect(response.status).toBe(200);
-    expect(statuses.some(status => status.serverId === serverId && status.status === 'stopped')).toBe(false);
+    // Only the timed-out session's own process row may stop; the machine row and the other session stay up.
+    expect(statuses.some(status => status.serverId === serverId && status.sessionId !== firstSession && status.status === 'stopped')).toBe(false);
   });
 
   it('applies stop after an in-flight managed start and leaves no session token', async () => {
@@ -1086,8 +1088,9 @@ describe('McpGateway', () => {
   });
 
   it('enforces process limits and reports a missing runtime without repeated spawn attempts', async () => {
-    const statuses: Array<{ serverId?: string; status?: string; error?: string }> = [];
-    gateway = new McpGateway(createLogger({ level: 'error', write: () => undefined }), status => statuses.push(status as { serverId?: string; status?: string; error?: string }), {
+    type Status = { serverId?: string; sessionId?: string; status?: string; error?: string };
+    const statuses: Status[] = [];
+    gateway = new McpGateway(createLogger({ level: 'error', write: () => undefined }), status => statuses.push(status as Status), {
       maxProcesses: 2,
       maxSessions: 64,
       maxPending: 256,
@@ -1138,16 +1141,16 @@ describe('McpGateway', () => {
     const firstSession = randomUUID();
     await gateway.startManaged(firstId, firstSession, randomUUID() + randomUUID());
     await gateway.startManaged(firstId, randomUUID(), randomUUID() + randomUUID());
-    expect(statuses.filter(status => status.serverId === firstId && status.status === 'starting')).toHaveLength(2);
+    expect(statuses.filter(status => status.serverId === firstId && !status.sessionId && status.status === 'starting')).toHaveLength(2);
     await expect(gateway.startManaged(firstId, randomUUID(), randomUUID() + randomUUID())).rejects.toThrow('per-session process limit');
     await expect(gateway.startManaged(missingId, randomUUID(), randomUUID() + randomUUID())).rejects.toThrow('process limit reached');
     gateway.stopServer(firstId);
     const missingSession = randomUUID();
     await expect(gateway.startManaged(missingId, missingSession, randomUUID() + randomUUID())).rejects.toThrow('command not found');
     await delay(30);
-    expect(statuses.filter(status => status.serverId === missingId && status.status === 'failed')).toHaveLength(1);
+    expect(statuses.filter(status => status.serverId === missingId && !status.sessionId && status.status === 'failed')).toHaveLength(1);
     await expect(gateway.startManaged(missingId, missingSession, randomUUID() + randomUUID())).rejects.toThrow('executable is unavailable');
-    expect(statuses.filter(status => status.serverId === missingId && status.status === 'starting')).toHaveLength(1);
+    expect(statuses.filter(status => status.serverId === missingId && !status.sessionId && status.status === 'starting')).toHaveLength(1);
   });
 
   it('binds loopback only and rejects missing or cross-session bearer tokens', async () => {
@@ -2164,5 +2167,145 @@ describe('McpGateway protocol families', () => {
     await delay(80);
     expect(internals.entries.size).toBe(0);
     expect(statuses.filter(status => status.status === 'stopped')).toHaveLength(1);
+  });
+});
+
+describe('McpGateway limits from the hub', () => {
+  type Status = { serverId?: string; sessionId?: string; status?: string; error?: string; reason?: { kind: string; limit?: number; inUse?: number } };
+  let gateway: McpGateway | undefined;
+  afterEach(async () => {
+    await gateway?.stop();
+    gateway = undefined;
+  });
+
+  const baseLimits = {
+    maxProcesses: 8,
+    maxSessions: 64,
+    maxPending: 256,
+    maxPerServerSessions: 4,
+    idleMs: 60_000,
+    backoffBaseMs: 10_000,
+    backoffMaxMs: 10_000,
+    backoffWindowMs: 60_000,
+    maxRestarts: 5,
+    healthyResetMs: 100,
+  };
+
+  function snapshot(serverId: string, gatewayLimits?: { maxPerServerSessions?: number; maxProcesses?: number; idleMs?: number }, args = ['-e', 'setInterval(() => undefined, 1000);']) {
+    return {
+      protocol: '1.13' as const,
+      revision: 1,
+      generatedAt: 1,
+      registryEnabled: true,
+      ...(gatewayLimits ? { gatewayLimits } : {}),
+      servers: [
+        {
+          id: serverId,
+          name: 'mattermost',
+          enabled: true,
+          transport: 'stdio' as const,
+          mode: 'per-session' as const,
+          command: process.execPath,
+          args,
+          machineScope: { allMachines: true, machineIds: [] },
+          projectIds: [],
+          revision: 1,
+          secrets: [],
+        },
+      ],
+    };
+  }
+
+  function setup() {
+    const statuses: Status[] = [];
+    const lines: string[] = [];
+    const logger = createLogger({ level: 'warn', write: line => lines.push(line) });
+    gateway = new McpGateway(logger, status => statuses.push(status as Status), baseLimits);
+    return { statuses, lines, gateway };
+  }
+
+  const bearer = () => randomUUID() + randomUUID();
+
+  it('refuses the session over the server limit with its sessionId and reason, logs the busy processes, and starts it after the limit is raised', async () => {
+    const { statuses, lines, gateway: gw } = setup();
+    await gw.start();
+    const serverId = randomUUID();
+    gw.setRegistry(snapshot(serverId, { maxPerServerSessions: 1 }));
+    const first = randomUUID();
+    await gw.startManaged(serverId, first, bearer());
+    const second = randomUUID();
+    await expect(gw.startManaged(serverId, second, bearer())).rejects.toThrow('per-session process limit reached for this server (1 of 1)');
+    const refusal = statuses.find(status => status.sessionId === second && status.status === 'failed');
+    expect(refusal).toMatchObject({ serverId, sessionId: second, reason: { kind: 'server-limit', limit: 1, inUse: 1 } });
+    const log = lines.map(line => JSON.parse(line) as { msg: string; kind?: string; busy?: string[] }).find(entry => entry.msg === 'MCP gateway limit reached');
+    expect(log).toMatchObject({ kind: 'server-limit', busy: [`mattermost@1/legacy/${first}`] });
+    // The machine row is not touched by a refusal of one session.
+    expect(statuses.filter(status => !status.sessionId && status.status === 'failed')).toHaveLength(0);
+
+    gw.setRegistry(snapshot(serverId, { maxPerServerSessions: 2 }));
+    await gw.startManaged(serverId, second, bearer());
+    const last = statuses.filter(status => status.sessionId === second).at(-1);
+    expect(last).toMatchObject({ serverId, sessionId: second, status: 'ready' });
+  });
+
+  it('starts sessions five to eight after the hub raises the limit to 8', async () => {
+    const { gateway: gw } = setup();
+    await gw.start();
+    const serverId = randomUUID();
+    gw.setRegistry(snapshot(serverId));
+    for (let i = 0; i < 4; i++) await gw.startManaged(serverId, randomUUID(), bearer());
+    await expect(gw.startManaged(serverId, randomUUID(), bearer())).rejects.toThrow('(4 of 4)');
+    gw.setRegistry(snapshot(serverId, { maxPerServerSessions: 8 }));
+    for (let i = 0; i < 4; i++) await gw.startManaged(serverId, randomUUID(), bearer());
+    await expect(gw.startManaged(serverId, randomUUID(), bearer())).rejects.toThrow('(8 of 8)');
+  });
+
+  it('keeps running processes when the limit is lowered and refuses a new session with the lowered limit', async () => {
+    const { statuses, gateway: gw } = setup();
+    await gw.start();
+    const serverId = randomUUID();
+    gw.setRegistry(snapshot(serverId));
+    const sessions = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    for (const session of sessions) await gw.startManaged(serverId, session, bearer());
+    gw.setRegistry(snapshot(serverId, { maxPerServerSessions: 2 }));
+    expect(statuses.filter(status => status.status === 'stopped')).toHaveLength(0);
+    const late = randomUUID();
+    await expect(gw.startManaged(serverId, late, bearer())).rejects.toThrow('(4 of 2)');
+    expect(statuses.find(status => status.sessionId === late)).toMatchObject({ status: 'failed', reason: { kind: 'server-limit', limit: 2, inUse: 4 } });
+    // A snapshot without limits returns to the agent defaults: 4 of 4 is still full.
+    gw.setRegistry(snapshot(serverId));
+    await expect(gw.startManaged(serverId, randomUUID(), bearer())).rejects.toThrow('(4 of 4)');
+  });
+
+  it('reports a machine-limit refusal with the machine limit', async () => {
+    const { statuses, gateway: gw } = setup();
+    await gw.start();
+    const serverId = randomUUID();
+    gw.setRegistry(snapshot(serverId, { maxPerServerSessions: 8, maxProcesses: 2 }));
+    await gw.startManaged(serverId, randomUUID(), bearer());
+    await gw.startManaged(serverId, randomUUID(), bearer());
+    const third = randomUUID();
+    await expect(gw.startManaged(serverId, third, bearer())).rejects.toThrow('MCP process limit reached (2 of 2)');
+    expect(statuses.find(status => status.sessionId === third)).toMatchObject({ status: 'failed', reason: { kind: 'machine-limit', limit: 2, inUse: 2 } });
+  });
+
+  it('reports a backoff refusal for the session', async () => {
+    const { statuses, gateway: gw } = setup();
+    await gw.start();
+    const serverId = randomUUID();
+    gw.setRegistry(snapshot(serverId, undefined, ['-e', "process.stdin.on('data', () => process.exit(2));"]));
+    const sessionId = randomUUID();
+    const token = gw.authorize(serverId, sessionId);
+    const request = () =>
+      fetch(`${gw.url}?server=${serverId}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'x-agent-session': sessionId, 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
+      });
+    await request();
+    await delay(30);
+    await request();
+    const refusal = statuses.find(status => status.sessionId === sessionId && status.reason?.kind === 'backoff');
+    expect(refusal).toMatchObject({ serverId, status: 'failed' });
   });
 });

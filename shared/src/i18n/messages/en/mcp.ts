@@ -324,4 +324,23 @@ export default {
   'mcp.wizard.confirmSaveUnchecked': 'Save the server without a check? It will be marked as unchecked.',
   'mcp.wizard.title': 'Add server · step {step} of {total}',
   'mcp.wizard.notDone': 'Not completed',
+  'mcp.gateway.serverLimit': {
+    one: 'On {machine} the only allowed process of {server} is in use',
+    other: 'On {machine} all {count} processes of {server} are in use',
+  } as PluralMessage,
+  'mcp.gateway.machineLimit': {
+    one: 'On {machine} the only allowed MCP process is in use',
+    other: 'On {machine} all {count} MCP processes of the machine are in use',
+  } as PluralMessage,
+  'mcp.gateway.inUse': 'Running now: {inUse}.',
+  'mcp.gateway.busy': 'Processes are held by:',
+  'mcp.gateway.hint.shared': 'Switch the server to «Machine-shared» mode in the registry: one process serves all sessions.',
+  'mcp.gateway.hint.sleep': 'Put to sleep or close other sessions that use {server}.',
+  'mcp.gateway.hint.raise': 'Raise the limit in Settings → Machines.',
+  'mcp.gateway.backoff': '{machine}: the server process crashed, the gateway restarts it shortly. Reconnect the server in a minute.',
+  'mcp.gateway.restartLimit': '{machine}: the server process crashed too many times in a row. Check its command and settings in the registry.',
+  'mcp.gateway.unavailable': '{machine}: the server command is unavailable. Install it or turn the server off for this machine in the registry.',
+  'mcp.list.processes': 'Processes: {count}',
+  'mcp.list.processesLabel': 'Sessions holding processes of {server} on {machine}',
+  'mcp.list.processSession': 'Session {id}',
 } as const;

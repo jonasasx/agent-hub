@@ -7,14 +7,16 @@
  * API: GET /api/runners, PATCH /api/runners/:id, POST /api/runners/:id/disable (D10).
  * Requirement (machine-mcp-onboarding): Повторный импорт со страницы машины — the MCP block: registry state, skipped
  * servers of the auto-import and «Импортировать MCP» (disabled for an agent without `mcp.import.v2`), change `mcp-hub-only`.
+ * Change mcp-gateway-session-limits: the gateway limits of the machine (owner only; disabled for an agent without
+ * `mcp.gateway.limits`), GET/PUT /api/mcp/registry/machines/:machineId/gateway-limits.
  */
 import { useCallback, useEffect, useId, useState } from 'react';
 import { ApiError, api } from '../../api/client';
-import type { McpRegistryAgentStatus } from '../../api/mcpRegistryTypes';
+import type { McpGatewayLimitsView, McpRegistryAgentStatus } from '../../api/mcpRegistryTypes';
 import type { RunnerDetail, RunnerView } from '../../api/types';
 import { t, useT } from '../../i18n';
 import { useStore } from '../../store';
-import { MCP_IMPORT_V2_CAPABILITY } from '@agent-hub/shared';
+import { MCP_GATEWAY_LIMIT_BOUNDS, MCP_GATEWAY_LIMITS_CAPABILITY, MCP_IMPORT_V2_CAPABILITY, type McpGatewayLimitsUpdate } from '@agent-hub/shared';
 import { formatLastSeen } from '../machines/runnerInfo';
 import { CommandBox, MacDiskWarning } from '../machines/EnrollModal';
 import { claudeLoginCommand, needsClaudeLogin, osFamily } from '../machines/machines';
@@ -269,7 +271,112 @@ function MachineMcp({ r, mcp, onImported }: { r: RunnerView; mcp: McpRegistryAge
       {reason && <span className="hint">{reason}</span>}
       {skipped.length > 0 && <span className="hint">{tr('settings.machines.mcp.skipped', { count: skipped.length, names: skipped.join(', ') })}</span>}
       {open && <McpImportDialog machineId={r.id} machineName={r.name} onClose={() => setOpen(false)} onImported={() => onImported()} />}
+      <MachineGatewayLimits r={r} supported={!!mcp?.capabilities.includes(MCP_GATEWAY_LIMITS_CAPABILITY)} />
     </div>
+  );
+}
+
+type LimitKey = keyof typeof MCP_GATEWAY_LIMIT_BOUNDS;
+const LIMIT_FIELDS: Array<{ key: LimitKey; label: 'perServer' | 'total' | 'idle'; scale: number }> = [
+  { key: 'maxPerServerSessions', label: 'perServer', scale: 1 },
+  { key: 'maxProcesses', label: 'total', scale: 1 },
+  // the idle time is entered in seconds, the hub stores milliseconds
+  { key: 'idleMs', label: 'idle', scale: 1000 },
+];
+
+/** Change mcp-gateway-session-limits: an empty field is the agent default; lowering a limit keeps the running processes. */
+function MachineGatewayLimits({ r, supported }: { r: RunnerView; supported: boolean }) {
+  const tr = useT();
+  const id = useId();
+  const pushToast = useStore(s => s.pushToast);
+  const [view, setView] = useState<McpGatewayLimitsView | null>(null);
+  const [values, setValues] = useState<Record<LimitKey, string>>({ maxPerServerSessions: '', maxProcesses: '', idleMs: '' });
+  const [errors, setErrors] = useState<Partial<Record<LimitKey, string>>>({});
+  const [busy, setBusy] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const fill = (next: McpGatewayLimitsView) => {
+    setView(next);
+    const text = (key: LimitKey, scale: number) => (next.limits[key] === undefined ? '' : String(next.limits[key] / scale));
+    setValues({ maxPerServerSessions: text('maxPerServerSessions', 1), maxProcesses: text('maxProcesses', 1), idleMs: text('idleMs', 1000) });
+  };
+  useEffect(() => {
+    api
+      .mcpGatewayLimits(r.id)
+      .then(fill)
+      .catch(() => setView(null));
+  }, [r.id]);
+  if (!view) return null;
+  const disabled = !supported || busy;
+  const save = async (e: { preventDefault(): void }) => {
+    e.preventDefault();
+    const body: McpGatewayLimitsUpdate = { maxPerServerSessions: null, maxProcesses: null, idleMs: null };
+    const found: Partial<Record<LimitKey, string>> = {};
+    for (const field of LIMIT_FIELDS) {
+      const raw = values[field.key].trim();
+      if (!raw) continue;
+      const bounds = MCP_GATEWAY_LIMIT_BOUNDS[field.key];
+      const value = Number(raw) * field.scale;
+      if (!Number.isInteger(value) || value < bounds.min || value > bounds.max) {
+        found[field.key] = tr('settings.machines.limits.invalid', { min: bounds.min / field.scale, max: bounds.max / field.scale });
+        continue;
+      }
+      body[field.key] = value;
+    }
+    setErrors(found);
+    if (Object.keys(found).length) return;
+    setBusy(true);
+    setSaveError(null);
+    try {
+      fill(await api.mcpSetGatewayLimits(r.id, body));
+      pushToast({ title: tr('settings.machines.limits.saved'), text: r.name });
+    } catch (e2) {
+      setSaveError(e2 instanceof ApiError && e2.serverMessage ? e2.serverMessage : tr('settings.machines.saveFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form className="mc-limits" data-testid="machine-gateway-limits" noValidate onSubmit={e => void save(e)}>
+      <b>{tr('settings.machines.limits.title')}</b>
+      {LIMIT_FIELDS.map(field => {
+        const bounds = MCP_GATEWAY_LIMIT_BOUNDS[field.key];
+        const fieldId = `${id}-${field.key}`;
+        const error = errors[field.key];
+        return (
+          <div key={field.key} className="mc-limit">
+            <label htmlFor={fieldId}>{tr(`settings.machines.limits.${field.label}`)}</label>
+            <input
+              id={fieldId}
+              className="input"
+              type="number"
+              inputMode="numeric"
+              min={bounds.min / field.scale}
+              max={bounds.max / field.scale}
+              placeholder={String(view.defaults[field.key] / field.scale)}
+              value={values[field.key]}
+              disabled={disabled}
+              onChange={e => setValues({ ...values, [field.key]: e.target.value })}
+              aria-invalid={!!error}
+              aria-describedby={`${fieldId}-hint`}
+            />
+            <span className={error ? 'field-error' : 'hint'} id={`${fieldId}-hint`} role={error ? 'alert' : undefined}>
+              {error ?? tr('settings.machines.limits.default', { value: view.defaults[field.key] / field.scale, min: bounds.min / field.scale, max: bounds.max / field.scale })}
+            </span>
+          </div>
+        );
+      })}
+      <span className="hint">{supported ? tr('settings.machines.limits.hint') : tr('settings.machines.limits.needsUpdate')}</span>
+      {saveError && (
+        <span className="field-error" role="alert">
+          {saveError}
+        </span>
+      )}
+      <div>
+        <button type="submit" className="btn" disabled={disabled} title={supported ? undefined : tr('settings.machines.limits.needsUpdate')}>
+          {tr('settings.machines.limits.save')}
+        </button>
+      </div>
+    </form>
   );
 }
 

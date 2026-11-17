@@ -412,6 +412,11 @@ describe('isolation of users (integration)', () => {
     // mcp-registry: owner-scoped registry, draft workflow and import.
     'GET /api/mcp/registry': { url: '/api/mcp/registry', list: true },
     'GET /api/mcp/registry/status': { url: '/api/mcp/registry/status', list: true },
+    'GET /api/mcp/registry/machines/:machineId/gateway-limits': { url: `/api/mcp/registry/machines/${o.runner}/gateway-limits` },
+    'PUT /api/mcp/registry/machines/:machineId/gateway-limits': {
+      url: `/api/mcp/registry/machines/${o.runner}/gateway-limits`,
+      body: { maxPerServerSessions: 8, maxProcesses: null, idleMs: null },
+    },
     'PUT /api/mcp/registry/servers/:id/machines/:machineId': { url: `/api/mcp/registry/servers/${o.sub}/machines/${o.runner}`, body: { revision: 1, enabled: false } },
     'POST /api/mcp/registry/servers/:id/oauth/start': { url: `/api/mcp/registry/servers/${o.registryServer}/oauth/start`, body: { machineId: randomUUID() } },
     'POST /api/mcp/registry/servers/:id/oauth/complete': {

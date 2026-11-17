@@ -6,6 +6,7 @@ import { McpImportPanel } from './McpImportPanel';
 import { McpSegment } from './McpSegment';
 import { MCP_MODE_LABELS, mcpStatusLabel, mcpStatusTone } from './mcpLabels';
 import { fmt, t, useT } from '../../i18n';
+import { SessionLink } from '../chat/Markdown';
 
 interface MachineOption {
   id: string;
@@ -221,7 +222,7 @@ function ServerRow({
       {server.url && <code className="mcp-target">{server.url}</code>}
       <SecretList secrets={server.secrets} />
       {server.transport === 'http' && <RegistryOAuthControl server={server} status={status} onRefreshStatus={onRefreshStatus} />}
-      <GatewayList serverId={server.id} status={status} />
+      <GatewayList serverId={server.id} serverName={server.name} status={status} />
       <ServerMachineList server={server} machines={machines} onOverride={onMachineOverride} />
       <ServerConfigEditor server={server} machines={machines} onSave={onUpdate} />
       <ProjectOverrideControl serverId={server.id} projects={projects} onChange={onProjectOverrideChange} onClear={onProjectOverrideClear} />
@@ -663,19 +664,41 @@ function SecretList({ secrets }: { secrets: McpRegistryResponse['servers'][numbe
   ));
 }
 
-function GatewayList({ serverId, status }: { serverId: string; status: McpRegistryStatus }) {
+function GatewayList({ serverId, serverName, status }: { serverId: string; serverName: string; status: McpRegistryStatus }) {
+  const tr = useT();
   const gateways = status.gateways.filter(gateway => gateway.serverId === serverId);
-  return gateways.map(gateway => {
-    const machineName = status.agents.find(agent => agent.machineId === gateway.machineId)?.machineName ?? gateway.machineId;
-    const hasProblem = gateway.status === 'failed' || gateway.status === 'needs-secret';
-
-    return (
-      <p className={`mcp-meta ${hasProblem ? 'bad' : ''}`} key={`${gateway.machineId}:${gateway.sessionId ?? ''}`}>
-        {machineName}: <span className={`pill mcp-status-pill ${mcpStatusTone(gateway.status)}`}>{mcpStatusLabel(gateway.status)}</span>
-        {gateway.error ? ` — ${gateway.error}` : ''}
-      </p>
-    );
-  });
+  const machineNameOf = (machineId: string) => status.agents.find(agent => agent.machineId === machineId)?.machineName ?? machineId;
+  // mcp-gateway-session-limits: running per-session processes are one line per machine with links to their sessions.
+  const processes = new Map<string, string[]>();
+  for (const gateway of gateways) {
+    if (!gateway.sessionId || gateway.status !== 'ready') continue;
+    processes.set(gateway.machineId, [...(processes.get(gateway.machineId) ?? []), gateway.sessionId]);
+  }
+  const rows = gateways.filter(gateway => !gateway.sessionId || gateway.status === 'failed' || gateway.status === 'needs-secret');
+  return (
+    <>
+      {rows.map(gateway => {
+        const hasProblem = gateway.status === 'failed' || gateway.status === 'needs-secret';
+        return (
+          <p className={`mcp-meta ${hasProblem ? 'bad' : ''}`} key={`${gateway.machineId}:${gateway.sessionId ?? ''}`}>
+            {machineNameOf(gateway.machineId)}: <span className={`pill mcp-status-pill ${mcpStatusTone(gateway.status)}`}>{mcpStatusLabel(gateway.status)}</span>
+            {gateway.error ? ` — ${gateway.error}` : ''}
+          </p>
+        );
+      })}
+      {[...processes].map(([machineId, sessionIds]) => (
+        <p className="mcp-meta mcp-processes" key={`processes:${machineId}`} aria-label={tr('mcp.list.processesLabel', { server: serverName, machine: machineNameOf(machineId) })}>
+          {machineNameOf(machineId)}: {tr('mcp.list.processes', { count: sessionIds.length })} —{' '}
+          {sessionIds.map((id, i) => (
+            <span key={id}>
+              {i > 0 && ', '}
+              <SessionLink id={id}>{tr('mcp.list.processSession', { id: id.slice(0, 8) })}</SessionLink>
+            </span>
+          ))}
+        </p>
+      ))}
+    </>
+  );
 }
 
 function DraftList({ drafts, onContinue }: { drafts: McpRegistryResponse['drafts']; onContinue: (draft: McpRegistryDraftView) => void }) {

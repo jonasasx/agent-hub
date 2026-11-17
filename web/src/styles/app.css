@@ -1387,6 +1387,11 @@ body:has(.lightbox) .toasts { z-index: 55; }
 .mcp-meta.mcp-past { color: var(--faint); } /* UI review H2: the previous error while an action is on the way */
 .mcp-err { font-size: 12.5px; color: var(--bad); padding-left: 17px; margin: 0; overflow-wrap: anywhere; white-space: pre-line; }
 .mcp-details { font-size: 12px; color: var(--muted); padding-left: 17px; }
+.mcp-hints { font-size: 12.5px; color: var(--muted); margin: 2px 0 0; padding-left: 34px; }
+.mcp-hints li + li { margin-top: 2px; }
+.mc-limits { display: grid; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.mc-limit { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 2px 10px; align-items: center; }
+.mc-limit > .hint, .mc-limit > .field-error { grid-column: 1 / -1; }
 .mcp-details summary { cursor: pointer; width: fit-content; display: flex; align-items: center; min-height: 28px; border-radius: 4px; }
 .mcp-details summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (pointer: coarse) {

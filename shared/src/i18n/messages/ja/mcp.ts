@@ -321,4 +321,21 @@ export default {
   'mcp.wizard.confirmSaveUnchecked': '確認せずにサーバーを保存しますか? 「未確認」として記録されます。',
   'mcp.wizard.title': 'サーバーを追加 · ステップ {step} / {total}',
   'mcp.wizard.notDone': '未完了',
+  'mcp.gateway.serverLimit': {
+    other: '{machine} で {server} のプロセス {count} 個がすべて使用中です',
+  },
+  'mcp.gateway.machineLimit': {
+    other: '{machine} でマシンの MCP プロセス {count} 個がすべて使用中です',
+  },
+  'mcp.gateway.inUse': '現在の実行数: {inUse}。',
+  'mcp.gateway.busy': 'プロセスを使用中:',
+  'mcp.gateway.hint.shared': 'レジストリでサーバーを「マシンで共有」モードに切り替えてください。1 つのプロセスがすべてのセッションを処理します。',
+  'mcp.gateway.hint.sleep': '{server} を使う他のセッションをスリープするか閉じてください。',
+  'mcp.gateway.hint.raise': '「設定 → マシン」で上限を上げてください。',
+  'mcp.gateway.backoff': '{machine}: サーバープロセスが停止しました。ゲートウェイがまもなく再起動します。1 分後にサーバーを再接続してください。',
+  'mcp.gateway.restartLimit': '{machine}: サーバープロセスが連続して停止しすぎました。レジストリでコマンドと設定を確認してください。',
+  'mcp.gateway.unavailable': '{machine}: サーバーのコマンドが使えません。インストールするか、レジストリでこのマシンのサーバーをオフにしてください。',
+  'mcp.list.processes': 'プロセス: {count}',
+  'mcp.list.processesLabel': '{machine} で {server} のプロセスを保持しているセッション',
+  'mcp.list.processSession': 'セッション {id}',
 } satisfies Dict;

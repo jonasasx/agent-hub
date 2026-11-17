@@ -371,6 +371,44 @@ describe('the MCP panel', () => {
     await userEvent.click(await within(panel()).findByRole('button', { name: 'Войти' }));
     expect(await within(row('notion')).findByRole('alert')).toHaveTextContent('X1 не в сети');
   });
+
+  it('mcp-gateway-session-limits: a refusal by the server limit shows the limit, three hints and links to the sessions that hold it', async () => {
+    const serverId = '7a0c6f2e-5b1d-4c8e-9f3a-2d4b6c8e0a1f';
+    const busy = '3c9d2e1f-0a4b-4c5d-8e6f-7a8b9c0d1e2f';
+    const s = session({ mcpProblems: 1 });
+    mockFetch({
+      [`GET /api/sessions/${s.id}/mcp`]: mcpRoute(
+        mcpView({
+          servers: [
+            mcpServer({
+              name: 'mattermost',
+              status: 'failed',
+              transport: 'http',
+              error: 'HTTP 503',
+              gateway: {
+                serverId,
+                status: 'failed',
+                error: 'MCP per-session process limit reached',
+                reason: { kind: 'server-limit', limit: 1, inUse: 1 },
+                busySessionIds: [busy],
+                observedAt: new Date().toISOString(),
+              },
+            }),
+          ],
+        }),
+      ),
+      'POST /api/sessions/resolve': () => ({ status: 200, body: { sessions: [{ ref: busy, id: busy, title: 'Разбор почты', runnerName: 'X1' }] } }),
+    });
+    head(s);
+    await userEvent.click(await screen.findByRole('button', { name: /^MCP/ }));
+    const mm = await waitFor(() => row('mattermost'));
+    expect(mm).toHaveTextContent('На машине X1 занят единственный разрешённый процесс сервера mattermost.');
+    const hints = mm.querySelectorAll('.mcp-hints li');
+    expect(hints).toHaveLength(3);
+    expect(hints[0]).toHaveTextContent('Общий на машину');
+    expect(within(mm).getByRole('button', { name: 'Настроить сервер' })).toBeInTheDocument();
+    expect(await within(mm).findByRole('link', { name: 'Разбор почты' })).toHaveAttribute('href', `/s/${busy}`);
+  });
 });
 
 describe('sign-in to a remote MCP', () => {

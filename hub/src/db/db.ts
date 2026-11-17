@@ -1,6 +1,6 @@
 import { Kysely, PostgresDialect, type ColumnType, type Generated } from 'kysely';
 import pg from 'pg';
-import type { McpServerSnapshot, Provider, ProviderStatus, SessionContextPayload } from '@agent-hub/shared';
+import type { McpGatewayFailureReason, McpGatewayLimits, McpServerSnapshot, Provider, ProviderStatus, SessionContextPayload } from '@agent-hub/shared';
 
 type Timestamp = ColumnType<Date, Date | string | undefined, Date | string>;
 
@@ -115,6 +115,8 @@ export interface RunnersTable {
   mcp_import_state: Generated<'auto-pending' | 'done'>;
   mcp_imported_at: Date | null;
   mcp_import_report: ColumnType<{ imported: string[]; skipped: string[] } | null, string | null | undefined, string | null>;
+  /** mcp-gateway-session-limits (057): limits of the machine's MCP gateway; null or a missing field — the agent default. */
+  mcp_gateway_limits: ColumnType<McpGatewayLimits | null, string | null | undefined, string | null>;
   claude_login: 'ok' | 'missing' | 'rejected' | null;
   protected_dirs_ok: boolean | null;
   arch: string | null;
@@ -710,6 +712,8 @@ export interface McpGatewayStatusesTable {
   status: 'stopped' | 'starting' | 'ready' | 'needs-secret' | 'failed';
   endpoint: string | null;
   error: string | null;
+  /** 057: why the gateway refused a start (limit, backoff, …). */
+  reason: ColumnType<McpGatewayFailureReason | null, string | null | undefined, string | null>;
   observed_at: Generated<Date>;
 }
 

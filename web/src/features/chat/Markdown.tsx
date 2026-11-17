@@ -117,7 +117,7 @@ export const FileLinkContext = createContext<FileLinkResolver | null>(null);
  * A UUID of the feed that is a session of the user (change session-links, Requirement: Ссылки на сессии): the label is
  * the live title of the session, a click opens its tab. Until the hub answers, or for a foreign UUID, the text stays.
  */
-function SessionLink({ id, children }: { id: string; children?: ReactNode }) {
+export function SessionLink({ id, children }: { id: string; children?: ReactNode }) {
   const ref = useSessionRef(id);
   const title = useStore(st => (ref ? st.sessions[ref.id]?.title : undefined)) ?? ref?.title;
   if (!ref) return <>{children}</>;

@@ -13,6 +13,33 @@ export const MCP_REGISTRY_PROTOCOL_VERSION = '1.13' as const;
 export const MCP_REGISTRY_CAPABILITIES = ['mcp.registry.v1', 'mcp.gateway.streamable-http.v1', 'mcp.secrets.encrypted.v1', 'mcp.oauth.v1', 'mcp.registry.tools.v1'] as const;
 /** Import v2 (change `mcp-hub-only`, D4): Codex, plugins, all projects; the agent honours `projectIds`. Kept apart from the list above. */
 export const MCP_IMPORT_V2_CAPABILITY = 'mcp.import.v2' as const;
+/** Change `mcp-gateway-session-limits` (D3): the agent applies `gatewayLimits` of the registry snapshot. */
+export const MCP_GATEWAY_LIMITS_CAPABILITY = 'mcp.gateway.limits' as const;
+/** The bounds of the gateway limits a user may set on a machine (D2). */
+export const MCP_GATEWAY_LIMIT_BOUNDS = {
+  maxPerServerSessions: { min: 1, max: 32 },
+  maxProcesses: { min: 1, max: 64 },
+  idleMs: { min: 10_000, max: 3_600_000 },
+} as const;
+/** The agent's own values, used when a field is not set in the hub. */
+export const MCP_GATEWAY_DEFAULT_LIMITS = { maxPerServerSessions: 4, maxProcesses: 8, idleMs: 60_000 } as const;
+const limit = (key: keyof typeof MCP_GATEWAY_LIMIT_BOUNDS) => z.number().int().min(MCP_GATEWAY_LIMIT_BOUNDS[key].min).max(MCP_GATEWAY_LIMIT_BOUNDS[key].max);
+export const mcpGatewayLimitsSchema = z.object({
+  maxPerServerSessions: limit('maxPerServerSessions').optional(),
+  maxProcesses: limit('maxProcesses').optional(),
+  idleMs: limit('idleMs').optional(),
+});
+/** PUT body: `null` resets a field to the agent's default. */
+export const mcpGatewayLimitsUpdateSchema = z.object({
+  maxPerServerSessions: limit('maxPerServerSessions').nullable(),
+  maxProcesses: limit('maxProcesses').nullable(),
+  idleMs: limit('idleMs').nullable(),
+});
+export const mcpGatewayFailureReasonSchema = z.object({
+  kind: z.enum(['server-limit', 'machine-limit', 'backoff', 'restart-limit', 'unavailable']),
+  limit: z.number().int().nonnegative().optional(),
+  inUse: z.number().int().nonnegative().optional(),
+});
 export const mcpImportStateSchema = z.enum(['auto-pending', 'done']);
 export const mcpTransportSchema = z.enum(['stdio', 'http', 'sse']);
 export const mcpInstanceModeSchema = z.enum(['remote', 'machine-shared', 'per-session']);
@@ -125,6 +152,7 @@ export const mcpRegistrySnapshotSchema = z.object({
     .array(z.object({ projectId: id, serverId: id, enabled: z.literal(false) }))
     .max(100_000)
     .optional(),
+  gatewayLimits: mcpGatewayLimitsSchema.optional(),
 });
 export const mcpRegistryAgentStatusSchema = z.object({
   machineId,
@@ -139,6 +167,8 @@ export const mcpRegistryAgentStatusSchema = z.object({
     .object({ imported: z.array(z.string().max(128)).max(1000), skipped: z.array(z.string().max(128)).max(1000) })
     .nullable()
     .optional(),
+  /** The limits saved in the hub for the machine; a missing field means the agent's default. */
+  gatewayLimits: mcpGatewayLimitsSchema.optional(),
 });
 export const mcpRegistryDraftSchema = z.object({
   draftId: id,
@@ -179,6 +209,7 @@ export const mcpGatewayStatusSchema = z
       .regex(/^http:\/\/127\.0\.0\.1:\d{1,5}\/mcp$/)
       .optional(),
     error: safeText.optional(),
+    reason: mcpGatewayFailureReasonSchema.optional(),
     observedAt: z.number().int().nonnegative(),
   })
   .superRefine((status, ctx) => {
@@ -347,6 +378,9 @@ export const mcpRegistryServerMachineSchema = z.object({ machineId, enabled: z.b
 export const mcpRegistryMachineOverrideResponseSchema = z.object({ serverId: id, revision: z.number().int().nonnegative(), machines: z.array(mcpRegistryServerMachineSchema).max(100) });
 export type McpRegistryOAuthStatus = z.infer<typeof mcpRegistryOAuthStatusSchema>;
 export type McpRegistryStatus = z.infer<typeof mcpRegistryStatusSchema>;
+export type McpGatewayLimits = z.infer<typeof mcpGatewayLimitsSchema>;
+export type McpGatewayLimitsUpdate = z.infer<typeof mcpGatewayLimitsUpdateSchema>;
+export type McpGatewayFailureReason = z.infer<typeof mcpGatewayFailureReasonSchema>;
 export type McpRegistryMachineOverrideRequest = z.infer<typeof mcpRegistryMachineOverrideRequestSchema>;
 export type McpRegistryMachineOverrideResponse = z.infer<typeof mcpRegistryMachineOverrideResponseSchema>;
 export type McpRegistryServerMachine = z.infer<typeof mcpRegistryServerMachineSchema>;

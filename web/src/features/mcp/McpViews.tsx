@@ -25,6 +25,7 @@ import { openSettings } from '../settings/Settings';
 import { closeMcpPanel, loadMcp, logoutServer, mcpAction, openMcpPanel, refreshMcp, startMcpAuth, submitMcpCallback } from './actions';
 import { McpRegistry } from './McpRegistry';
 import { mcpGatewayMessage } from './mcpErrors';
+import { SessionLink } from '../chat/Markdown';
 import {
   MCP_STATUS_LABEL,
   MCP_STATUS_TONE,
@@ -358,7 +359,7 @@ function McpServerRow({
   // UI review H2: while an action is on the way the previous error is history, not an alarm
   const lastError = !err && srv.lastError ? hubText(srv.lastError, srv.lastErrorI18n) : null;
   // Причина ошибки сервера реестра в панели сессии: the gateway's reason leads, Claude Code's text goes to «Подробности»
-  const gateway = srv.gateway ? mcpGatewayMessage(srv.gateway, machine) : null;
+  const gateway = srv.gateway ? mcpGatewayMessage(srv.gateway, machine, srv.name) : null;
   const details = gateway ? [gateway.details, srv.error, lastError].filter(Boolean).join('\n') : '';
   return (
     <li className={`mcp-row ${tone}`} aria-label={`${srv.name}: ${MCP_STATUS_LABEL[status]}`}>
@@ -379,6 +380,25 @@ function McpServerRow({
       {gateway ? (
         <>
           <div className="mcp-err">{gateway.message}</div>
+          {gateway.hints.length > 0 && (
+            <ul className="mcp-hints">
+              {gateway.hints.map(hint => (
+                <li key={hint}>{hint}</li>
+              ))}
+            </ul>
+          )}
+          {/* mcp-gateway-session-limits: the sessions that hold the server's processes on this machine */}
+          {srv.gateway?.busySessionIds && srv.gateway.busySessionIds.length > 0 && (
+            <div className="mcp-meta mcp-busy">
+              {t('mcp.gateway.busy')}{' '}
+              {srv.gateway.busySessionIds.map((id, i) => (
+                <span key={id}>
+                  {i > 0 && ', '}
+                  <SessionLink id={id}>{t('mcp.list.processSession', { id: id.slice(0, 8) })}</SessionLink>
+                </span>
+              ))}
+            </div>
+          )}
           {details && (
             <details className="mcp-details">
               <summary>{t('mcp.row.details')}</summary>
