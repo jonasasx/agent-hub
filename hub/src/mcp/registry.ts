@@ -687,13 +687,12 @@ export class McpRegistryService {
     encryptionKey(this.o.key);
     const connection = await this.oauthMachine(userId, serverId, request.machineId, true);
     if (!connection) throw new HttpError(409, 'machine_offline', 'Target machine is offline');
-    const flowId = randomUUID();
+    let flowId = randomUUID();
     const oauthClientId = typeof server.config.oauthClientId === 'string' ? server.config.oauthClientId : undefined;
     // A pre-registered client accepts only loopback redirects: the user pastes the address back (completeOAuth).
-    const redirectUri = oauthClientId ? OAUTH_LOOPBACK_REDIRECT_URI : new URL('/mcp/oauth/callback', this.o.publicUrl).toString();
-    let result: ReturnType<typeof mcpOAuthStartResultSchema.parse>;
-    try {
-      result = mcpOAuthStartResultSchema.parse(
+    let redirectUri = oauthClientId ? OAUTH_LOOPBACK_REDIRECT_URI : new URL('/mcp/oauth/callback', this.o.publicUrl).toString();
+    const start = async () =>
+      mcpOAuthStartResultSchema.parse(
         await connection.request('mcp.oauth.start', {
           flowId,
           serverId,
@@ -704,6 +703,19 @@ export class McpRegistryService {
           ...(oauthClientId ? { oauthClientId } : {}),
         }),
       );
+    let result: ReturnType<typeof mcpOAuthStartResultSchema.parse>;
+    try {
+      try {
+        result = await start();
+      } catch (error) {
+        // Some servers register clients only with a loopback redirect: retry once and finish by pasting the address.
+        const retryLoopback = !oauthClientId && error instanceof CommandError && error.code === 'oauth_registration_rejected';
+        if (!retryLoopback) throw error;
+        this.o.log.info({ serverId, machineId: request.machineId }, 'MCP OAuth registration rejected the hub callback, retrying with loopback');
+        flowId = randomUUID();
+        redirectUri = OAUTH_LOOPBACK_REDIRECT_URI;
+        result = await start();
+      }
     } catch (error) {
       // Agents from 0.8.15 tell a rejected dynamic client registration apart; older ones keep the generic code.
       const registrationRejected = error instanceof CommandError && error.code === 'oauth_registration_rejected';
@@ -771,7 +783,7 @@ export class McpRegistryService {
       state: 'pending',
       authorizationUrl: result.authorizationUrl,
       expiresAt: result.expiresAt,
-      callback: oauthClientId ? 'manual' : 'hub',
+      callback: redirectUri === OAUTH_LOOPBACK_REDIRECT_URI ? 'manual' : 'hub',
     });
   }
   /** Ends a loopback sign-in: the user pastes the address the provider sent the browser to. */
@@ -1044,6 +1056,7 @@ export class McpRegistryService {
           connected: row.registry_ready,
           ...(row.expires_at ? { expiresAt: new Date(row.expires_at).getTime() } : {}),
           ...(row.error ? { error: row.error } : {}),
+          ...(row.state === 'pending' ? { callback: this.pendingCallback(userId, row.server_id, row.machine_id) } : {}),
         }),
       ),
       agents: runners.map(runner => ({
@@ -2493,6 +2506,14 @@ export class McpRegistryService {
   private removeOAuthFlow(flow: PendingOAuthFlow) {
     clearTimeout(flow.timer);
     this.pendingOAuth.delete(flow.state);
+  }
+  /** How a pending sign-in ends: through the hub callback or by pasting the loopback address. */
+  private pendingCallback(userId: string, serverId: string, machineId: string): 'hub' | 'manual' {
+    for (const flow of this.pendingOAuth.values()) {
+      if (flow.userId !== userId || flow.serverId !== serverId || flow.machineId !== machineId) continue;
+      return flow.redirectUri === OAUTH_LOOPBACK_REDIRECT_URI ? 'manual' : 'hub';
+    }
+    return 'hub';
   }
   private clearOAuthFlowsForServer(userId: string, serverId: string) {
     for (const flow of this.pendingOAuth.values()) {

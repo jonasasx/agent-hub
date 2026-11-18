@@ -19,6 +19,8 @@ describe('MCP registry draft tools', () => {
   const secret = 'MCP_REGISTRY_TEST_SECRET_7c3ef3';
   let validationFailureCode: string | null = null;
   let oauthStartFailureCode: string | null = null;
+  // Fails only the start with the hub callback, like a server that registers clients with loopback redirects only.
+  let oauthFailHubRedirectOnly = false;
   let validationResult: Record<string, unknown> | null = null;
   let validationHold: (() => void) | null = null;
   let validationStarted = false;
@@ -102,7 +104,7 @@ describe('MCP registry draft tools', () => {
               ? { exists: true, isDir: true }
               : type === 'session.start'
                 ? { models: [] }
-                : type === 'mcp.oauth.start' && oauthStartFailureCode
+                : type === 'mcp.oauth.start' && oauthStartFailureCode && !(oauthFailHubRedirectOnly && payload.redirectUri === OAUTH_LOOPBACK_REDIRECT_URI)
                   ? (() => {
                       throw { code: oauthStartFailureCode, message: 'UNSAFE_AUTH_SERVER_BODY Trusted Hosts insufficient_scope' };
                     })()
@@ -1743,6 +1745,101 @@ describe('MCP registry draft tools', () => {
     expect(sameOriginValidation?.payload).toMatchObject({ oauthServerId: sameOriginServerId });
   });
 
+  it('retries a rejected hub-callback registration with the loopback redirect and finishes by pasting the address', async () => {
+    const created = await t.hub.app.inject({
+      method: 'POST',
+      url: '/api/mcp/registry',
+      cookies: { ah_session: cookie },
+      headers: { origin: PUBLIC_URL },
+      payload: {
+        server: {
+          ...candidate(`registry_oauth_loopback_${randomUUID().slice(0, 8)}`).server,
+          transport: 'http',
+          mode: 'remote',
+          url: 'https://oauth-loopback-only.example.test/mcp',
+          machineScope: { allMachines: false, machineIds: [runnerId] },
+        },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const serverId = (created.json() as { id: string }).id;
+    const starts = () => agent.messages.filter(message => message.type === 'mcp.oauth.start' && message.payload.serverId === serverId);
+    let started: Awaited<ReturnType<typeof t.hub.app.inject>>;
+    try {
+      oauthStartFailureCode = 'oauth_registration_rejected';
+      oauthFailHubRedirectOnly = true;
+      started = await t.hub.app.inject({
+        method: 'POST',
+        url: `/api/mcp/registry/servers/${serverId}/oauth/start`,
+        cookies: { ah_session: cookie },
+        headers: { origin: PUBLIC_URL },
+        payload: { machineId: runnerId },
+      });
+    } finally {
+      oauthStartFailureCode = null;
+      oauthFailHubRedirectOnly = false;
+    }
+    expect(started.statusCode, started.body).toBe(202);
+    const startResult = started.json() as { authorizationUrl: string; callback: string };
+    expect(startResult.callback).toBe('manual');
+    expect(starts()).toHaveLength(2);
+    const [first, retry] = starts();
+    expect(first!.payload.redirectUri).toBe(`${PUBLIC_URL}/mcp/oauth/callback`);
+    expect(retry!.payload.redirectUri).toBe(OAUTH_LOOPBACK_REDIRECT_URI);
+    expect(retry!.payload).not.toHaveProperty('oauthClientId');
+    expect(retry!.payload.flowId).not.toBe(first!.payload.flowId);
+
+    const status = await t.hub.app.inject({ method: 'GET', url: '/api/mcp/registry/status', cookies: { ah_session: cookie } });
+    const rows = (status.json() as { oauth: Array<{ serverId: string; machineId: string; state: string; callback?: string }> }).oauth;
+    const row = rows.find(item => item.serverId === serverId && item.machineId === runnerId);
+    expect(row).toMatchObject({ state: 'pending', callback: 'manual' });
+
+    const oauthState = new URL(startResult.authorizationUrl).searchParams.get('state')!;
+    const completed = await t.hub.app.inject({
+      method: 'POST',
+      url: `/api/mcp/registry/servers/${serverId}/oauth/complete`,
+      cookies: { ah_session: cookie },
+      headers: { origin: PUBLIC_URL },
+      payload: { machineId: runnerId, callbackUrl: `${OAUTH_LOOPBACK_REDIRECT_URI}?code=loopback-code&state=${encodeURIComponent(oauthState)}` },
+    });
+    expect(completed.statusCode, completed.body).toBe(200);
+    const callbacks = agent.messages.filter(message => message.type === 'mcp.oauth.callback' && message.payload.flowId === retry!.payload.flowId);
+    expect(callbacks).toHaveLength(1);
+  });
+
+  it('marks a pending hub-callback sign-in with callback hub in the status', async () => {
+    const created = await t.hub.app.inject({
+      method: 'POST',
+      url: '/api/mcp/registry',
+      cookies: { ah_session: cookie },
+      headers: { origin: PUBLIC_URL },
+      payload: {
+        server: {
+          ...candidate(`registry_oauth_hub_status_${randomUUID().slice(0, 8)}`).server,
+          transport: 'http',
+          mode: 'remote',
+          url: 'https://oauth-hub-status.example.test/mcp',
+          machineScope: { allMachines: false, machineIds: [runnerId] },
+        },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const serverId = (created.json() as { id: string }).id;
+    const started = await t.hub.app.inject({
+      method: 'POST',
+      url: `/api/mcp/registry/servers/${serverId}/oauth/start`,
+      cookies: { ah_session: cookie },
+      headers: { origin: PUBLIC_URL },
+      payload: { machineId: runnerId },
+    });
+    expect(started.statusCode, started.body).toBe(202);
+    expect((started.json() as { callback: string }).callback).toBe('hub');
+    const status = await t.hub.app.inject({ method: 'GET', url: '/api/mcp/registry/status', cookies: { ah_session: cookie } });
+    const rows = (status.json() as { oauth: Array<{ serverId: string; machineId: string; state: string; callback?: string }> }).oauth;
+    const row = rows.find(item => item.serverId === serverId && item.machineId === runnerId);
+    expect(row).toMatchObject({ state: 'pending', callback: 'hub' });
+  });
+
   it('maps a rejected dynamic client registration to its own code and keeps the old agent code generic', async () => {
     const created = await t.hub.app.inject({
       method: 'POST',
@@ -1773,6 +1870,7 @@ describe('MCP registry draft tools', () => {
       const response = await t.hub.app.inject({ method: 'GET', url: '/api/mcp/registry/status', cookies: { ah_session: cookie } });
       return (response.json() as { oauth: Array<{ serverId: string; state: string; error?: string }> }).oauth.find(row => row.serverId === serverId);
     };
+    const startRedirects = () => agent.messages.filter(message => message.type === 'mcp.oauth.start' && message.payload.serverId === serverId).map(message => message.payload.redirectUri);
     try {
       oauthStartFailureCode = 'oauth_registration_rejected';
       const rejected = await start();
@@ -1780,12 +1878,15 @@ describe('MCP registry draft tools', () => {
       expect(rejected.json()).toMatchObject({ error: 'oauth_registration_rejected' });
       expect(rejected.body).not.toContain('UNSAFE_AUTH_SERVER_BODY');
       expect(await oauthStatus()).toMatchObject({ state: 'failed', error: expect.stringContaining('pre-registered OAuth client id') });
+      // The hub retried once with the loopback redirect before giving up.
+      expect(startRedirects()).toEqual([`${PUBLIC_URL}/mcp/oauth/callback`, OAUTH_LOOPBACK_REDIRECT_URI]);
 
       oauthStartFailureCode = 'oauth_start_failed';
       const generic = await start();
       expect(generic.statusCode).toBe(502);
       expect(generic.json()).toMatchObject({ error: 'oauth_start_failed' });
       expect(generic.body).not.toContain('UNSAFE_AUTH_SERVER_BODY');
+      expect(startRedirects()).toHaveLength(3);
     } finally {
       oauthStartFailureCode = null;
     }

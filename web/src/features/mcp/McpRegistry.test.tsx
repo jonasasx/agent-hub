@@ -993,6 +993,30 @@ describe('MCP registry wizard', () => {
     expect(await screen.findByText('Ожидает входа')).toBeInTheDocument();
   });
 
+  it('shows the pasted-address field after a reload when the hub marks a pending sign-in as manual', async () => {
+    const server = { ...draft().server, transport: 'http' as const, url: 'https://example.test/mcp' };
+    let callback = 'manual';
+    mockFetch({
+      'GET /api/mcp/registry': reply({ revision: 1, servers: [server], drafts: [] }),
+      'GET /api/mcp/registry/status': () => {
+        return reply({
+          revision: 1,
+          agents: [{ machineId: id, machineName: 'X1', online: true, protocolVersion: '1.13', capabilities: ['mcp.oauth.v1'] }],
+          gateways: [],
+          oauth: [{ serverId: id, machineId: id, state: 'pending', callback }],
+        })();
+      },
+    });
+    const { unmount } = render(<McpRegistry onClose={() => undefined} />);
+    expect(await screen.findByLabelText('Адрес после входа')).toBeInTheDocument();
+    unmount();
+
+    callback = 'hub';
+    render(<McpRegistry onClose={() => undefined} />);
+    expect(await screen.findByText('Ожидает входа')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Адрес после входа')).toBeNull();
+  });
+
   it('revokes OAuth for the selected machine and refreshes the status', async () => {
     const server = { ...draft().server, transport: 'http' as const, url: 'https://example.test/mcp' };
     let revoked = false;

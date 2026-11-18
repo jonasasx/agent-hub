@@ -351,6 +351,8 @@ export const mcpRegistryOAuthStatusSchema = z.object({
   connected: z.boolean().optional(),
   expiresAt: z.number().int().nonnegative().optional(),
   error: safeText.optional(),
+  /** Only for a pending sign-in: `manual` ends by pasting the loopback address. */
+  callback: z.enum(['hub', 'manual']).optional(),
 });
 export const mcpRegistryStatusSchema = z.object({
   revision: z.number().int().nonnegative(),

@@ -325,8 +325,11 @@ function RegistryOAuthControl({
   const [pastedUrl, setPastedUrl] = useState('');
   const selectedStatus = serverStatuses.find(item => item.machineId === machineId);
   const displayedState = selectedStatus?.state ?? (startResponse ? 'pending' : 'needs-login');
-  // A pre-registered client returns the browser to localhost: the user pastes that address here.
-  const manualCallback = displayedState === 'pending' && (startResponse ? startResponse.callback === 'manual' : Boolean(server.oauthClientId));
+  // A loopback sign-in returns the browser to localhost: the user pastes that address here.
+  // The start response knows it first; after a reload the status does; an older hub sends neither.
+  const statusCallback = selectedStatus?.callback;
+  const fallbackManual = statusCallback ? statusCallback === 'manual' : Boolean(server.oauthClientId);
+  const manualCallback = displayedState === 'pending' && (startResponse ? startResponse.callback === 'manual' : fallbackManual);
 
   useEffect(() => {
     if (!eligibleAgents.some(agent => agent.machineId === machineId)) {
