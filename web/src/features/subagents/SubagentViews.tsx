@@ -7,7 +7,7 @@
  *   `SendMessage`, the sender's chat at «Сообщение от X».
  * - SubagentChat: the read-only chat of one subagent, a tab like a session's.
  */
-import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { PROVIDER_LABELS, type BackgroundTaskStatus, type BackgroundTaskView, type HubSubagentView, type SessionView, type SubagentStatus, type SubagentView } from '../../api/types';
 import { useStore } from '../../store';
@@ -15,9 +15,13 @@ import { useT } from '../../i18n';
 import { clockLabel, colorVar, STATUS_LABEL } from '../sessions/status';
 import { ProviderIcon } from '../chat/ProviderIcon';
 import { useDialog } from '../ui/a11y';
+import { anchorBelow, useScrimAnchor } from '../ui/anchor';
 import { ensureSession, loadSubagents, openSession, openSubagent } from '../workspace/actions';
 import { SUBAGENT_STATUS_LABEL, durationLabel, forCall, forTarget, subDurationMs, subStatus, subTitle, subTree, subType } from './model';
 import { BG_KIND_LABEL, BG_STATUS_LABEL, bgDurationMs, bgStatus, bgTitle, expiresLabel } from './background';
+
+/** The width of `.sub-list` in app.css, for keeping the popover in the window. */
+const LIST_W = 560;
 
 /** The session whose registry the links of a feed look in (the parent session for a subagent's own feed). */
 export const SubagentScope = createContext<string | null>(null);
@@ -52,6 +56,7 @@ export function SubStatusDot({ status, label: text }: { status: SubagentStatus |
 export function SubagentsButton({ s, compact }: { s: SessionView; compact?: boolean }) {
   const t = useT();
   const [open, setOpen] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
   const list = useList(s.id);
   const session = s;
   const bg = useBackground(s.id);
@@ -104,7 +109,7 @@ export function SubagentsButton({ s, compact }: { s: SessionView; compact?: bool
   );
   return (
     <>
-      <button type="button" className={`btn sub-btn${compact ? ' compact' : ''}`} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(!open)}>
+      <button ref={button} type="button" className={`btn sub-btn${compact ? ' compact' : ''}`} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(!open)}>
         {compact ? (
           short
         ) : (
@@ -123,13 +128,16 @@ export function SubagentsButton({ s, compact }: { s: SessionView; compact?: bool
           </>
         )}
       </button>
-      {open && <SubagentList s={s} onClose={() => setOpen(false)} />}
+      {open && <SubagentList s={s} opener={button} onClose={() => setOpen(false)} />}
     </>
   );
 }
 
-/** The list of a session's subagents: a tree by the parent, status, start time and duration. */
-export function SubagentList({ s, onClose }: { s: SessionView; onClose: () => void }) {
+/**
+ * The list of a session's subagents: a tree by the parent, status, start time and duration. On the desktop it hangs under
+ * `opener`, the button of its pane (pane-anchored-popovers), not in the window's corner.
+ */
+export function SubagentList({ s, onClose, opener }: { s: SessionView; onClose: () => void; opener?: RefObject<HTMLElement | null> }) {
   const t = useT();
   const list = useList(s.id);
   const bg = useBackground(s.id);
@@ -139,6 +147,10 @@ export function SubagentList({ s, onClose }: { s: SessionView; onClose: () => vo
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const [now, setNow] = useState(Date.now());
+  const anchor = useScrimAnchor(!phone, () => {
+    const r = opener?.current?.getBoundingClientRect();
+    return r && r.width ? anchorBelow(r, LIST_W) : undefined;
+  });
   useDialog(ref, onClose);
   useEffect(() => {
     void loadSubagents(s.id);
@@ -174,7 +186,7 @@ export function SubagentList({ s, onClose }: { s: SessionView; onClose: () => vo
   }, [hub, rows, s, sessions]);
   const empty = !!list && !list.length && !hub?.length && !bg?.length;
   return createPortal(
-    <div className={`scrim${phone ? ' sheet-scrim' : ' sub-scrim'}`} onMouseDown={e => e.target === e.currentTarget && onClose()}>
+    <div className={`scrim${phone ? ' sheet-scrim' : ' sub-scrim'}`} style={anchor} onMouseDown={e => e.target === e.currentTarget && onClose()}>
       <div className={`sub-list${phone ? ' sheet' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} ref={ref}>
         <div className="sub-head">
           <h2 id={titleId}>{title}</h2>

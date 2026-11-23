@@ -1,6 +1,6 @@
 // Requirements: Навигация и внешние ссылки; Изоляция окна (design D3, D2).
 import { describe, expect, it } from 'vitest';
-import { decideNavigation, isImageViewerUrl, isPermissionAllowed, isPermissionCheckAllowed, safeReturnPath } from './navigation.js';
+import { decideNavigation, isHubPage, isImageViewerUrl, isPermissionAllowed, isPermissionCheckAllowed, safeReturnPath } from './navigation.js';
 
 const HUB = 'https://hub.example.com';
 const ID = 'dd346743-9bbb-5c33-a0c4-38db15ed5df6';
@@ -30,6 +30,38 @@ describe('decideNavigation', () => {
     for (const u of ['javascript:alert(1)', 'file:///C:/', 'data:text/html,x', 'agenthub://s/x', 'ftp://x', 'not a url']) {
       expect(decideNavigation(u, HUB), u).toEqual({ kind: 'deny' });
     }
+  });
+  it('hub addresses outside the web are denied (Requirement: Адреса хаба вне веба)', () => {
+    const urls = [
+      `${HUB}/C:/Users/ivan/work/status-max.md`,
+      `${HUB}/C:\\Users\\ivan\\x`,
+      `${HUB}/c:`,
+      `${HUB}/api/me`,
+      `${HUB}/api`,
+      `${HUB}/ws/ui`,
+      `${HUB}/agent-api/restore/x`,
+      `${HUB}/healthz`,
+      `${HUB}/metrics`,
+      `${HUB}/mcp/oauth/callback?code=1`,
+      `${HUB}/assets/index-B8zplin1.js`,
+      `${HUB}/version.json`,
+    ];
+    for (const u of urls) {
+      expect(decideNavigation(u, HUB), u).toEqual({ kind: 'deny' });
+      expect(isHubPage(u, HUB), u).toBe(false);
+    }
+  });
+  it('web pages stay pages', () => {
+    for (const p of ['/', `/s/${ID}`, '/settings/desktop', '/auth/disabled', '/apis', '/s/a.b/x']) {
+      expect(isHubPage(`${HUB}${p}`, HUB), p).toBe(true);
+    }
+    expect(isHubPage('https://gitlab.com/', HUB)).toBe(false);
+    expect(isHubPage('not a url', HUB)).toBe(false);
+  });
+  it('the service paths are the same as the hub fallback answers itself', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const app = await readFile(new URL('../../../hub/src/app.ts', import.meta.url), 'utf8');
+    expect(app).toContain('const NON_SPA = /^\\/(api|auth|ws|agent-api|agent|enroll|healthz|metrics|mcp)(\\/|$)/;');
   });
   it('a local hub over http', () => {
     expect(decideNavigation('http://localhost:8080/s/x', 'http://localhost:8080')).toEqual({ kind: 'allow' });

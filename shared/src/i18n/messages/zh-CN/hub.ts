@@ -222,6 +222,9 @@ export default {
   'hub.sessions.noteInterrupted': '本轮已中断',
   'hub.sessions.noteMode': '权限模式：{mode}',
   'hub.sessions.noteModel': '模型：{model}',
+  'hub.sessions.noteEffort': '强度：{effort}',
+  'hub.sessions.noteEffortDefault': '强度：默认',
+  'hub.sessions.effortInvalid': '此模型不支持强度“{effort}”',
   'hub.sessions.notePending': '{name} 已离线：消息等待送达：{quote}',
   'hub.sessions.noteRestored': { other: '对话记录已从中枢中的副本恢复（{count} 行）' },
   'hub.sessions.noteResumed': '已恢复',
@@ -304,6 +307,7 @@ export default {
   'hub.voiceTalk.options': '选项：{options}。',
   'hub.voiceTalk.long': '任务较长，我继续进行，完成后告诉你。',
   'hub.voiceTalk.offline': '会话所在的机器离线。',
+  'hub.voiceTalk.repeated': '我已经收到这个请求。',
   'hub.voiceTalk.failed': '无法把消息发送到会话。',
   'hub.sessions.qwenEndpointDown': '{label}：{name} 上的模型端点无响应或拒绝密钥，请检查 agent.env',
 } satisfies Dict;

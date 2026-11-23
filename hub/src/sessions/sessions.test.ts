@@ -83,6 +83,11 @@ describe('sessions API (integration)', () => {
   });
 
   describe('2.4 runner stat and session start', () => {
+    it('hub-model-list: no machine reported yet — the default list, nothing added by the hub', async () => {
+      const values = ((await api('GET', '/api/models')).json() as Array<{ value: string }>).map(m => m.value);
+      expect(values).toEqual(['opus', 'sonnet', 'haiku']);
+    });
+
     it('GET /api/runners/:id/stat answers from the agent; offline runner → 409', async () => {
       expect((await api('GET', `/api/runners/hp/stat?path=${encodeURIComponent(VAULT)}`)).json()).toEqual({ exists: true, isDir: true });
       expect((await api('GET', '/api/runners/hp/stat?path=C%3A%5Cnope')).json()).toEqual({ exists: false, isDir: false });
@@ -117,6 +122,24 @@ describe('sessions API (integration)', () => {
       await waitFor(() => ui.received.some(m => m.type === 'session.upsert' && (m.session as SessionView).id === s.id));
       // Models reported by the agent replace the default list.
       await waitFor(async () => ((await api('GET', '/api/models')).json() as Array<{ value: string }>)[0]?.value === 'haiku');
+    });
+
+    it('hub-model-list: the reported list is stored per machine and survives a hub restart', async () => {
+      await waitFor(async () => (await t.tdb.pool.query(`SELECT claude_models FROM runners WHERE id = 'hp'`)).rows[0].claude_models !== null);
+      const stored = (await t.tdb.pool.query(`SELECT claude_models FROM runners WHERE id = 'hp'`)).rows[0].claude_models;
+      expect(stored).toEqual([{ value: 'haiku', displayName: 'Haiku' }]);
+      // a restart empties the in-memory lists
+      (t.hub.sessions as unknown as { models: Map<string, unknown> }).models.clear();
+      expect(((await api('GET', '/api/models')).json() as Array<{ value: string }>).map(m => m.value)).toEqual(['haiku']);
+      // another machine's stored list joins without repeats; a list of another user's machine does not
+      await t.tdb.pool.query(`UPDATE runners SET claude_models = $1 WHERE id = 'vm'`, [
+        JSON.stringify([
+          { value: 'haiku', displayName: 'Haiku' },
+          { value: 'fable', displayName: 'Fable' },
+        ]),
+      ]);
+      expect(((await api('GET', '/api/models')).json() as Array<{ value: string }>).map(m => m.value)).toEqual(['haiku', 'fable']);
+      await t.tdb.pool.query(`UPDATE runners SET claude_models = NULL WHERE id = 'vm'`);
     });
   });
 

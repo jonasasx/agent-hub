@@ -222,6 +222,9 @@ export default {
   'hub.sessions.noteInterrupted': 'Turno interrompido',
   'hub.sessions.noteMode': 'Modo de permissão: {mode}',
   'hub.sessions.noteModel': 'Modelo: {model}',
+  'hub.sessions.noteEffort': 'Esforço: {effort}',
+  'hub.sessions.noteEffortDefault': 'Esforço: padrão',
+  'hub.sessions.effortInvalid': 'O nível de esforço “{effort}” não está disponível para este modelo',
   'hub.sessions.notePending': '{name} está offline: a mensagem aguarda entrega: {quote}',
   'hub.sessions.noteRestored': {
     one: 'A transcrição foi restaurada a partir da cópia no hub ({count} linha)',
@@ -308,6 +311,7 @@ export default {
   'hub.voiceTalk.options': 'Opções: {options}.',
   'hub.voiceTalk.long': 'A tarefa é longa, continuo e aviso quando terminar.',
   'hub.voiceTalk.offline': 'A máquina da sessão está offline.',
+  'hub.voiceTalk.repeated': 'Já recebi esse pedido.',
   'hub.voiceTalk.failed': 'Não foi possível enviar a mensagem para a sessão.',
   'hub.sessions.qwenEndpointDown': '{label}: o endpoint do modelo em {name} não responde ou recusa a chave. Verifique o agent.env',
 } satisfies Dict;

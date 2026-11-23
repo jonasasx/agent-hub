@@ -33,7 +33,7 @@ export function LimitChip({ s, phone }: { s: SessionView; phone?: boolean }) {
       aria-haspopup="dialog"
       aria-label={label}
       title={label}
-      onClick={() => openLimitCard(sub.id, 'chip')}
+      onClick={e => openLimitCard(sub.id, 'chip', e.currentTarget.closest<HTMLElement>('[data-pane]')?.dataset.pane ?? null)}
     >
       <LevelBadge badge={row.badge} />
       {row.chip}

@@ -7,10 +7,12 @@ import type { McpGatewayFailureReason } from './mcpRegistry.js';
 import { LOCAL_PATH_MESSAGE, isAbsoluteLocalPath } from './paths.js';
 import { normalizeProjectFolder } from './folders.js';
 import {
+  effortLevelSchema,
   mcpActionSchema,
   providerSchema,
   subscriptionTokenSchema,
   type ClaudeLogin,
+  type EffortLevel,
   type McpServerSnapshot,
   type Provider,
   type SubscriptionProvider,
@@ -305,6 +307,10 @@ export interface SessionView {
   spawnedBy?: { id: string; title: string } | null;
   permissionMode: UiPermissionMode;
   model: string | null;
+  /** session-effort: the effort level of the session; null — the model's default. */
+  effort?: EffortLevel | null;
+  /** session-effort D3: the level is stored but the machine's agent is older than 1.22 and applies it at the next start. */
+  effortPending?: boolean;
   /** Override set by the user: null = default, 0 = never. */
   idleTimeoutMin: number | null;
   /** Timeout the hub applies now, or the next wait gets when not waiting (idleTimeoutMin ?? default; 120 while waiting for permission); 0 = never. */
@@ -398,6 +404,8 @@ export interface ProjectSessionsResponse {
 export interface ModelOption {
   value: string;
   displayName: string;
+  /** session-effort D1: the effort levels Claude Code reports for the model; absent — the model has none. */
+  efforts?: EffortLevel[];
 }
 
 export interface StatResponse {
@@ -638,6 +646,8 @@ export const createSessionRequestSchema = z
     runnerId: z.string().min(1),
     permissionMode: uiMode.default('bypassPermissions'),
     model: z.string().min(1).max(200),
+    /** session-effort: absent — the model's default. */
+    effort: effortLevelSchema.optional(),
     prompt: z.string().max(200_000),
     attachments: attachmentRefs,
     /** claude-subscriptions: absent — the default subscription (last choice); null — the machine login. */
@@ -782,6 +792,8 @@ export const patchSessionRequestSchema = z
     title: z.string().trim().min(1).max(200).optional(),
     permissionMode: uiMode.optional(),
     model: z.string().min(1).max(200).optional(),
+    /** session-effort: null — back to the model's default. */
+    effort: effortLevelSchema.nullable().optional(),
     idleTimeoutMin: z
       .number()
       .int()

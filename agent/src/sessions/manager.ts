@@ -36,7 +36,7 @@ import { classifyFailure, collectSignal, ERROR_RESULT_THROW, turnUsage, type Res
 import { LimitsProber } from '../limits/probe.js';
 import { McpProber } from './mcpProbe.js';
 import { parseRateLimitEvent } from '../limits/parse.js';
-import { MCP_PROTOCOL, MCP_TEXTS, mcpAuthStartResultSchema, type McpAuthStartResult, type McpSnapshot } from '@agent-hub/shared';
+import { EFFORT_LEVELS, MCP_PROTOCOL, MCP_TEXTS, mcpAuthStartResultSchema, type EffortLevel, type McpAuthStartResult, type McpSnapshot } from '@agent-hub/shared';
 import { McpWatch, credentialsDirOf, oauthServerNames, projectRootOf, type CliAuthStart, type McpAuthApi, type McpQuery } from './mcp.js';
 import { redactText } from './mcpRedact.js';
 import { toContextPayload } from './contextUsage.js';
@@ -336,7 +336,8 @@ export function assertLocalPath(path: string): void {
 
 export class SessionManager {
   private readonly sessions = new Map<string, LiveSession>();
-  private models: Array<{ value: string; displayName: string }> | null = null;
+  /** The model list Claude Code reports, per subscription (null — the agent's own login): it depends on the account. */
+  private models = new Map<string | null, Array<{ value: string; displayName: string; efforts?: EffortLevel[] }>>();
   /** Images fetched by attachments.fetch (D19), by sha256: start/resume/send take them from here. */
   private readonly imageCache = new Map<string, { mime: string; data: Buffer; expires: number }>();
 
@@ -416,6 +417,12 @@ export class SessionManager {
       case 'session.set_model': {
         const s = this.live(m.payload.sessionId);
         await s.query.setModel(m.payload.model);
+        return {};
+      }
+      case 'session.set_effort': {
+        // session-effort D4: null — the model's default effort
+        const s = this.live(m.payload.sessionId);
+        await s.query.applyFlagSettings({ effortLevel: m.payload.effort });
         return {};
       }
       case 'session.stop':
@@ -840,7 +847,7 @@ export class SessionManager {
       // Resume of a live session: deliver the message, nothing to start.
       const imgs = await this.fetchImages(p.attachments);
       if (p.prompt || imgs.length) this.sendInput(p.sessionId, p.prompt ?? '', p.promptUuid ?? randomUUID(), imgs);
-      return { models: this.models ?? [] };
+      return { models: this.models.get(p.subscription?.id ?? null) ?? [] };
     }
     if (existing) await existing.done;
 
@@ -892,6 +899,7 @@ export class SessionManager {
       ...(this.root ? {} : { allowDangerouslySkipPermissions: true }),
       // No model: the user's default on this machine (sessions started outside the hub).
       ...(p.model ? { model: p.model } : {}),
+      ...(p.effort ? { effort: p.effort } : {}),
       // CLAUDE.md, .mcp.json and settings like an interactive Claude Code in this directory.
       settingSources: ['user', 'project', 'local'],
       ...(registryMode ? { mcpServers: sessionMcpServers, strictMcpConfig: true } : {}),
@@ -966,16 +974,18 @@ export class SessionManager {
       });
       void s.mcp.start();
     }
-    if (!this.models) {
-      try {
-        const list: ModelInfo[] = await q.supportedModels();
-        this.models = list.map(m => ({ value: m.value, displayName: m.displayName }));
-      } catch {
-        // the hub falls back to its default list
-      }
+    const modelsKey = p.subscription?.id ?? null;
+    try {
+      const list: ModelInfo[] = await q.supportedModels();
+      this.models.set(
+        modelsKey,
+        list.map(m => modelOption(m)),
+      );
+    } catch {
+      // the last list of this account stays; without one the hub falls back to its default list
     }
     this.sendState(s);
-    return { models: this.models ?? [] };
+    return { models: this.models.get(modelsKey) ?? [] };
   }
 
   /** agent-providers: the images of another provider's command, from the same cache (attachments.fetch goes here). */
@@ -1403,3 +1413,9 @@ export async function statPath(path: string): Promise<{ exists: boolean; isDir: 
 }
 
 export type { PermissionMode };
+
+/** session-effort D1: the levels Claude Code names for a model, only the ones the protocol knows. */
+function modelOption(m: ModelInfo): { value: string; displayName: string; efforts?: EffortLevel[] } {
+  const efforts = m.supportsEffort === false ? [] : EFFORT_LEVELS.filter(l => m.supportedEffortLevels?.includes(l));
+  return { value: m.value, displayName: m.displayName, ...(efforts.length ? { efforts } : {}) };
+}

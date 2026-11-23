@@ -181,6 +181,7 @@ export default {
   'chat.selects.default': 'predeterminado',
   'chat.selects.mode': 'Modo de permisos',
   'chat.selects.model': 'Modelo',
+  'chat.selects.effort': 'Esfuerzo',
   'chat.selects.noRoot': 'El agente se ejecuta como root, bypassPermissions no está disponible',
   'chat.selects.optionNoRoot': '{mode} (no disponible como root)',
   'chat.sub.label': 'Subagente: {title}',

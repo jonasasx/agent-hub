@@ -222,6 +222,9 @@ export default {
   'hub.sessions.noteInterrupted': 'หยุดเทิร์นแล้ว',
   'hub.sessions.noteMode': 'โหมดสิทธิ์: {mode}',
   'hub.sessions.noteModel': 'โมเดล: {model}',
+  'hub.sessions.noteEffort': 'ระดับความพยายาม: {effort}',
+  'hub.sessions.noteEffortDefault': 'ระดับความพยายาม: ค่าเริ่มต้น',
+  'hub.sessions.effortInvalid': 'โมเดลนี้ไม่รองรับระดับความพยายาม “{effort}”',
   'hub.sessions.notePending': '{name} ออฟไลน์: ข้อความรอการส่ง: {quote}',
   'hub.sessions.noteRestored': { other: 'กู้คืนทรานสคริปต์จากสำเนาบนฮับแล้ว ({count} บรรทัด)' },
   'hub.sessions.noteResumed': 'ทำงานต่อแล้ว',
@@ -304,6 +307,7 @@ export default {
   'hub.voiceTalk.options': 'ตัวเลือก: {options}',
   'hub.voiceTalk.long': 'งานนี้ใช้เวลานาน จะทำต่อไป เสร็จแล้วจะบอก',
   'hub.voiceTalk.offline': 'เครื่องของเซสชันออฟไลน์อยู่',
+  'hub.voiceTalk.repeated': 'ได้รับคำขอนี้แล้ว',
   'hub.voiceTalk.failed': 'ส่งข้อความไปยังเซสชันไม่ได้',
   'hub.sessions.qwenEndpointDown': '{label}: เอนด์พอยต์โมเดลบน {name} ไม่ตอบสนองหรือปฏิเสธคีย์ ดู agent.env',
 } satisfies Dict;

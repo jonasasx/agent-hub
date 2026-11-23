@@ -16,6 +16,7 @@ import { sql } from 'kysely';
 import type {
   AgentMessage,
   Attachment,
+  EffortLevel,
   HubEvent,
   HubMessage,
   ModelOption,
@@ -31,6 +32,8 @@ import type {
   ProjectCatalogEntry,
 } from '@agent-hub/shared';
 import {
+  EFFORT_LEVELS,
+  EFFORT_PROTOCOL,
   IMAGES_PROTOCOL,
   PROJECT_CATALOG_PROTOCOL,
   MACHINE_NAME_PROTOCOL,
@@ -101,6 +104,12 @@ export class HttpError extends Error {
  * Requirement (runner-enrollment): Запуск под root — Claude Code refuses bypassPermissions under root: 422 before any
  * command to the agent, nothing starts and the session does not change.
  */
+/** session-effort D1: a model the agent reported; `efforts` only from the levels this hub knows, empty — omitted. */
+function modelOptionOf(m: { value?: unknown; displayName?: unknown; efforts?: unknown }): ModelOption {
+  const efforts = Array.isArray(m.efforts) ? EFFORT_LEVELS.filter(l => (m.efforts as unknown[]).includes(l)) : [];
+  return { value: String(m.value), displayName: String(m.displayName ?? m.value), ...(efforts.length ? { efforts } : {}) };
+}
+
 export function assertModeAllowed(runner: Pick<RunnerRow, 'name' | 'runs_as_root'> | undefined, mode: string | undefined): void {
   if (mode === 'bypassPermissions' && runner?.runs_as_root === true) {
     throw new HttpError(422, 'bypass_root', { key: 'hub.sessions.bypassRoot', params: { name: runner.name } });
@@ -472,12 +481,36 @@ export class SessionService {
    * user's own machines count (provider-parity R8).
    */
   async listModels(userId: string, provider: Provider = 'claude'): Promise<ModelOption[]> {
-    const rows = await this.o.db.selectFrom('runners').select(['id', 'providers']).where('user_id', '=', userId).execute();
+    const rows = await this.o.db.selectFrom('runners').select(['id', 'providers', 'claude_models']).where('user_id', '=', userId).execute();
     const seen = new Map<string, ModelOption>();
-    for (const r of rows) for (const m of this.models.get(r.id)?.get(provider) ?? []) if (!seen.has(m.value)) seen.set(m.value, m);
+    for (const r of rows) {
+      // hub-model-list: the list of this run first, the one stored by the last session start after a hub restart
+      const reported = this.models.get(r.id)?.get(provider) ?? (provider === 'claude' ? (r.claude_models ?? []) : []);
+      for (const m of reported) if (!seen.has(m.value)) seen.set(m.value, m);
+    }
     if (provider === 'claude') return seen.size > 0 ? [...seen.values()] : DEFAULT_MODELS;
     for (const r of rows) for (const p of r.providers ?? []) if (p.id === provider) for (const m of p.models ?? []) if (!seen.has(m.value)) seen.set(m.value, m);
     return [...seen.values()];
+  }
+
+  /**
+   * session-effort D5: the levels the machine's Claude list names for a model. undefined — the machine has no list or the
+   * model is not in it: then any known level goes. An empty array — the model has no levels.
+   */
+  private async modelEfforts(runnerId: string, model: string | null): Promise<EffortLevel[] | undefined> {
+    if (!model) return undefined;
+    const row = await this.o.db.selectFrom('runners').select(['claude_models', 'protocol_version']).where('id', '=', runnerId).executeTakeFirst();
+    // an agent below 1.22 reports no levels: its list says nothing about them, the level is kept as pending
+    if (!protocolAtLeast(row?.protocol_version, EFFORT_PROTOCOL)) return undefined;
+    const list: ModelOption[] | null | undefined = this.models.get(runnerId)?.get('claude') ?? row?.claude_models;
+    const found = list?.find(m => m.value === model);
+    return found ? (found.efforts ?? []) : undefined;
+  }
+
+  /** session-effort D5: 400 effort_invalid unless the provider is Claude and the model of the session supports the level. */
+  private async assertEffort(runnerId: string, provider: Provider, model: string | null, effort: EffortLevel): Promise<void> {
+    const allowed = provider === 'claude' ? await this.modelEfforts(runnerId, model) : [];
+    if (allowed && !allowed.includes(effort)) throw new HttpError(400, 'effort_invalid', { key: 'hub.sessions.effortInvalid', params: { effort } });
   }
 
   /**
@@ -674,6 +707,7 @@ export class SessionService {
       subscriptionId?: string | null | undefined;
       provider?: Provider | undefined;
       catalogProjectId?: string | undefined;
+      effort?: EffortLevel | undefined;
     },
     fork?: { source: SessionRow },
     spawn?: { parentId: string; task: string; title?: string | undefined },
@@ -685,6 +719,7 @@ export class SessionService {
     const cwd = b.cwd ?? (await this.resolveCwd(userId, runner, b.catalogProjectId, fork?.source ?? parent));
     this.checkPath(runner, cwd);
     assertModeAllowed(runner, b.permissionMode);
+    if (b.effort) await this.assertEffort(runner.id, provider, b.model, b.effort);
     // agent-providers D3: another provider must be installed and signed in on the machine
     // claude-subscriptions P6: the chosen subscription (checked: 422 subscription_unavailable, 409 token_unreadable)
     // before anything is created; none — the machine login, the command exactly as before the change. provider-parity:
@@ -716,6 +751,7 @@ export class SessionService {
       process_started_at: now,
       permission_mode: b.permissionMode,
       model: b.model,
+      effort: b.effort ?? null,
       last_input_at: now,
       created_at: now,
       ...(cred ? { subscription_id: cred.id, subscription_token_at: cred.tokenUpdatedAt } : {}),
@@ -746,6 +782,7 @@ export class SessionService {
       ...machineNameFor(runner),
       permissionMode: b.permissionMode,
       model: b.model,
+      ...(b.effort && protocolAtLeast(runner.protocol_version, EFFORT_PROTOCOL) ? { effort: b.effort } : {}),
       prompt: b.prompt,
       promptUuid: randomUUID(),
       ...(attachments.length ? { attachments } : {}),
@@ -861,6 +898,7 @@ export class SessionService {
       process_alive: false,
       permission_mode: inherited.mode,
       model: s.model,
+      effort: s.effort,
       provider: s.provider,
       last_turn_end_at: now,
       ...this.forkFields(s, 'copy'),
@@ -929,9 +967,19 @@ export class SessionService {
     // runner-enrollment «Запуск под root»: an inherited bypassPermissions becomes acceptEdits on a root machine (an
     // explicit choice in the form stays and gets 422 bypass_root)
     const inherited = b.permissionMode === undefined ? inheritMode(own, await this.ownedRunner(userId, b.runnerId)) : { mode: b.permissionMode, downgraded: false };
+    // session-effort: the level goes with the model it was chosen for, if the new machine's list still has it
+    const inheritsEffort = s.effort && provider === 'claude' && model === s.model && (await this.modelEfforts(b.runnerId, model))?.includes(s.effort as EffortLevel) !== false;
     const view = await this.create(
       userId,
-      { runnerId: b.runnerId, permissionMode: inherited.mode as UiPermissionMode, model, prompt: b.prompt, subscriptionId: b.subscriptionId, provider },
+      {
+        runnerId: b.runnerId,
+        permissionMode: inherited.mode as UiPermissionMode,
+        model,
+        prompt: b.prompt,
+        subscriptionId: b.subscriptionId,
+        provider,
+        ...(inheritsEffort ? { effort: s.effort as EffortLevel } : {}),
+      },
       { source: s },
     );
     if (inherited.downgraded) await this.emitEvents({ id: view.id, user_id: userId }, [await addNote(this.o.db, view.id, 'mode', ROOT_MODE_NOTE)]);
@@ -1075,10 +1123,13 @@ export class SessionService {
 
   private async doPatch(s: SessionRow, userId: string, b: PatchSessionRequest): Promise<SessionView> {
     const changesProcess = (b.permissionMode !== undefined && b.permissionMode !== s.permission_mode) || (b.model !== undefined && b.model !== s.model);
-    if (changesProcess) this.assertWritable(s);
     const live = s.process_alive && isLiveStatus(s.status);
+    const effort = await this.nextEffort(s, b);
+    const effortChanged = effort !== undefined && effort !== s.effort;
+    if (changesProcess || effortChanged) this.assertWritable(s);
     const notes: HubEvent[] = [];
-    if (changesProcess) {
+    let effortPending = false;
+    if (changesProcess || (effortChanged && live)) {
       // Requirement «Офлайн-машина»: mode and model are not changed while the machine is offline.
       const { runner, conn } = await this.onlineRunner(userId, s.runner_id);
       if (b.permissionMode !== s.permission_mode) assertModeAllowed(runner, b.permissionMode);
@@ -1093,6 +1144,11 @@ export class SessionService {
           }
         }
         if (live && b.model !== undefined && b.model !== s.model) await conn.request('session.set_model', { sessionId: s.claude_session_id, model: b.model });
+        if (live && effortChanged) {
+          // session-effort D3: an agent below 1.22 gets nothing, the level is kept for the next start
+          if (protocolAtLeast(runner.protocol_version, EFFORT_PROTOCOL)) await conn.request('session.set_effort', { sessionId: s.claude_session_id, effort: effort ?? null });
+          else effortPending = true;
+        }
       } catch (err) {
         if (!(err instanceof CommandError && err.code === 'not_running')) throw this.agentError(err);
       }
@@ -1103,6 +1159,7 @@ export class SessionService {
         ...(b.title !== undefined ? { title: b.title, title_source: 'custom' as const } : {}),
         ...(b.permissionMode !== undefined ? { permission_mode: b.permissionMode } : {}),
         ...(b.model !== undefined ? { model: b.model } : {}),
+        ...(effortChanged ? { effort: effort ?? null } : {}),
         ...(b.idleTimeoutMin !== undefined ? { idle_timeout_min: b.idleTimeoutMin } : {}),
       })
       .where('id', '=', s.id)
@@ -1112,8 +1169,28 @@ export class SessionService {
       if (live) this.o.ui.broadcast(userId, { type: 'toast', kind: 'mode_changed', sessionId: s.id, ...tx('hub.sessions.toastModeChanged') });
     }
     if (b.model !== undefined && b.model !== s.model) notes.push(await addNote(this.o.db, s.id, 'model', { key: 'hub.sessions.noteModel', params: { model: b.model } }));
+    if (effortChanged) {
+      const note = effort ? { key: 'hub.sessions.noteEffort' as const, params: { effort } } : { key: 'hub.sessions.noteEffortDefault' as const };
+      notes.push(await addNote(this.o.db, s.id, 'effort', note));
+    }
     if (notes.length) await this.emitEvents(s, notes);
-    return this.upsert(s.id);
+    const view = await this.upsert(s.id);
+    return effortPending ? { ...view, effortPending: true } : view;
+  }
+
+  /**
+   * session-effort D5/D6: the effort the session gets from a PATCH. undefined — unchanged. An explicit level is checked against the model
+   * the session will have; a model change that the saved level does not fit resets it.
+   */
+  private async nextEffort(s: SessionRow, b: PatchSessionRequest): Promise<EffortLevel | null | undefined> {
+    const model = b.model ?? s.model;
+    if (b.effort !== undefined) {
+      if (b.effort !== null) await this.assertEffort(s.runner_id, s.provider, model, b.effort);
+      return b.effort;
+    }
+    if (b.model === undefined || b.model === s.model || !s.effort) return undefined;
+    const allowed = await this.modelEfforts(s.runner_id, model);
+    return allowed && !allowed.includes(s.effort as EffortLevel) ? null : undefined;
   }
 
   /** POST /api/sessions/:id/permissions/:requestId. Requirement: Карточка разрешения */
@@ -1309,13 +1386,14 @@ export class SessionService {
     const switched = failure ? await this.onFailure(s, failure) : false;
     if (!failure && p.isError && !wasInterrupted)
       await this.emitEvents(s, [await addNote(this.o.db, s.id, 'error', { key: 'hub.sessions.noteTurnError', params: { error: p.errorText ?? p.subtype } })]);
+    // The browser checks report readiness as soon as it receives the new session status.
+    this.turnListener?.({ kind: 'result', sessionId: s.id });
     await this.upsert(s.id);
     // hub-subagents D5: the turn the parent started reports back; an auto switch repeats the turn, the report waits for it
     if (s.report_to_session_id && !switched) {
       if (wasInterrupted) await this.o.db.updateTable('sessions').set({ report_to_session_id: null, report_since: null, report_queued: 0 }).where('id', '=', s.id).execute();
       else this.turnReporter?.(s, p);
     }
-    this.turnListener?.({ kind: 'result', sessionId: s.id });
   }
 
   /** hub-subagents D5: PeersService sends the report (registered there, so the services do not import each other). */
@@ -1650,9 +1728,9 @@ export class SessionService {
     const ev = permissionEvent(row);
     if (ev.kind === 'permission') this.o.ui.sendToSubscribers(s.user_id, s.id, { type: 'permission.request', sessionId: s.id, request: ev.request });
     this.o.ui.sendToSubscribers(s.user_id, s.id, { type: 'session.events', sessionId: s.id, events: [ev] });
-    await this.upsert(s.id);
     const questions = permissionKind(p.toolName) === 'question' ? questionsOf(p.input) : [];
     this.turnListener?.({ kind: 'permission', sessionId: s.id, requestId: row.request_id, ...(questions.length ? { questions } : {}) });
+    await this.upsert(s.id);
   }
 
   /**
@@ -2094,6 +2172,7 @@ export class SessionService {
         permissionMode: s.permission_mode as UiPermissionMode,
         // A session started outside the hub has no model here: the user's default on that machine applies.
         ...(s.model ? { model: s.model } : {}),
+        ...(s.effort && s.provider === 'claude' && protocolAtLeast(runner?.protocol_version, EFFORT_PROTOCOL) ? { effort: s.effort as EffortLevel } : {}),
         ...(o.prompt || o.attachments?.length ? { prompt: o.prompt ?? '', promptUuid: o.promptUuid ?? randomUUID() } : {}),
         ...(o.attachments?.length ? { attachments: o.attachments } : {}),
         ...this.credPayload(cred),
@@ -2311,14 +2390,23 @@ export class SessionService {
     req.then(
       result => {
         onLaunch?.();
-        const models = (result as { models?: Array<{ value?: unknown; displayName?: unknown }> } | undefined)?.models;
+        const models = (result as { models?: Array<{ value?: unknown; displayName?: unknown; efforts?: unknown }> } | undefined)?.models;
         if (Array.isArray(models) && models.length) {
           const byProvider = this.models.get(conn.runnerId) ?? new Map<Provider, ModelOption[]>();
           byProvider.set(
             (payload as { provider?: Provider }).provider ?? 'claude',
-            models.filter(m => typeof m.value === 'string').map(m => ({ value: String(m.value), displayName: String(m.displayName ?? m.value) })),
+            models.filter(m => typeof m.value === 'string').map(m => modelOptionOf(m)),
           );
           this.models.set(conn.runnerId, byProvider);
+          const claude = byProvider.get('claude');
+          if (claude?.length && ((payload as { provider?: Provider }).provider ?? 'claude') === 'claude') {
+            this.o.db
+              .updateTable('runners')
+              .set({ claude_models: JSON.stringify(claude) })
+              .where('id', '=', conn.runnerId)
+              .execute()
+              .catch((e: unknown) => this.o.log.warn({ err: e, runnerId: conn.runnerId }, 'claude models not stored'));
+          }
         }
       },
       (err: unknown) => {

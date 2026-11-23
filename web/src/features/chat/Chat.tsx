@@ -14,7 +14,7 @@ import { ProjectActions } from '../projects/ProjectActions';
  */
 import { Fragment, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type RefObject } from 'react';
 import { useMenu } from '../ui/a11y';
-import { IDLE_TIMEOUT_CHOICES, PROVIDER_LABELS, UI_PERMISSION_MODES, bypassUnavailable, type SessionView, type UiPermissionMode } from '../../api/types';
+import { IDLE_TIMEOUT_CHOICES, PROVIDER_LABELS, UI_PERMISSION_MODES, bypassUnavailable, type EffortLevel, type SessionView, type UiPermissionMode } from '../../api/types';
 import { providerModels } from '../newSession/ProviderField';
 import { projectKey, useStore } from '../../store';
 import { hubText, t as tr, useT } from '../../i18n';
@@ -365,11 +365,32 @@ function ModeModelSelects({ s, disabled, inline, onSubscriptionPicked }: { s: Se
       ))}
     </select>
   );
+  // session-effort D7: only for Claude and a model whose entry names levels; the saved level is shown even if the list lacks it
+  const efforts = provider === 'claude' ? (models.find(m => m.value === s.model)?.efforts ?? []) : [];
+  const effort =
+    efforts.length > 0 ? (
+      <select
+        className="mini"
+        aria-label={t('chat.selects.effort')}
+        disabled={disabled}
+        value={s.effort ?? ''}
+        onChange={e => void patchSession(s.id, { effort: e.target.value === '' ? null : (e.target.value as EffortLevel) })}
+      >
+        <option value="">{t('chat.selects.default')}</option>
+        {s.effort && !efforts.includes(s.effort) && <option value={s.effort}>{s.effort}</option>}
+        {efforts.map(e => (
+          <option key={e} value={e}>
+            {e}
+          </option>
+        ))}
+      </select>
+    ) : null;
   if (inline)
     return (
       <span className="ctl-inline">
         {mode}
         {model}
+        {effort}
         <HeadSubscription s={s} inline />
       </span>
     );
@@ -383,6 +404,12 @@ function ModeModelSelects({ s, disabled, inline, onSubscriptionPicked }: { s: Se
         {t('chat.selects.model')}
         {model}
       </label>
+      {effort && (
+        <label>
+          {t('chat.selects.effort')}
+          {effort}
+        </label>
+      )}
       <HeadSubscription s={s} onPicked={onSubscriptionPicked} />
     </>
   );
@@ -490,7 +517,7 @@ function Composer({ s, paneId }: { s: SessionView; paneId: string }) {
   useEffect(() => {
     const was = statusWas.current;
     statusWas.current = s.status;
-    if (talkingHere && was === 'working' && (s.status === 'waiting' || s.status === 'permission')) reportTalk(s.id);
+    if (talkingHere && was === 'working' && (s.status === 'waiting' || s.status === 'permission')) void reportTalk(s.id);
   }, [s.status, s.id, talkingHere]);
   // the composer of the conversation goes away (another tab, the pane closed): the conversation ends, minutes are paid
   useEffect(

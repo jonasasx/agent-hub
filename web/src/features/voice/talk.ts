@@ -68,6 +68,7 @@ export const talkDeps = {
     for (const track of stream.getTracks()) track.stop();
   },
   fetchTalk: (sessionId: string) => api.voiceTalk(sessionId),
+  fetchReport: (sessionId: string) => api.voiceTalkReport(sessionId),
   async connect(signedUrl: string, hubToken: string, cb: TalkCallbacks): Promise<TalkConnection> {
     // the SDK does not expose its audio contexts: the ones it creates while starting are caught to watch their state
     const audio: BaseAudioContext[] = [];
@@ -101,6 +102,8 @@ export const talkDeps = {
 
 let connection: TalkConnection | null = null;
 let seq = 0;
+let checkingReport: number | undefined;
+let utterance = 0;
 let unguard: (() => void) | null = null;
 
 const get = () => useTalk.getState();
@@ -222,8 +225,10 @@ export async function startTalk(sessionId: string, paneId: string): Promise<void
       onMessage: ({ message, role }) => {
         // the report marker is not a line of the conversation
         if (message.trim() === VOICE_REPORT_MARKER) return;
-        if (role === 'user') patch(id, { phase: 'thinking', last: message });
-        else if (message.trim()) patch(id, { last: message });
+        if (role === 'user' && current(id)) {
+          utterance += 1;
+          patch(id, { phase: 'thinking', last: message });
+        } else if (message.trim()) patch(id, { last: message });
       },
     });
   } catch (err) {
@@ -242,13 +247,24 @@ export async function startTalk(sessionId: string, paneId: string): Promise<void
 
 /**
  * D4.8: the session of the conversation ended a turn or stopped for the user. While the agent listens, the page asks it
- * for the report: the hub speaks the result or the question of a long turn, else answers nothing. A turn spoken to the
- * end ends while the agent thinks or speaks — no report then.
+ * for the report only when the hub has text to speak. ElevenLabs treats an empty completion as a generation failure.
  */
-export function reportTalk(sessionId: string): void {
+export async function reportTalk(sessionId: string): Promise<void> {
   const a = get().active;
-  if (!a || a.sessionId !== sessionId || a.phase !== 'listening' || !connection) return;
-  connection.sendUserMessage(VOICE_REPORT_MARKER);
+  const conn = connection;
+  if (!a || a.sessionId !== sessionId || a.phase !== 'listening' || !conn || checkingReport === a.id) return;
+  checkingReport = a.id;
+  const checkedUtterance = utterance;
+  try {
+    const { ready } = await talkDeps.fetchReport(sessionId);
+    if (ready && current(a.id) && get().active?.phase === 'listening' && utterance === checkedUtterance) {
+      conn.sendUserMessage(VOICE_REPORT_MARKER);
+    }
+  } catch (err) {
+    console.warn('voice conversation: report check failed', err);
+  } finally {
+    if (checkingReport === a.id) checkingReport = undefined;
+  }
 }
 
 /** «Завершить», the page hidden or closed, the composer gone: closes the connection, the microphone is freed. */

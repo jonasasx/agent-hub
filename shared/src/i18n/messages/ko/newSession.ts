@@ -11,6 +11,7 @@ export default {
   'newSession.modeNoRoot': '{mode} — root에서는 사용 불가',
   'newSession.rootHint': '{machine}의 에이전트가 root로 실행 중입니다 — bypassPermissions를 사용할 수 없습니다',
   'newSession.model': '모델',
+  'newSession.effort': '노력 수준',
   'newSession.retry': '다시 시도',
   'newSession.start': '시작',
   'newSession.starting': '시작하는 중…',

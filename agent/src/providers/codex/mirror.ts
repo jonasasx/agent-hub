@@ -3,7 +3,7 @@
 // the search, handoff and the web read it like any Claude transcript. The first line names the Codex thread.
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 /** The project folder of the mirrors under ~/.claude/projects: `claude --resume` of a project never lists them. */
 export const CODEX_MIRROR_DIR = 'agent-hub-codex';
@@ -21,6 +21,11 @@ export const CODEX_MIRROR: MirrorKind = { dir: CODEX_MIRROR_DIR, entrypoint: COD
 
 export function mirrorPath(projectsDir: string, sessionId: string, dir: string = CODEX_MIRROR_DIR): string {
   return join(projectsDir, dir, `${sessionId}.jsonl`);
+}
+
+/** The transcript of a Codex subagent (its thread), where Claude Code keeps a subagent's: <session>/subagents/agent-<id>.jsonl. */
+export function subagentMirrorPath(projectsDir: string, sessionId: string, agentId: string, dir: string = CODEX_MIRROR_DIR): string {
+  return join(projectsDir, dir, sessionId, 'subagents', `agent-${agentId}.jsonl`);
 }
 
 /** A stable UUID of a line: the same item written again gives the same uuid (design D4). */
@@ -117,6 +122,19 @@ export function unwrapShell(command: string): string {
   return (m && body(m[1]!)) || command;
 }
 
+/** Names of the collab tools of Codex as the model calls them. */
+const COLLAB_TOOLS: Record<string, string> = {
+  spawnAgent: 'spawn_agent',
+  sendInput: 'send_input',
+  resumeAgent: 'resume_agent',
+  wait: 'wait_agent',
+  closeAgent: 'close_agent',
+  sendMessage: 'send_message',
+  followupTask: 'followup_task',
+  interruptAgent: 'interrupt_agent',
+  listAgents: 'list_agents',
+};
+
 /** The tool call of an item: name, input and its result. null — the item is not a tool call. */
 export function toolOf(item: CodexItem): { name: string; input: Record<string, unknown>; result: string; isError: boolean } | null {
   switch (item.type) {
@@ -162,6 +180,19 @@ export function toolOf(item: CodexItem): { name: string; input: Record<string, u
     }
     case 'imageView':
       return { name: 'Read', input: { file_path: String(item.path ?? '') }, result: String(item.path ?? ''), isError: false };
+    case 'collabAgentToolCall': {
+      // wait/list/close of Codex subagents: a call in the feed; their start and end come with subAgentActivity
+      const targets = Array.isArray(item.receiverThreadIds) ? (item.receiverThreadIds as unknown[]).map(String) : [];
+      const states = Object.entries((item.agentsStates ?? {}) as Record<string, { status?: unknown; message?: unknown } | undefined>);
+      const status = String(item.status ?? '');
+      const lines = states.map(([id, s]) => `${id}: ${String(s?.status ?? '')}${typeof s?.message === 'string' && s.message ? ` — ${s.message}` : ''}`);
+      return {
+        name: COLLAB_TOOLS[String(item.tool)] ?? String(item.tool),
+        input: { ...(targets.length ? { targets } : {}), ...(typeof item.prompt === 'string' && item.prompt ? { prompt: item.prompt } : {}) },
+        result: lines.length ? lines.join('\n') : status,
+        isError: status === 'failed',
+      };
+    }
     default:
       return null;
   }
@@ -190,9 +221,11 @@ export class MirrorWriter {
     /** A failed write (disk full, folder removed): logged by the provider; the next lines are still tried. */
     private readonly onError: (err: Error) => void = () => undefined,
     private readonly kind: MirrorKind = CODEX_MIRROR,
+    /** A subagent's transcript: the lines are a sidechain of this agent (the thread of the subagent). */
+    private readonly agentId: string | null = null,
   ) {
-    this.path = mirrorPath(projectsDir, sessionId, kind.dir);
-    this.dir = join(projectsDir, kind.dir);
+    this.path = agentId ? subagentMirrorPath(projectsDir, sessionId, agentId, kind.dir) : mirrorPath(projectsDir, sessionId, kind.dir);
+    this.dir = dirname(this.path);
   }
 
   private readonly dir: string;
@@ -216,7 +249,8 @@ export class MirrorWriter {
   private base(uuid: string): Record<string, unknown> {
     return {
       parentUuid: this.parent,
-      isSidechain: false,
+      isSidechain: this.agentId !== null,
+      ...(this.agentId ? { agentId: this.agentId } : {}),
       userType: 'external',
       entrypoint: this.kind.entrypoint,
       cwd: this.cwd,
@@ -270,11 +304,41 @@ export class MirrorWriter {
     this.assistant(itemId, [{ type: 'tool_use', id: itemId, name, input }], model);
   }
 
-  toolResult(itemId: string, text: string, isError: boolean): void {
+  toolResult(itemId: string, text: string, isError: boolean, toolUseResult?: Record<string, unknown>): void {
     this.write({
       ...this.base(stableUuid(this.sessionId, itemId, 'result')),
       type: 'user',
       message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: itemId, content: text, ...(isError ? { is_error: true } : {}) }] },
+      ...(toolUseResult ? { toolUseResult } : {}),
+    });
+  }
+
+  /**
+   * A Codex subagent (subAgentActivity): the lines Claude Code writes for a background Agent, so the hub's registry of
+   * subagents reads it as one — `started` is the call with «async_launched» (agent = the subagent's thread),
+   * `interacted` resumes it (`resumedAgentId`), `completed`/`interrupted` is its <task-notification>.
+   */
+  private subAgent(item: CodexItem, model: string | null): void {
+    const threadId = String(item.agentThreadId ?? '');
+    const path = String(item.agentPath ?? '');
+    const name = path.split('/').filter(Boolean).pop() ?? threadId;
+    if (item.kind === 'started') {
+      this.toolUse(item.id, 'Agent', { description: name, name, subagent_type: 'codex', run_in_background: true }, model);
+      const resolvedModel = typeof item.model === 'string' && item.model ? item.model : null;
+      this.toolResult(item.id, `Async agent launched: ${path}`, false, { isAsync: true, status: 'async_launched', agentId: threadId, description: name, resolvedModel });
+      return;
+    }
+    if (item.kind === 'interacted') {
+      this.toolUse(item.id, 'SendMessage', { to: name }, model);
+      this.toolResult(item.id, `Message sent to ${path}`, false, { resumedAgentId: threadId });
+      return;
+    }
+    const status = item.kind === 'completed' ? 'completed' : 'killed';
+    const summary = item.kind === 'completed' ? `Agent "${name}" completed` : `Agent "${name}" was interrupted`;
+    this.write({
+      ...this.base(stableUuid(this.sessionId, item.id, 'notification')),
+      type: 'user',
+      message: { role: 'user', content: `<task-notification>\n<task-id>${threadId}</task-id>\n<status>${status}</status>\n<summary>${summary}</summary>\n</task-notification>` },
     });
   }
 
@@ -299,6 +363,10 @@ export class MirrorWriter {
       return true;
     }
     if (item.type === 'userMessage' || item.type === 'hookPrompt') return false;
+    if (item.type === 'subAgentActivity' && ['started', 'interacted', 'completed', 'interrupted'].includes(String(item.kind))) {
+      this.subAgent(item, model);
+      return true;
+    }
     const tool = toolOf(item);
     if (tool) {
       this.toolUse(item.id, tool.name, tool.input, model);

@@ -17,9 +17,11 @@ import { LevelBadge, LimitBar, useHubNow } from './parts';
 
 const CARD_W = 380;
 
-function anchorOf(id: string, from: 'row' | 'chip'): HTMLElement | null {
+/** The opener: the chip of the pane `pane` when it is known (each pane has its own chip of the subscription), else any. */
+function anchorOf(id: string, from: 'row' | 'chip', pane?: string | null): HTMLElement | null {
   const sel = from === 'chip' ? `.lchip[data-sub="${id}"]` : `[data-sub="${id}"]:not(.lchip)`;
-  const all = [...document.querySelectorAll<HTMLElement>(sel)];
+  const scope: ParentNode = (pane && document.querySelector(`[data-pane="${CSS.escape(pane)}"]`)) || document;
+  const all = [...scope.querySelectorAll<HTMLElement>(sel)];
   return all.find(el => el.getClientRects().length > 0) ?? all[0] ?? null;
 }
 
@@ -34,10 +36,10 @@ export function overageText(o: LimitOverageView): string {
 export function LimitCard() {
   const target = useStore(s => s.limitCard);
   if (!target) return null;
-  return <Card key={`${target.subscriptionId}:${target.from}`} id={target.subscriptionId} from={target.from} />;
+  return <Card key={`${target.subscriptionId}:${target.from}:${target.pane ?? ''}`} id={target.subscriptionId} from={target.from} pane={target.pane} />;
 }
 
-function Card({ id, from }: { id: string; from: 'row' | 'chip' }) {
+function Card({ id, from, pane }: { id: string; from: 'row' | 'chip'; pane?: string | null }) {
   const t = useT();
   const now = useHubNow();
   const sub = useStore(s => s.subs?.subscriptions.find(x => x.id === id && !x.retired));
@@ -52,7 +54,7 @@ function Card({ id, from }: { id: string; from: 'row' | 'chip' }) {
   const [, tick] = useReducer((x: number) => x + 1, 0);
 
   const close = (refocus: boolean) => {
-    const back = refocus ? anchorOf(id, from) : null;
+    const back = refocus ? anchorOf(id, from, pane) : null;
     closeLimitCard();
     back?.focus({ preventScroll: true });
   };
@@ -62,7 +64,7 @@ function Card({ id, from }: { id: string; from: 'row' | 'chip' }) {
   // the place at the opener; the focus moves into the card
   useLayoutEffect(() => {
     if (!phone) {
-      const a = anchorOf(id, from);
+      const a = anchorOf(id, from, pane);
       if (a) {
         const r = a.getBoundingClientRect();
         if (from === 'chip') setPos({ left: Math.max(12, Math.min(r.right - CARD_W, window.innerWidth - CARD_W - 12)), top: r.bottom + 6, maxHeight: window.innerHeight - r.bottom - 18 });
@@ -73,7 +75,7 @@ function Card({ id, from }: { id: string; from: 'row' | 'chip' }) {
       }
     } else setPos({});
     box.current?.focus({ preventScroll: true });
-  }, [id, from, phone]);
+  }, [id, from, pane, phone]);
 
   // the subscription went away (deleted, retired) while the card was open: the card closes (review A8)
   useEffect(() => {

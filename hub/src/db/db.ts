@@ -1,6 +1,6 @@
 import { Kysely, PostgresDialect, type ColumnType, type Generated } from 'kysely';
 import pg from 'pg';
-import type { McpGatewayFailureReason, McpGatewayLimits, McpServerSnapshot, Provider, ProviderStatus, SessionContextPayload } from '@agent-hub/shared';
+import type { McpGatewayFailureReason, McpGatewayLimits, McpServerSnapshot, ModelOption, Provider, ProviderStatus, SessionContextPayload } from '@agent-hub/shared';
 
 type Timestamp = ColumnType<Date, Date | string | undefined, Date | string>;
 
@@ -131,6 +131,8 @@ export interface RunnersTable {
   mcp_probe_at: ColumnType<Date | null, Date | null | undefined, Date | null>;
   /** 031 (agent-providers D3): providers other than Claude from hello/agent.status of 1.10; null — never reported. */
   providers: ColumnType<ProviderStatus[] | null, string | null | undefined, string | null>;
+  /** 058 (hub-model-list): the Claude models the machine's agent reported at the last session start; null — never reported. */
+  claude_models: ColumnType<ModelOption[] | null, string | null | undefined, string | null>;
 }
 
 export interface RunnerUpdateState {
@@ -186,6 +188,8 @@ export interface SessionsTable {
   report_queued: Generated<number>;
   permission_mode: Generated<string>;
   model: string | null;
+  /** 059 (session-effort D2): the effort level; null — the model's default. */
+  effort: string | null;
   /** 031 (agent-providers D3): the vendor of the session, fixed at creation. */
   provider: ColumnType<Provider, Provider | undefined, Provider>;
   idle_timeout_min: number | null;

@@ -181,6 +181,7 @@ export default {
   'chat.selects.default': '默认',
   'chat.selects.mode': '权限模式',
   'chat.selects.model': '模型',
+  'chat.selects.effort': '强度',
   'chat.selects.noRoot': '代理以 root 身份运行，无法使用 bypassPermissions',
   'chat.selects.optionNoRoot': '{mode}（root 下不可用）',
   'chat.sub.label': '子代理：{title}',

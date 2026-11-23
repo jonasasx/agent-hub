@@ -14,6 +14,7 @@ import {
   mcpAuthStartResultSchema,
   mcpProbeResultSchema,
   limitsProbeResultSchema,
+  EFFORT_PROTOCOL,
   PROTOCOL_VERSION,
   PROVIDER_LABELS,
   QWEN_PROTOCOL,
@@ -139,6 +140,7 @@ const validHub: Array<[string, unknown, { id?: string }?]> = [
   ['session.interrupt', { sessionId: SID }, { id: 'c4' }],
   ['session.set_mode', { sessionId: SID, mode: 'plan' }, { id: 'c5' }],
   ['session.set_model', { sessionId: SID, model: 'haiku' }, { id: 'c6' }],
+  ['session.set_effort', { sessionId: SID, effort: 'high' }, { id: 'c6e' }],
   ['session.stop', { sessionId: SID, reason: 'sleep' }, { id: 'c7' }],
   ['permission.response', { requestId: UUID2, behavior: 'allow', scope: 'session' }],
   ['session.fork', { sourceSessionId: SID, cwd: '/x' }, { id: 'c8' }],
@@ -232,7 +234,7 @@ describe('protocol version', () => {
     expect(parseHubMessage(JSON.stringify(envelope('fs.read_chunk', { ...chunk, offset: -1 }, { id: 'c4' }))).ok).toBe(false);
   });
   it('is 1.15 with close codes 4401/4409/4426; subscriptions need 1.4, agent.update 1.5, limits 1.6, MCP 1.7, MCP sign-out 1.8, Codex subscriptions 1.11', () => {
-    expect(PROTOCOL_VERSION).toBe('1.21');
+    expect(PROTOCOL_VERSION).toBe('1.22');
     expect(isCompatibleProtocol('1.11')).toBe(true); // project launch adds only optional HTTP fields; agent commands remain 1.12-compatible
     expect(MCP_PROTOCOL).toBe('1.7');
     expect(MCP_AUTH_CONTROLS_PROTOCOL).toBe('1.8');
@@ -830,5 +832,17 @@ describe('providers (agent-providers, protocol 1.10)', () => {
     expect(protocolAtLeast('1.20', QWEN_PROTOCOL)).toBe(false);
     expect(protocolAtLeast('1.21', QWEN_PROTOCOL)).toBe(true);
     expect(PROVIDER_LABELS.qwen).toBe('Qwen');
+  });
+  // session-effort D3: effort in start/resume and session.set_effort exist from 1.22
+  it('takes effort in session.start and session.set_effort with a level or null', () => {
+    const base = { sessionId: SID, cwd: '/x', permissionMode: 'default', model: 'm', prompt: 'p', promptUuid: UUID2 };
+    expect(parseHubMessage(JSON.stringify(envelope('session.start', { ...base, effort: 'high' }, { id: 'e1' }))).ok).toBe(true);
+    expect(parseHubMessage(JSON.stringify(envelope('session.start', { ...base, effort: 'huge' }, { id: 'e2' }))).ok).toBe(false);
+    expect(parseHubMessage(JSON.stringify(envelope('session.set_effort', { sessionId: SID, effort: 'max' }, { id: 'e3' }))).ok).toBe(true);
+    expect(parseHubMessage(JSON.stringify(envelope('session.set_effort', { sessionId: SID, effort: null }, { id: 'e4' }))).ok).toBe(true);
+    expect(parseHubMessage(JSON.stringify(envelope('session.set_effort', { sessionId: SID, effort: 'huge' }, { id: 'e5' }))).ok).toBe(false);
+    expect(EFFORT_PROTOCOL).toBe('1.22');
+    expect(protocolAtLeast('1.21', EFFORT_PROTOCOL)).toBe(false);
+    expect(protocolAtLeast('1.22', EFFORT_PROTOCOL)).toBe(true);
   });
 });

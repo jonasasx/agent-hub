@@ -42,7 +42,7 @@ import type { McpDraftClient } from '../../mcp/draftClient.js';
 import { serversForProject } from '../../mcp/projectPolicy.js';
 import { snapshotOfRateLimits } from './limits.js';
 import { codexMcpServers } from './mcpConfig.js';
-import { CODEX_MIRROR_DIR, MirrorWriter, readHeader, readLines, unwrapShell, type CodexItem } from './mirror.js';
+import { CODEX_MIRROR, CODEX_MIRROR_DIR, MirrorWriter, readHeader, readLines, unwrapShell, type CodexItem } from './mirror.js';
 import { initialize, RpcClient, spawnAppServer, type RpcTransport } from './rpc.js';
 import { renderMachineContext } from '../../machineContext.js';
 import { renderProjectCatalog } from '../../projectContext.js';
@@ -108,6 +108,12 @@ interface Pending {
   questions?: Array<{ id: string; question: string }>;
 }
 
+/** A subagent started by the session or by one of its subagents: the model its lines carry. */
+function noteChildModel(s: CodexSession, item: CodexItem): void {
+  if (item.type === 'subAgentActivity' && item.kind === 'started' && typeof item.agentThreadId === 'string' && typeof item.model === 'string' && item.model)
+    s.childModels.set(item.agentThreadId, item.model);
+}
+
 class CodexSession {
   state: LiveSessionState = 'waiting';
   threadId = '';
@@ -126,6 +132,12 @@ class CodexSession {
   readonly items = new Map<string, CodexItem>();
   rpc!: RpcClient;
   mirror!: MirrorWriter;
+  /** The transcripts of Codex subagents by their thread: opened once (a resumed session continues them), then written in order. */
+  readonly children = new Map<string, Promise<MirrorWriter>>();
+  /** The model a subagent was started with (subAgentActivity `started`): its lines carry it. */
+  readonly childModels = new Map<string, string>();
+  /** The time of the subagent item being written. */
+  childClock = 0;
   done!: Promise<void>;
   peers: PeerToolDef[] = [];
   /** provider-parity: the subscription of the registry the process runs under (its own CODEX_HOME). */
@@ -548,7 +560,7 @@ export class CodexProvider implements SessionProvider {
 
   private onNotification(s: CodexSession, method: string, p: Record<string, unknown>): void {
     this.d.onActivity?.(s.id, this.clock());
-    if (typeof p.threadId === 'string' && s.threadId && p.threadId !== s.threadId) return;
+    if (typeof p.threadId === 'string' && s.threadId && p.threadId !== s.threadId) return this.onChildNotification(s, p.threadId, method, p);
     switch (method) {
       case 'turn/started': {
         const turn = p.turn as { id: string };
@@ -572,6 +584,7 @@ export class CodexProvider implements SessionProvider {
         const item = p.item as CodexItem;
         s.items.delete(item.id);
         if (item.type === 'agentMessage' && typeof item.text === 'string' && item.text.trim()) s.lastAgentText = item.text;
+        noteChildModel(s, item);
         s.mirror.item(item, s.model);
         return;
       }
@@ -612,6 +625,38 @@ export class CodexProvider implements SessionProvider {
       default:
         return;
     }
+  }
+
+  /**
+   * A notification of a subagent's thread: Codex sends them on the session's connection. The completed items go to the
+   * subagent's own transcript (subagents/agent-<thread>.jsonl), the rest (its turns, statuses) is not the session's.
+   */
+  private onChildNotification(s: CodexSession, threadId: string, method: string, p: Record<string, unknown>): void {
+    if (method !== 'item/completed') return;
+    const item = p.item as CodexItem | undefined;
+    if (!item?.type) return;
+    noteChildModel(s, item);
+    let w = s.children.get(threadId);
+    if (!w) {
+      const writer = new MirrorWriter(
+        this.d.projectsDir,
+        s.id,
+        s.cwd,
+        () => s.childClock,
+        err => this.d.log.error('codex subagent mirror write failed', { sessionId: s.id, threadId, error: err.message }),
+        CODEX_MIRROR,
+        threadId,
+      );
+      w = writer.open().then(() => writer);
+      s.children.set(threadId, w);
+    }
+    const model = s.childModels.get(threadId) ?? s.model;
+    // the time the item arrived, not the time of the write after open(): the parent's «completed» comes after the subagent's last line
+    const at = this.clock();
+    void w.then(writer => {
+      s.childClock = at;
+      writer.item(item, model);
+    });
   }
 
   /** session-context-usage D2: Codex knows only the fill of the window, no categories; once per turn, to hubs ≥1.20. */

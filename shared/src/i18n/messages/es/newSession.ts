@@ -11,6 +11,7 @@ export default {
   'newSession.modeNoRoot': '{mode} — no disponible como root',
   'newSession.rootHint': 'El agente de {machine} se ejecuta como root: bypassPermissions no está disponible',
   'newSession.model': 'Modelo',
+  'newSession.effort': 'Esfuerzo',
   'newSession.retry': 'Reintentar',
   'newSession.start': 'Iniciar',
   'newSession.starting': 'Iniciando…',

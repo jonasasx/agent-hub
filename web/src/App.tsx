@@ -149,6 +149,13 @@ export function App() {
     else redirectToLogin();
   }, [setAuth]);
 
+  // hub-model-list: the hub learns models from agents after the page loaded, so the list is asked again when the window regains focus
+  useEffect(() => {
+    const refresh = () => void loadModels();
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, []);
+
   const load = useCallback(async () => {
     try {
       const me = await api.me();

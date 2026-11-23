@@ -363,6 +363,44 @@ describe('the chip in the tab head', () => {
     expect(document.querySelector('.lchip')).toBeNull();
   });
 
+  it('two panes with chips of one subscription: the card opens at the clicked chip, Esc returns the focus to it', async () => {
+    setup();
+    mockFetch({});
+    vi.stubGlobal('innerWidth', 1600);
+    const a = under();
+    const b = under();
+    useStore.getState().upsertSessions([a, b]);
+    render(
+      <>
+        <section data-pane="left">
+          <LimitChip s={a} />
+        </section>
+        <section data-pane="right">
+          <LimitChip s={b} />
+        </section>
+        <LimitCard />
+      </>,
+    );
+    const left = document.querySelector<HTMLButtonElement>('[data-pane="left"] .lchip')!;
+    const right = document.querySelector<HTMLButtonElement>('[data-pane="right"] .lchip')!;
+    const rect = (x: number) => ({ left: x - 80, right: x, top: 40, bottom: 64, width: 80, height: 24, x: x - 80, y: 40 }) as DOMRect;
+    left.getBoundingClientRect = () => rect(500);
+    right.getBoundingClientRect = () => rect(1500);
+
+    await userEvent.click(left);
+    const card = screen.getByRole('dialog', { name: /Max личная/ });
+    expect(card.style.left).toBe(`${500 - 380}px`);
+    expect(card.style.top).toBe('70px');
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(left).toHaveFocus();
+
+    await userEvent.click(right);
+    expect(screen.getByRole('dialog', { name: /Max личная/ }).style.left).toBe(`${1500 - 380}px`);
+    await userEvent.click(left);
+    expect(screen.getByRole('dialog', { name: /Max личная/ }).style.left).toBe(`${500 - 380}px`);
+  });
+
   it('phone: the chip is in the session info line', () => {
     setup();
     useStore.setState({ device: 'phone' });

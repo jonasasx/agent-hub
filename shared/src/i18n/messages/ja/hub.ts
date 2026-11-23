@@ -222,6 +222,9 @@ export default {
   'hub.sessions.noteInterrupted': 'ターンを中断しました',
   'hub.sessions.noteMode': '権限モード: {mode}',
   'hub.sessions.noteModel': 'モデル: {model}',
+  'hub.sessions.noteEffort': 'エフォート: {effort}',
+  'hub.sessions.noteEffortDefault': 'エフォート: デフォルト',
+  'hub.sessions.effortInvalid': 'このモデルではエフォート「{effort}」は使えません',
   'hub.sessions.notePending': '{name}はオフラインです。メッセージは配信待ちです: {quote}',
   'hub.sessions.noteRestored': { other: 'ハブ内のコピーからトランスクリプトを復元しました ({count}行)' },
   'hub.sessions.noteResumed': '再開しました',
@@ -305,6 +308,7 @@ export default {
   'hub.voiceTalk.options': '選択肢: {options}。',
   'hub.voiceTalk.long': '長いタスクなので続けます。終わったらお知らせします。',
   'hub.voiceTalk.offline': 'セッションのマシンがオフラインです。',
+  'hub.voiceTalk.repeated': 'そのリクエストは既に受け取りました。',
   'hub.voiceTalk.failed': 'セッションにメッセージを送れませんでした。',
   'hub.sessions.qwenEndpointDown': '{label}: {name} のモデルエンドポイントが応答しないか、キーを拒否しています。agent.env を確認してください',
 } satisfies Dict;

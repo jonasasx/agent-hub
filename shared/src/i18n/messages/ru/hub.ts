@@ -222,6 +222,9 @@ export default {
   'hub.sessions.noteInterrupted': 'Ход прерван',
   'hub.sessions.noteMode': 'Режим прав: {mode}',
   'hub.sessions.noteModel': 'Модель: {model}',
+  'hub.sessions.noteEffort': 'Effort: {effort}',
+  'hub.sessions.noteEffortDefault': 'Effort: по умолчанию',
+  'hub.sessions.effortInvalid': 'Уровень effort «{effort}» недоступен для этой модели',
   'hub.sessions.notePending': '{name} не в сети — сообщение ожидает доставки: {quote}',
   'hub.sessions.noteRestored': {
     one: 'Транскрипт восстановлен из копии в хабе ({count} строка)',
@@ -310,5 +313,6 @@ export default {
   'hub.voiceTalk.options': 'Варианты: {options}.',
   'hub.voiceTalk.long': 'Задача длинная, продолжаю, расскажу, когда закончу.',
   'hub.voiceTalk.offline': 'Машина сессии не в сети.',
+  'hub.voiceTalk.repeated': 'Я уже получил эту реплику.',
   'hub.voiceTalk.failed': 'Не получилось отправить реплику в сессию.',
 } as const;

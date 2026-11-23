@@ -21,6 +21,8 @@ export interface Draft {
   mode: UiPermissionMode | null;
   /** '' — the first model of the agent. */
   model: string;
+  /** session-effort: '' — the default of the model. */
+  effort: string;
   /** The subscription the user picked in this draft. */
   subPicked: string | null;
   /** The id the hub refused with 422 subscription_unavailable, until the user picks again. */
@@ -40,6 +42,7 @@ export function newDraft(runnerId = ''): Draft {
     projectTitle: '',
     mode: null,
     model: '',
+    effort: '',
     subPicked: null,
     touched: { runner: !!runnerId, provider: false },
     error: null,

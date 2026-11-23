@@ -4,7 +4,7 @@
  */
 import { BrowserWindow, Menu, nativeImage, screen, session, shell, type Session } from 'electron';
 import { join } from 'node:path';
-import { decideNavigation, hubPath, isImageViewerUrl, isPermissionAllowed, isPermissionCheckAllowed } from '../core/navigation.js';
+import { decideNavigation, hubPath, isHubPage, isImageViewerUrl, isPermissionAllowed, isPermissionCheckAllowed } from '../core/navigation.js';
 import { HEALTH_POLL_MS, HEALTH_TIMEOUT_MS, actionOnHubBack, actionOnHubUnreachable, isOfflineHttpStatus, isOfflineLoadError, type WindowOutageView } from '../core/offline.js';
 import { offlinePage, toDataUrl } from '../core/pages.js';
 import { shouldHideOnToggle, type TrayIconName } from '../core/trayView.js';
@@ -150,6 +150,7 @@ export class AppWindow {
       if (d.kind === 'allow') void this.win.loadURL(url);
       else if (d.kind === 'login') this.o.onLoginRequested(d.returnPath);
       else if (d.kind === 'external') void shell.openExternal(d.url);
+      else log(`window.open denied: ${url.slice(0, 200)}`);
       return { action: 'deny' };
     });
     wc.on('did-fail-load', (_e, errorCode, desc, url, isMainFrame) => {
@@ -160,14 +161,14 @@ export class AppWindow {
     wc.on('did-navigate', (_e, url, httpResponseCode) => {
       if (!url.startsWith(origin)) return;
       if (isOfflineHttpStatus(httpResponseCode)) return this.goOffline(url);
-      this.lastHubUrl = url;
+      if (isHubPage(url, origin)) this.lastHubUrl = url;
       if (this.offline) this.setOffline(false);
     });
     wc.on('did-finish-load', () => {
       if (wc.getURL().startsWith(origin)) this.loadedDuringOutage = this.hubDown;
     });
     wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
-      if (isMainFrame && url.startsWith(origin)) this.lastHubUrl = url;
+      if (isMainFrame && isHubPage(url, origin)) this.lastHubUrl = url;
     });
     wc.on('render-process-gone', (_e, d) => log(`renderer gone: ${d.reason}`));
   }
@@ -236,7 +237,8 @@ export class AppWindow {
   }
 
   private goOffline(url: string): void {
-    if (url.startsWith(this.o.hubUrl)) this.lastHubUrl = url;
+    // only a page of the web is a place to return to (Requirement: Адреса хаба вне веба)
+    if (isHubPage(url, new URL(this.o.hubUrl).origin)) this.lastHubUrl = url;
     this.showPage(offlinePage(this.o.hubUrl, this.lastHubUrl));
     this.setOffline(true);
   }

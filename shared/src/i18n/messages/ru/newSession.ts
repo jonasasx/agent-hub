@@ -13,6 +13,7 @@ export default {
   'newSession.modeNoRoot': '{mode} — недоступен под root',
   'newSession.rootHint': 'Агент на {machine} работает под root — bypassPermissions недоступен',
   'newSession.model': 'Модель',
+  'newSession.effort': 'Effort',
   'newSession.retry': 'Повторить',
   'newSession.start': 'Запустить',
   'newSession.starting': 'Запуск…',

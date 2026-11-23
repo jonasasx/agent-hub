@@ -70,13 +70,19 @@ class FakeQuery {
         return q;
       },
       initializationResult: () => Promise.resolve({}),
-      supportedModels: () => Promise.resolve([{ value: 'haiku', displayName: 'Haiku', description: '' }]),
+      supportedModels: () =>
+        Promise.resolve([
+          { value: 'haiku', displayName: 'Haiku', description: '' },
+          { value: 'opus', displayName: 'Opus', description: '', supportsEffort: true, supportedEffortLevels: ['low', 'high', 'max', 'turbo'] },
+          { value: 'plain', displayName: 'Plain', description: '', supportsEffort: false, supportedEffortLevels: ['low'] },
+        ]),
       interrupt: async () => {
         this.calls.push('interrupt');
         return undefined;
       },
       setPermissionMode: async (m: string) => void this.calls.push(`mode:${m}`),
       setModel: async (m?: string) => void this.calls.push(`model:${m}`),
+      applyFlagSettings: async (s: { effortLevel?: string | null }) => void this.calls.push(`effort:${s.effortLevel}`),
       getContextUsage: async (o: { detail?: string }) => {
         this.calls.push(`context:${o.detail}`);
         if (this.contextUsage instanceof Error) throw this.contextUsage;
@@ -181,10 +187,28 @@ describe('SessionManager', () => {
       includePartialMessages: true,
     });
     expect(q.options.resume).toBeUndefined();
-    expect(ok).toEqual({ models: [{ value: 'haiku', displayName: 'Haiku' }] });
+    expect(ok).toEqual({
+      models: [
+        { value: 'haiku', displayName: 'Haiku' },
+        { value: 'opus', displayName: 'Opus', efforts: ['low', 'high', 'max'] },
+        { value: 'plain', displayName: 'Plain' },
+      ],
+    });
+    expect(q.options.effort).toBeUndefined();
     await tick();
     expect(q.inputs.map(m => m.message.content)).toEqual(['hi']);
     expect(mgr.liveSessions()).toEqual([{ sessionId, state: 'working' }]);
+  });
+
+  it('session-effort: start passes the level to the SDK; set_effort goes to the live query, null resets', async () => {
+    const t = setup();
+    const sessionId = randomUUID();
+    await t.mgr.handle(cmd('session.start', { sessionId, cwd: CWD, permissionMode: 'default', model: 'opus', effort: 'high', prompt: 'hi', promptUuid: randomUUID() }));
+    const q = t.queries[0]!;
+    expect(q.options.effort).toBe('high');
+    await t.mgr.handle(cmd('session.set_effort', { sessionId, effort: 'low' }));
+    await t.mgr.handle(cmd('session.set_effort', { sessionId, effort: null }));
+    expect(q.calls).toEqual(['effort:low', 'effort:null']);
   });
 
   it('keeps the 1.12 Claude path on legacy MCP settings', async () => {

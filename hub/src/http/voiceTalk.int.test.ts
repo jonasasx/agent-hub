@@ -3,7 +3,7 @@
 // Приватность разговора.
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { parseVoiceTurn, type SessionView, type VoiceTalkResponse } from '@agent-hub/shared';
+import { parseVoiceTurn, VOICE_REPORT_MARKER, type SessionView, type VoiceTalkResponse } from '@agent-hub/shared';
 import { PUBLIC_URL, agentSend, autoReply, connectFakeAgent, startTestHub, waitFor, type FakeAgent, type TestHub } from '../test/harness.js';
 
 const EL_KEY = 'sk_voice_talk_test_key_0123456789';
@@ -132,6 +132,17 @@ describe('voice talk (integration)', () => {
     signedHandler = async () => json(200, { signed_url: SIGNED });
   });
 
+  it('GET /api/voice/talk/report: only a signed-in user can check their session for a pending report', async () => {
+    const { id } = await session();
+    const path = `/api/voice/talk/report?session=${id}`;
+    expect((await api('GET', path, null)).statusCode).toBe(401);
+    expect((await api('GET', `/api/voice/talk/report?session=${randomUUID()}`)).statusCode).toBe(404);
+    const response = await api('GET', path);
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toEqual({ ready: false });
+    expect(response.headers['cache-control']).toBe('no-store');
+  });
+
   it('POST completions: 401 for a wrong bearer, 401 voice_talk_token for a bad token, 400 without an utterance', async () => {
     const { id } = await session();
     const token = await talkToken(id);
@@ -198,6 +209,42 @@ describe('voice talk (integration)', () => {
     expect(text).toContain('Сессия занята');
     expect(finish).toBe('stop');
     expect(sends(sid)).toHaveLength(1);
+  });
+
+  it('POST completions: retries do not interrupt or resend a voice turn, but an intentional repeat advances the history', async () => {
+    const { id, sid } = await session();
+    const token = await talkToken(id);
+    const user = { role: 'user', content: SECRET };
+    const assistant = { role: 'assistant', content: 'Готово.' };
+    const envelope = { elevenlabs_extra_body: { hub_token: token } };
+    const original = completion({ ...envelope, messages: [user] });
+    await waitFor(() => sends(sid)[0]);
+
+    const duplicate = await completion({ ...envelope, messages: [user, assistant], stream: false });
+    expect(duplicate.status).toBe(200);
+    expect(await duplicate.json()).toMatchObject({ choices: [{ message: { content: 'Я уже получил эту реплику.' } }] });
+    expect(sends(sid)).toHaveLength(1);
+    expect(got.some(m => m.type === 'session.interrupt' && m.payload.sessionId === sid)).toBe(false);
+
+    agentSend(hp, 'session.partial', { sessionId: sid, messageId: 'original', blockIndex: 0, textDelta: assistant.content });
+    agentSend(hp, 'session.result', { sessionId: sid, subtype: 'success', isError: false, durationMs: 1, costUsd: 0 });
+    expect(parseSse(await (await original).text()).text).toBe(assistant.content);
+
+    const report = await completion({ ...envelope, messages: [user, { role: 'tool', content: [{ type: 'text', text: VOICE_REPORT_MARKER }] }] });
+    expect(parseSse(await report.text()).text).toBe('');
+    expect(sends(sid)).toHaveLength(1);
+
+    const repeat = completion({ ...envelope, messages: [user, assistant, user] });
+    await waitFor(() => sends(sid)[1]);
+    agentSend(hp, 'session.partial', { sessionId: sid, messageId: 'repeat', blockIndex: 0, textDelta: assistant.content });
+    agentSend(hp, 'session.result', { sessionId: sid, subtype: 'success', isError: false, durationMs: 1, costUsd: 0 });
+    expect(parseSse(await (await repeat).text()).text).toBe(assistant.content);
+
+    const requestLogs = logs.filter(line => line.includes('voice talk request') && line.includes(id)).map(line => JSON.parse(line));
+    expect(requestLogs).toContainEqual(expect.objectContaining({ session: id, duplicateOf: expect.any(String), users: 1 }));
+    expect(requestLogs).toContainEqual(expect.objectContaining({ session: id, report: true, markerIndex: 1, markerRole: 'tool', selected: 1 }));
+    expect(JSON.stringify(requestLogs)).not.toContain(SECRET);
+    expect(JSON.stringify(requestLogs)).not.toContain(token);
   });
 });
 

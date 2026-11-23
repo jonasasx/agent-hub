@@ -111,6 +111,8 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
       '055_user_idle_timeout',
       '056_qwen_provider',
       '057_mcp_gateway_limits',
+      '058_claude_models',
+      '059_session_effort',
     ]);
     const second = await migrate(t.pool);
     expect(second).toEqual([]);
@@ -500,6 +502,8 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
         '055_user_idle_timeout',
         '056_qwen_provider',
         '057_mcp_gateway_limits',
+        '058_claude_models',
+        '059_session_effort',
       ]);
       expect((await q(`SELECT count(*)::int AS n FROM events`)).rows[0].n).toBe(3);
       expect((await q(`SELECT rel_key, runner_id, claude_session_id, acked_line::int AS l FROM transcript_files`)).rows[0]).toEqual({
@@ -583,6 +587,8 @@ describe('migrations (Postgres)', { timeout: 90_000 }, () => {
         '055_user_idle_timeout',
         '056_qwen_provider',
         '057_mcp_gateway_limits',
+        '058_claude_models',
+        '059_session_effort',
       ]);
       expect((await q(`SELECT git_remote FROM sessions ORDER BY git_remote`)).rows.map(r => r.git_remote)).toEqual([
         'git@git.example.com:a/b.git',

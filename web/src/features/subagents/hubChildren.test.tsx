@@ -41,6 +41,26 @@ describe('hub subagents in the UI', () => {
     expect(screen.getByRole('button')).toHaveTextContent('Субагенты 2 · 1 работает');
   });
 
+  it('pane-anchored-popovers: the list opens under its button, kept inside the window', () => {
+    vi.stubGlobal('innerWidth', 1600);
+    const parent = session({ subagents: { total: 0, running: 0, working: 0, background: 0, hub: { total: 1, working: 1 } } });
+    useStore.setState({ runners: RUNNERS, subagentLists: { [parent.id]: [] }, hubLists: { [parent.id]: [child()] } });
+    useStore.getState().upsertSessions([parent]);
+    mockFetch({});
+    render(<SubagentsButton s={parent} />);
+    const button = screen.getByRole('button');
+    const rect = (right: number) => ({ left: right - 120, right, top: 10, bottom: 40, width: 120, height: 30, x: right - 120, y: 10, toJSON: () => ({}) }) as DOMRect;
+    vi.spyOn(button, 'getBoundingClientRect').mockReturnValue(rect(700));
+    fireEvent.click(button);
+    const scrim = screen.getByRole('dialog').closest<HTMLElement>('.scrim')!;
+    expect(scrim.style.paddingTop).toBe('46px');
+    expect(scrim.style.paddingRight).toBe('900px');
+    fireEvent.click(button);
+    vi.spyOn(button, 'getBoundingClientRect').mockReturnValue(rect(300));
+    fireEvent.click(button);
+    expect(screen.getByRole('dialog').closest<HTMLElement>('.scrim')!.style.paddingRight).toBe(`${1600 - 560 - 12}px`);
+  });
+
   it('the list has a «Сессии хаба» section: provider, machine, status; a click opens the child', () => {
     const parent = session({ subagents: { total: 0, running: 0, working: 0, background: 0, hub: { total: 1, working: 1 } } });
     const c = child();

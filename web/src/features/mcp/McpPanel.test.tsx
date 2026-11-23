@@ -218,6 +218,42 @@ describe('the MCP panel', () => {
     await waitFor(() => expect(screen.getByRole('dialog', { name: 'MCP-серверы' }).parentElement!.style.paddingRight).toBe(`${window.innerWidth - 440}px`));
   });
 
+  it('pane-anchored-popovers: the registry opened from the panel of the left pane hangs under that pane’s button', async () => {
+    vi.stubGlobal('innerWidth', 1600);
+    const a = session({ mcpProblems: 0 });
+    const b = session({ mcpProblems: 0 });
+    mockFetch({
+      [`GET /api/sessions/${a.id}/mcp`]: mcpRoute(mcpView()),
+      [`GET /api/sessions/${b.id}/mcp`]: mcpRoute(mcpView()),
+      'GET /api/mcp/registry': () => ({ status: 200, body: { revision: 0, servers: [], drafts: [] } }),
+      'GET /api/mcp/registry/status': () => ({ status: 200, body: {} }),
+      'GET /api/catalog/projects': () => ({ status: 200, body: [] }),
+    });
+    render(
+      <>
+        <section data-testid="pa">
+          <McpButton s={a} />
+          <McpPanelHost s={a} />
+        </section>
+        <section data-testid="pb">
+          <McpButton s={b} />
+          <McpPanelHost s={b} />
+        </section>
+      </>,
+    );
+    const rect = (left: number, right: number) => ({ left, right, bottom: 40, top: 10, width: right - left, height: 30, x: left, y: 10, toJSON: () => ({}) }) as DOMRect;
+    const btnA = await within(screen.getByTestId('pa')).findByRole('button', { name: /^MCP/ });
+    const btnB = await within(screen.getByTestId('pb')).findByRole('button', { name: /^MCP/ });
+    vi.spyOn(btnA, 'getBoundingClientRect').mockReturnValue(rect(940, 1000));
+    vi.spyOn(btnB, 'getBoundingClientRect').mockReturnValue(rect(1440, 1500));
+    await userEvent.click(btnA);
+    await userEvent.click(screen.getByRole('button', { name: 'Реестр' }));
+    const scrim = (await screen.findByRole('dialog', { name: 'Реестр MCP' })).closest<HTMLElement>('.mcp-registry-scrim')!;
+    expect(scrim.style.paddingTop).toBe('46px');
+    expect(scrim.style.paddingRight).toBe('600px');
+    vi.unstubAllGlobals();
+  });
+
   it('buttons by status: «Переподключить» not for disabled, needs-auth, pending (UI review M2/M3); «Войти» only for http in needs-auth', async () => {
     const s = session({ mcpProblems: 2 });
     mockFetch({ [`GET /api/sessions/${s.id}/mcp`]: mcpRoute(mcpView({ servers: [...ALL_STATUSES, mcpServer({ name: 'local-auth', status: 'needs-auth', transport: 'stdio' })] })) });

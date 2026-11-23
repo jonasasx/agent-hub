@@ -11,6 +11,7 @@ export default {
   'newSession.modeNoRoot': '{mode} — root 下不可用',
   'newSession.rootHint': '{machine} 上的代理以 root 身份运行 — 无法使用 bypassPermissions',
   'newSession.model': '模型',
+  'newSession.effort': '强度',
   'newSession.retry': '重试',
   'newSession.start': '启动',
   'newSession.starting': '启动中…',

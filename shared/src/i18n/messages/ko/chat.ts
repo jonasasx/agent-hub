@@ -181,6 +181,7 @@ export default {
   'chat.selects.default': '기본값',
   'chat.selects.mode': '권한 모드',
   'chat.selects.model': '모델',
+  'chat.selects.effort': '노력 수준',
   'chat.selects.noRoot': '에이전트가 root로 실행 중이므로 bypassPermissions를 사용할 수 없습니다',
   'chat.selects.optionNoRoot': '{mode} (root에서는 사용 불가)',
   'chat.sub.label': '하위 에이전트: {title}',

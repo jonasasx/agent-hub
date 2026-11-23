@@ -65,9 +65,11 @@ export async function refreshLimits(id: string): Promise<RefreshResult> {
   }
 }
 
-export function openLimitCard(subscriptionId: string, from: 'row' | 'chip'): void {
+/** Opens the card at the opener; the same opener again closes it, a chip of another pane moves it there. */
+export function openLimitCard(subscriptionId: string, from: 'row' | 'chip', pane: string | null = null): void {
   const cur = useStore.getState().limitCard;
-  useStore.setState({ limitCard: cur?.subscriptionId === subscriptionId && cur.from === from ? null : { subscriptionId, from } });
+  const same = cur?.subscriptionId === subscriptionId && cur.from === from && (cur.pane ?? null) === pane;
+  useStore.setState({ limitCard: same ? null : { subscriptionId, from, pane } });
 }
 
 export function closeLimitCard(): void {

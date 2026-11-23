@@ -1323,8 +1323,13 @@ body:has(.lightbox) .toasts { z-index: 55; }
   .mcp-validation-footer { align-items: stretch; flex-direction: column-reverse; }
   .mcp-validation-actions > .btn { flex: 1 1 140px; }
 }
-/* QA fix 3: `.scrim > *` centres a child; the desktop popover keeps its right edge under its pane's button */
-.scrim.sub-scrim > .mcp-panel { justify-self: end; }
+/* QA fix 3, pane-anchored-popovers: `.scrim > *` centres a child; a desktop popover keeps its right edge under its opener */
+.scrim.sub-scrim > .sub-list { justify-self: end; }
+/* the popover under a low button stays in the window: the row is the scrim height less its padding */
+.scrim.sub-scrim { grid-template-rows: minmax(0, 1fr); }
+.scrim.sub-scrim > .sub-list { max-height: min(60vh, 100%); }
+.scrim.sub-scrim > .sub-list.mcp-panel { max-height: min(72vh, 680px, 100%); }
+.scrim.sub-scrim > .sub-list.mcp-registry { max-height: min(88vh, 900px, 100%); }
 .mcp-head { align-items: flex-start; }
 .mcp-head-t { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .mcp-when { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }

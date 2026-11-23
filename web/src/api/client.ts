@@ -183,6 +183,7 @@ export const api = {
   me: () => request<MeResponse>('/api/me'),
   /** GET /api/voice/talk — the ElevenLabs conversation link and the hub's token (change voice-conversation, D1). */
   voiceTalk: (sessionId: string) => request<VoiceTalkResponse>(`/api/voice/talk?session=${enc(sessionId)}`),
+  voiceTalkReport: (sessionId: string) => request<{ ready: boolean }>(`/api/voice/talk/report?session=${enc(sessionId)}`),
   setLocale: (locale: Locale | null) => request<void>('/api/preferences/locale', json('PUT', { locale })),
   /** «Настройки → Сессии»: the user's default idle timeout (change session-sleep-controls). */
   getSessionPreferences: () => request<SessionPreferences>('/api/preferences/sessions'),

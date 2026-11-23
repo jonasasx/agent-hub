@@ -105,6 +105,19 @@ describe('subagents registry (integration)', () => {
     expect(by('toolu_01GMUqs9n1P8YitSCd3qzQ7Q').status).toBe('interrupted');
   });
 
+  it('Codex: the mirror lines of subAgentActivity (session 6a051dc9) give a row per subagent, ended by its notification', async () => {
+    const sid = randomUUID();
+    await chunk(
+      sid,
+      fixture('codex-main.jsonl', sid).map(l => JSON.parse(JSON.stringify(l).replaceAll('6a051dc9-0a6f-4c78-bf4f-13837a6079be', sid)) as Record<string, unknown>),
+    );
+    const subs = await list(await hubId(sid));
+    expect(subs.map(s => s.name)).toEqual(['commissioning_progress', 'camera_ba', 'camera_sa', 'camera_dev', 'camera_review', 'camera_delivery']);
+    expect(subs.find(s => s.name === 'camera_sa')).toMatchObject({ agentId: '01a1eeb9-d184-7e20-987f-b5b324ea814f', status: 'completed', background: true, model: 'gpt-6.2-sol' });
+    // camera_dev and camera_delivery have no completion in the log: running in the registry, not alive here
+    expect(subs.filter(s => s.status === 'completed').map(s => s.name)).toEqual(['commissioning_progress', 'camera_ba', 'camera_sa', 'camera_review']);
+  });
+
   it('subagent chunk before the main one, and both in parallel: one row per subagent, linked to its call by agentId', async () => {
     for (const parallel of [false, true]) {
       const sid = randomUUID();

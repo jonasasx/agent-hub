@@ -11,6 +11,7 @@ export default {
   'newSession.modeNoRoot': '{mode} — rootでは利用不可',
   'newSession.rootHint': '{machine}のエージェントはrootで動作しているため、bypassPermissionsは利用できません',
   'newSession.model': 'モデル',
+  'newSession.effort': 'エフォート',
   'newSession.retry': '再試行',
   'newSession.start': '起動',
   'newSession.starting': '起動中…',

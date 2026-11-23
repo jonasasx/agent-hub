@@ -1,15 +1,17 @@
 // Voice conversation (change voice-conversation, design D1, D4, D5): GET /api/voice/talk starts a conversation with the
 // ElevenLabs agent, POST /voice-llm/v1/chat/completions is the agent's Custom LLM. Requirements: Включение разговора;
 // Начало разговора; Эндпоинт Custom LLM; Приватность разговора.
+import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { voiceTalkQuerySchema, type I18nText, type VoiceErrorCode, type VoiceTalkErrorCode, type VoiceTalkResponse } from '@agent-hub/shared';
+import { VOICE_REPORT_MARKER, voiceTalkQuerySchema, type I18nText, type VoiceErrorCode, type VoiceTalkErrorCode, type VoiceTalkResponse } from '@agent-hub/shared';
 import type { Config } from '../config.js';
+import { tr } from '../i18n.js';
 import { HttpError } from '../sessions/service.js';
 import { conversationSignedUrl, ScribeError } from '../voice/elevenlabs.js';
 import { issueTalkToken, sameKey, verifyTalkToken } from '../voice/talkToken.js';
 import { VoiceBridge, type BridgeSessions, type VoiceTurnResult } from '../voice/llmBridge.js';
-import { CollectedSpeech, SseSpeech } from '../voice/speech.js';
+import { CollectedSpeech, SseSpeech, type Speech } from '../voice/speech.js';
 
 class VoiceTalkError extends HttpError {
   declare readonly code: VoiceTalkErrorCode | VoiceErrorCode | 'unauthenticated' | 'invalid_request';
@@ -19,6 +21,9 @@ class VoiceTalkError extends HttpError {
 }
 
 const disabled = () => new VoiceTalkError(503, 'voice_talk_disabled', { key: 'hub.voiceTalk.disabled' });
+const REPLAY_WINDOW_MS = 30_000;
+const REPLAY_LIMIT = 2048;
+const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 
 /** The part of an OpenAI chat request the bridge reads; anything else ElevenLabs sends is ignored. */
 const completionSchema = z.object({
@@ -46,6 +51,7 @@ export interface VoiceTalkDeps {
 export function registerVoiceTalk(app: FastifyInstance, deps: VoiceTalkDeps): void {
   const { config } = deps;
   const bridge = config.voiceTalkEnabled ? new VoiceBridge({ sessions: deps.sessions, maxTurnMs: config.VOICE_TURN_MAX_MS }) : null;
+  const recent = new Map<string, { at: number; requestId: string }>();
 
   app.get('/api/voice/talk', async (req): Promise<VoiceTalkResponse> => {
     if (!config.voiceTalkEnabled) throw disabled();
@@ -72,29 +78,81 @@ export function registerVoiceTalk(app: FastifyInstance, deps: VoiceTalkDeps): vo
     return { signedUrl, token: issueTalkToken(config.VOICE_LLM_KEY!, { u: user.id, s: q.data.session, l: req.locale }) };
   });
 
+  app.get('/api/voice/talk/report', async (req, reply) => {
+    if (!bridge) throw disabled();
+    const q = voiceTalkQuerySchema.safeParse(req.query);
+    if (!q.success) throw new HttpError(404, 'not_found', { key: 'hub.sessions.notFound' });
+    await deps.sessions.get(req.user!.id, q.data.session);
+    reply.header('Cache-Control', 'no-store');
+    return { ready: bridge.hasReport(q.data.session) };
+  });
+
   app.post('/voice-llm/v1/chat/completions', async (req, reply) => {
     const started = Date.now();
     if (!bridge) throw disabled();
     const bearer = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? '')?.[1];
     if (!sameKey(bearer, config.VOICE_LLM_KEY!)) throw new VoiceTalkError(401, 'unauthenticated', { key: 'hub.voiceTalk.unauthorized' });
     const body = completionSchema.safeParse(req.body ?? {});
-    const claims = body.success ? verifyTalkToken(config.VOICE_LLM_KEY!, body.data.elevenlabs_extra_body?.hub_token) : null;
-    if (!claims) throw new VoiceTalkError(401, 'voice_talk_token', { key: 'hub.voiceTalk.token' });
-    const last = [...body.data!.messages].reverse().find(m => m.role === 'user');
-    const text = last ? contentText(last.content).trim() : '';
+    const token = body.success ? body.data.elevenlabs_extra_body?.hub_token : null;
+    const claims = verifyTalkToken(config.VOICE_LLM_KEY!, token);
+    if (!body.success || !claims || typeof token !== 'string') throw new VoiceTalkError(401, 'voice_talk_token', { key: 'hub.voiceTalk.token' });
+    const messages = body.data.messages.map(m => ({ role: m.role, text: contentText(m.content).trim() }));
+    const selected = messages.findLastIndex(m => m.role === 'user' || (m.role !== 'system' && m.text === VOICE_REPORT_MARKER));
+    const text = messages[selected]?.text ?? '';
     if (!text) throw new VoiceTalkError(400, 'invalid_request', { key: 'hub.voiceTalk.noUtterance' });
 
+    const users = messages.filter(m => m.role === 'user' && m.text && m.text !== VOICE_REPORT_MARKER);
+    const call = digest(token);
+    const report = text === VOICE_REPORT_MARKER;
+    // Assistant output and report markers can change across delivery attempts without advancing the user's turn.
+    const fingerprint = digest(JSON.stringify([call, users.map(m => m.text)]));
+    let duplicateOf: string | undefined;
+    if (!report) {
+      const previous = recent.get(fingerprint);
+      if (previous && started - previous.at < REPLAY_WINDOW_MS) {
+        duplicateOf = previous.requestId;
+      }
+      recent.delete(fingerprint);
+      recent.set(fingerprint, { at: started, requestId: duplicateOf ?? req.id });
+      if (recent.size > REPLAY_LIMIT) recent.delete(recent.keys().next().value!);
+    }
+    const stream = body.data.stream !== false;
+    const markerIndex = messages.findLastIndex(m => m.text === VOICE_REPORT_MARKER);
+    const role = messages[markerIndex]?.role;
+    req.log.info(
+      {
+        session: claims.s,
+        call: call.slice(0, 12),
+        stream,
+        messages: messages.length,
+        users: users.length,
+        selected,
+        markerIndex,
+        markerRole: role && (['user', 'assistant', 'tool', 'system', 'developer'].includes(role) ? role : 'other'),
+        report,
+        duplicateOf,
+      },
+      'voice talk request',
+    );
     const gone = new AbortController();
-    const log = (result: VoiceTurnResult) => req.log.info({ session: claims.s, chars: text.length, ms: Date.now() - started, result }, 'voice talk turn');
+    const log = (result: VoiceTurnResult | 'duplicate') => req.log.info({ session: claims.s, chars: text.length, ms: Date.now() - started, result }, 'voice talk turn');
     const turn = { userId: claims.u, sessionId: claims.s, locale: claims.l };
+    const answer = async (speech: Speech): Promise<void> => {
+      if (duplicateOf) {
+        speech.say(tr(claims.l).text('hub.voiceTalk.repeated'));
+        speech.end();
+        log('duplicate');
+        return;
+      }
+      log(await bridge.answer(turn, text, speech, gone.signal));
+    };
 
-    if (body.data!.stream === false) {
+    if (!stream) {
       const speech = new CollectedSpeech();
       reply.raw.once('close', () => {
         if (!reply.raw.writableFinished) gone.abort();
       });
-      const result = await bridge.answer(turn, text, speech, gone.signal);
-      log(result);
+      await answer(speech);
       return speech.done;
     }
 
@@ -106,7 +164,7 @@ export function registerVoiceTalk(app: FastifyInstance, deps: VoiceTalkDeps): vo
       gone.abort();
     });
     try {
-      log(await bridge.answer(turn, text, speech, gone.signal));
+      await answer(speech);
     } catch (err) {
       req.log.error({ err, session: claims.s }, 'voice talk turn failed');
       log('failed');

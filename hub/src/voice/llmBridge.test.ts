@@ -245,15 +245,18 @@ describe('VoiceBridge', () => {
     const f = fakeSessions();
     const b = new VoiceBridge({ sessions: f.api, maxTurnMs: 30 });
     expect(await b.answer(C, 'собери отчёт', new FakeSpeech(), live())).toBe('long');
+    expect(b.hasReport(C.sessionId)).toBe(false);
     f.emit(partial('Читаю логи.'));
     f.emit(partial('Отчёт готов, ошибок нет.', 'm2'));
     f.emit({ kind: 'result', sessionId: 's1' });
     await tick();
+    expect(b.hasReport(C.sessionId)).toBe(true);
     const sp = new FakeSpeech();
     expect(await b.answer(C, VOICE_REPORT_MARKER, sp, live())).toBe('report');
     expect(sp.text).toBe('Отчёт готов, ошибок нет.');
     expect(sp.ended).toBe(true);
     expect(f.sent).toHaveLength(1);
+    expect(b.hasReport(C.sessionId)).toBe(false);
     const again = new FakeSpeech();
     expect(await b.answer(C, VOICE_REPORT_MARKER, again, live())).toBe('report');
     expect(again.text).toBe('');
@@ -266,6 +269,7 @@ describe('VoiceBridge', () => {
     expect(await b.answer(C, 'собери отчёт', new FakeSpeech(), live())).toBe('long');
     f.status = 'permission';
     f.emit({ kind: 'permission', sessionId: 's1', requestId: 'r1', questions: [question] });
+    expect(b.hasReport(C.sessionId)).toBe(true);
     const sp = new FakeSpeech();
     expect(await b.answer(C, VOICE_REPORT_MARKER, sp, live())).toBe('question');
     expect(sp.text).toContain('Какой вариант?');

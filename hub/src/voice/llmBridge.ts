@@ -174,6 +174,11 @@ export class VoiceBridge {
     o.sessions.onTurnEvent(e => this.turns.get(e.sessionId)?.onEvent(e));
   }
 
+  hasReport(sessionId: string): boolean {
+    const turn = this.turns.get(sessionId);
+    return Boolean(this.reports.get(sessionId) || (turn?.detached && turn.open && turn.unsaid.trim()));
+  }
+
   /**
    * Answers one utterance into `speech` and ends it. `gone` — ElevenLabs closed the request (a barge-in or a hang-up):
    * the speech is dropped, the turn goes on and the next utterance interrupts it.

@@ -528,6 +528,33 @@ describe('Chat: banners, header and composer', () => {
     expect(calls[1]!.body).toEqual({ model: 'sonnet' });
     expect(useStore.getState().toasts.at(-1)).toMatchObject({ title: 'Модель изменена', text: 'Sonnet 5.5 — со следующего хода' });
   });
+
+  // change session-effort: the select appears only for a model with levels and PATCHes the level; «default» sends null
+  it('effort: the select lists the levels of the model, a choice goes to PATCH, the default sends null; a model without levels has none', async () => {
+    const s = session({ effort: 'high' });
+    const calls = mockFetch({ 'PATCH /api/sessions/': init => ({ status: 200, body: { ...s, ...JSON.parse(String(init!.body)) } }) });
+    show(s, []);
+    expect(screen.queryByRole('combobox', { name: 'Effort' })).not.toBeInTheDocument();
+    act(() =>
+      useStore.setState({
+        models: [
+          { value: 'opus', displayName: 'Opus 5.5', efforts: ['low', 'high', 'max'] },
+          { value: 'sonnet', displayName: 'Sonnet 5.5' },
+        ],
+      }),
+    );
+    const sel = screen.getByRole('combobox', { name: 'Effort' });
+    expect(sel).toHaveValue('high');
+    expect(
+      within(sel)
+        .getAllByRole('option')
+        .map(o => o.getAttribute('value')),
+    ).toEqual(['', 'low', 'high', 'max']);
+    await userEvent.selectOptions(sel, 'low');
+    expect(calls[0]!.body).toEqual({ effort: 'low' });
+    await userEvent.selectOptions(sel, '');
+    expect(calls[1]!.body).toEqual({ effort: null });
+  });
 });
 
 // Requirements (voice-input): Включение диктовки; Кнопка микрофона в композере; Запись голоса; Отмена записи;

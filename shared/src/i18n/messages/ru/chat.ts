@@ -181,6 +181,7 @@ export default {
   'chat.selects.default': 'по умолчанию',
   'chat.selects.mode': 'Режим прав',
   'chat.selects.model': 'Модель',
+  'chat.selects.effort': 'Effort',
   'chat.selects.noRoot': 'Агент работает под root — bypassPermissions недоступен',
   'chat.selects.optionNoRoot': '{mode} — недоступен под root',
   'chat.sub.label': 'Субагент: {title}',

@@ -55,6 +55,7 @@ function setup(audio?: FakeAudio[]) {
   const calls: { signedUrl: string; token: string; cb: TalkCallbacks }[] = [];
   talkDeps.checkMic = vi.fn(async () => undefined);
   talkDeps.fetchTalk = vi.fn(async () => ({ signedUrl: 'wss://el/x', token: 'tok' }));
+  talkDeps.fetchReport = vi.fn(async () => ({ ready: true }));
   talkDeps.connect = vi.fn(async (signedUrl: string, token: string, cb: TalkCallbacks) => {
     calls.push({ signedUrl, token, cb });
     return conn;
@@ -106,19 +107,36 @@ describe('talk store', () => {
     const { conn, calls } = setup();
     await startTalk(S, 'p1');
     const cb = calls[0]!.cb;
-    reportTalk(S);
+    await reportTalk(S);
     expect(conn.sendUserMessage).not.toHaveBeenCalled();
     cb.onConnect();
-    reportTalk('sess-b');
+    await reportTalk('sess-b');
     expect(conn.sendUserMessage).not.toHaveBeenCalled();
-    reportTalk(S);
+    talkDeps.fetchReport = vi.fn(async () => ({ ready: false }));
+    await reportTalk(S);
+    expect(conn.sendUserMessage).not.toHaveBeenCalled();
+    talkDeps.fetchReport = vi.fn(async () => ({ ready: true }));
+    await reportTalk(S);
     expect(conn.sendUserMessage).toHaveBeenCalledWith(VOICE_REPORT_MARKER);
     cb.onMessage({ message: VOICE_REPORT_MARKER, role: 'user' });
     expect(active()).toMatchObject({ phase: 'listening' });
     expect(active()?.last).toBeUndefined();
     cb.onModeChange({ mode: 'speaking' });
-    reportTalk(S);
+    await reportTalk(S);
     expect(conn.sendUserMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not send a report marker after the user starts a new utterance during the check', async () => {
+    const { conn, calls } = setup();
+    await startTalk(S, 'p1');
+    const cb = calls[0]!.cb;
+    cb.onConnect();
+    const report = reportTalk(S);
+    cb.onMessage({ message: 'новый вопрос', role: 'user' });
+    cb.onModeChange({ mode: 'speaking' });
+    cb.onModeChange({ mode: 'listening' });
+    await report;
+    expect(conn.sendUserMessage).not.toHaveBeenCalled();
   });
 
   it('a denied microphone: the note, no link spent', async () => {

@@ -222,6 +222,9 @@ export default {
   'hub.sessions.noteInterrupted': '턴이 중단되었습니다',
   'hub.sessions.noteMode': '권한 모드: {mode}',
   'hub.sessions.noteModel': '모델: {model}',
+  'hub.sessions.noteEffort': '노력 수준: {effort}',
+  'hub.sessions.noteEffortDefault': '노력 수준: 기본값',
+  'hub.sessions.effortInvalid': '이 모델에서는 노력 수준 “{effort}”을(를) 사용할 수 없습니다',
   'hub.sessions.notePending': '{name}이(가) 오프라인입니다. 메시지는 전달을 기다리는 중입니다: {quote}',
   'hub.sessions.noteRestored': { other: '허브의 사본에서 대화 기록을 복원했습니다 ({count}줄)' },
   'hub.sessions.noteResumed': '재개됨',
@@ -304,6 +307,7 @@ export default {
   'hub.voiceTalk.options': '선택지: {options}.',
   'hub.voiceTalk.long': '긴 작업이라 계속 진행합니다. 끝나면 알려 드릴게요.',
   'hub.voiceTalk.offline': '세션의 컴퓨터가 오프라인입니다.',
+  'hub.voiceTalk.repeated': '이미 받은 요청입니다.',
   'hub.voiceTalk.failed': '세션에 메시지를 보내지 못했습니다.',
   'hub.sessions.qwenEndpointDown': '{label}: {name}의 모델 엔드포인트가 응답하지 않거나 키를 거부합니다. agent.env를 확인하세요',
 } satisfies Dict;

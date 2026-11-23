@@ -65,6 +65,33 @@ describe('DraftView', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
+  it('session-effort: the effort chip shows the levels of a model that has them, resets on a model without, and the launch sends the level', async () => {
+    const calls = routes({ 'POST /api/sessions': () => ({ status: 201, body: session() }) });
+    show();
+    act(() =>
+      useStore.setState({
+        models: [
+          { value: 'opus', displayName: 'Opus 5.5', efforts: ['low', 'high'] },
+          { value: 'haiku', displayName: 'Haiku 5.5' },
+        ],
+      }),
+    );
+    await userEvent.click(chip(/^Effort:/));
+    expect(screen.getAllByRole('menuitemradio').map(o => o.textContent)).toEqual([expect.any(String), 'low', 'high']);
+    await userEvent.click(screen.getByRole('menuitemradio', { name: 'high' }));
+    expect(chip(/^Effort: high$/)).toBeInTheDocument();
+    await userEvent.click(chip(/^Модель:/));
+    await userEvent.click(screen.getByRole('menuitemradio', { name: 'Haiku 5.5' }));
+    expect(screen.queryByRole('button', { name: /^Effort:/ })).not.toBeInTheDocument();
+    await userEvent.click(chip(/^Модель:/));
+    await userEvent.click(screen.getByRole('menuitemradio', { name: 'Opus 5.5' }));
+    expect(chip(/^Effort: /)).not.toHaveTextContent('high');
+    await userEvent.click(chip(/^Effort:/));
+    await userEvent.click(screen.getByRole('menuitemradio', { name: 'low' }));
+    await userEvent.type(field(), 'привет{Enter}');
+    expect(posted(calls)?.body).toMatchObject({ model: 'opus', effort: 'low' });
+  });
+
   it('an offline machine is listed as «не в сети» and cannot be picked', async () => {
     routes();
     show();

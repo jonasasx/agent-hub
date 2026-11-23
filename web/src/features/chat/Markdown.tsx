@@ -149,8 +149,12 @@ function MdLink({ href, children }: { href?: string; children?: ReactNode }) {
     e.preventDefault();
     void openFileLink(file, pin);
   };
+  // the middle button would open the path as an address of the hub in a new tab (change desktop-hub-non-page-urls)
+  const openAux = (e: MouseEvent) => {
+    if (e.button === 1) open(e, false);
+  };
   return (
-    <a href={href} className="md-file-link" title={file.path} onClick={e => open(e, false)} onDoubleClick={e => open(e, true)}>
+    <a href={href} className="md-file-link" title={file.path} onClick={e => open(e, false)} onAuxClick={openAux} onDoubleClick={e => open(e, true)}>
       {children}
     </a>
   );

@@ -2,6 +2,7 @@
 import { sql, type Selectable } from 'kysely';
 import type {
   ColorKey,
+  EffortLevel,
   HubEvent,
   I18nText,
   PermissionView,
@@ -163,6 +164,7 @@ export function toSessionView(r: SessionRow, hubDefaults: TimeoutDefaults, proje
     spawnedBy: r.spawned_by ? { id: r.spawned_by, title: r.spawned_by_title ?? '' } : null,
     permissionMode: r.permission_mode as UiPermissionMode,
     model: r.model,
+    effort: (r.effort as EffortLevel | null) ?? null,
     idleTimeoutMin: r.idle_timeout_min,
     // only waiting/permission count down; any other status shows the timeout the next wait will get
     effectiveIdleTimeoutMin: r.status === 'waiting' || r.status === 'permission' ? effectiveIdleTimeoutMin(r.status, r.idle_timeout_min, defaults) : (r.idle_timeout_min ?? defaults.idle),

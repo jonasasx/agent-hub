@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import type { McpRegistryDraftView, McpRegistryMachineOverrideRequest, McpRegistryResponse, McpRegistryServerUpdate, McpRegistryStatus } from '../../api/mcpRegistryTypes';
 import { api } from '../../api/client';
@@ -12,7 +12,8 @@ import { t, useT } from '../../i18n';
 const emptyRegistry: McpRegistryResponse = { revision: 0, servers: [], drafts: [] };
 const emptyStatus: McpRegistryStatus = { revision: 0, agents: [], gateways: [], oauth: [] };
 
-export function McpRegistry({ onClose, sessionId, focusServerId }: { onClose: () => void; sessionId?: string; focusServerId?: string }) {
+/** `anchor` — the scrim padding that puts the desktop popover under the opener of its pane (pane-anchored-popovers). */
+export function McpRegistry({ onClose, sessionId, focusServerId, anchor }: { onClose: () => void; sessionId?: string; focusServerId?: string; anchor?: CSSProperties }) {
   const t = useT();
   const dialogRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -153,7 +154,7 @@ export function McpRegistry({ onClose, sessionId, focusServerId }: { onClose: ()
   useDialog(dialogRef, closePanel, closeButtonRef);
 
   return createPortal(
-    <div className="scrim sub-scrim mcp-registry-scrim" onMouseDown={event => event.target === event.currentTarget && closePanel()}>
+    <div className="scrim sub-scrim mcp-registry-scrim" style={anchor} onMouseDown={event => event.target === event.currentTarget && closePanel()}>
       <section ref={dialogRef} className="sub-list mcp-panel mcp-registry" role="dialog" aria-modal="true" aria-labelledby="registry-title" onClick={() => notice && setNotice('')}>
         <header className="sub-head">
           <div>

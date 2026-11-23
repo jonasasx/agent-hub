@@ -222,6 +222,9 @@ export default {
   'hub.sessions.noteInterrupted': 'Tour interrompu',
   'hub.sessions.noteMode': 'Mode d’autorisation : {mode}',
   'hub.sessions.noteModel': 'Modèle : {model}',
+  'hub.sessions.noteEffort': 'Effort : {effort}',
+  'hub.sessions.noteEffortDefault': 'Effort : par défaut',
+  'hub.sessions.effortInvalid': 'Le niveau d’effort « {effort} » n’est pas disponible pour ce modèle',
   'hub.sessions.notePending': '{name} est hors ligne : le message attend d’être remis : {quote}',
   'hub.sessions.noteRestored': {
     one: 'La transcription a été restaurée à partir de la copie du hub ({count} ligne)',
@@ -309,6 +312,7 @@ export default {
   'hub.voiceTalk.options': 'Options : {options}.',
   'hub.voiceTalk.long': 'La tâche est longue, je continue et je te préviens quand c’est fini.',
   'hub.voiceTalk.offline': 'La machine de la session est hors ligne.',
+  'hub.voiceTalk.repeated': 'J’ai déjà reçu cette demande.',
   'hub.voiceTalk.failed': 'Impossible d’envoyer le message à la session.',
   'hub.sessions.qwenEndpointDown': '{label} : le point de terminaison du modèle sur {name} ne répond pas ou refuse la clé. Vérifiez agent.env',
 } satisfies Dict;

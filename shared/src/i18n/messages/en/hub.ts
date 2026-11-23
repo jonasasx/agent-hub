@@ -222,6 +222,9 @@ export default {
   'hub.sessions.noteInterrupted': 'Turn interrupted',
   'hub.sessions.noteMode': 'Permission mode: {mode}',
   'hub.sessions.noteModel': 'Model: {model}',
+  'hub.sessions.noteEffort': 'Effort: {effort}',
+  'hub.sessions.noteEffortDefault': 'Effort: default',
+  'hub.sessions.effortInvalid': 'Effort level “{effort}” is not available for this model',
   'hub.sessions.notePending': '{name} is offline: the message waits for delivery: {quote}',
   'hub.sessions.noteRestored': {
     one: 'The transcript was restored from the copy in the hub ({count} line)',
@@ -308,5 +311,6 @@ export default {
   'hub.voiceTalk.options': 'Options: {options}.',
   'hub.voiceTalk.long': 'This is a long task, I keep going and will tell you when it is done.',
   'hub.voiceTalk.offline': 'The session’s machine is offline.',
+  'hub.voiceTalk.repeated': 'I already received that request.',
   'hub.voiceTalk.failed': 'Could not send the message to the session.',
 } as const;

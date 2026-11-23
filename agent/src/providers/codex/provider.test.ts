@@ -393,6 +393,46 @@ describe('CodexProvider', () => {
     expect(lines.some(l => l.type === 'assistant' && l.message.content[0].text === 'Привет!' && l.message.id === 'msg-1')).toBe(true);
   });
 
+  // the order of the probe against codex 0.166.0 (2026-11-19): the subagent's items come on the session's connection with its thread
+  it('a subagent thread: its items go to subagents/agent-<thread>.jsonl, the session keeps its state and mirror', async () => {
+    const t = setup();
+    const { sessionId, server } = await started(t, 'bypassPermissions');
+    await t.p.handle(cmd('session.send', { sessionId, text: 'запусти сабагента', promptUuid: randomUUID() }));
+    const child = 'thread-child';
+    const activity = (id: string, kind: string, model: string | null) => ({ type: 'subAgentActivity', id, kind, agentThreadId: child, agentPath: '/root/probe_child', model, reasoningEffort: null });
+    server.notify('turn/started', { threadId: 'thread-1', turn: { id: 'turn-1' } });
+    server.notify('item/completed', { threadId: 'thread-1', turnId: 'turn-1', item: activity('call-spawn', 'started', 'gpt-child') });
+    server.notify('turn/started', { threadId: child, turn: { id: 'turn-c' } });
+    server.notify('item/completed', {
+      threadId: child,
+      turnId: 'turn-c',
+      item: { type: 'commandExecution', id: 'cmd-c', command: 'echo hi', cwd: t.cwd, status: 'completed', aggregatedOutput: 'hi\n', exitCode: 0 },
+    });
+    server.notify('item/completed', { threadId: child, turnId: 'turn-c', item: { type: 'agentMessage', id: 'msg-c', text: 'hi' } });
+    server.notify('turn/completed', { threadId: child, turn: { id: 'turn-c', status: 'completed', error: null, durationMs: 5 } });
+    server.notify('item/completed', { threadId: 'thread-1', turnId: 'turn-1', item: activity('subagent-completed-turn-c', 'completed', null) });
+    await t.tick();
+    expect(t.sent.some(m => m.type === 'session.result')).toBe(false);
+    expect(t.sent.filter(m => m.type === 'session.state').at(-1)).toMatchObject({ payload: { state: 'working' } });
+    const file = join(t.projectsDir, 'agent-hub-codex', sessionId, 'subagents', `agent-${child}.jsonl`);
+    await vi.waitFor(() => expect(readFileSync(file, 'utf8').trim().split('\n')).toHaveLength(3), { timeout: 5000 });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- loose transcript lines in assertions
+    type Line = Record<string, any>;
+    const sub = readFileSync(file, 'utf8')
+      .trim()
+      .split('\n')
+      .map(l => JSON.parse(l) as Line);
+    expect(sub.map(l => l.type)).toEqual(['assistant', 'user', 'assistant']);
+    expect(sub[0]).toMatchObject({ isSidechain: true, agentId: child, sessionId, parentUuid: null, message: { model: 'gpt-child', content: [{ type: 'tool_use', name: 'Bash' }] } });
+    expect(sub[1]!.parentUuid).toBe(sub[0]!.uuid);
+    expect(sub[2]!.message.content[0]).toEqual({ type: 'text', text: 'hi' });
+    // the parent's «completed» is later than the subagent's last line: the hub does not take the subagent back to running
+    const main = t.lines(sessionId);
+    const done = main.find(l => typeof l.message?.content === 'string' && l.message.content.includes('<task-notification>'));
+    expect(Date.parse(done!.timestamp)).toBeGreaterThanOrEqual(Date.parse(sub[2]!.timestamp));
+    expect(main.some(l => l.message?.id === 'msg-c' || l.message?.content?.[0]?.id === 'cmd-c')).toBe(false);
+  });
+
   it('a message during a turn steers it', async () => {
     const t = setup();
     const { sessionId, server } = await started(t, 'default', 'начни');

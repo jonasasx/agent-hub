@@ -181,6 +181,7 @@ export default {
   'chat.selects.default': 'デフォルト',
   'chat.selects.mode': '権限モード',
   'chat.selects.model': 'モデル',
+  'chat.selects.effort': 'エフォート',
   'chat.selects.noRoot': 'エージェントがrootで動作しているため、bypassPermissionsは利用できません',
   'chat.selects.optionNoRoot': '{mode} (rootでは利用不可)',
   'chat.sub.label': 'サブエージェント: {title}',

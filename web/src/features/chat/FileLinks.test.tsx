@@ -86,6 +86,24 @@ describe('links to files in the feed', () => {
     expect(useFiles.getState().tabSession[id]).toBe(s.id);
   });
 
+  it('a middle click on a Codex path with a leading slash opens the preview tab, not an address of the hub', async () => {
+    show(session(), 'Отчёт: [status-max.md](/C:/Users/alice/work/status-max.md)');
+    const link = screen.getByRole('link', { name: 'status-max.md' });
+    const ev = new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 });
+    link.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    await vi.waitFor(() => expect(tabs()).toContain('file:x1:C:\\Users\\alice\\work\\status-max.md'));
+    expect(useFiles.getState().pinned).toEqual([]);
+  });
+
+  it('a right-button auxclick keeps the browser menu', () => {
+    show(session(), 'Отчёт: [status-max.md](/C:/Users/alice/work/status-max.md)');
+    const ev = new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 2 });
+    screen.getByRole('link', { name: 'status-max.md' }).dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(false);
+    expect(tabs().some(t => t.startsWith('file:'))).toBe(false);
+  });
+
   it('a relative path is resolved from the folder of the session; a line tail is dropped', async () => {
     show(session(), 'См. [spec](openspec/specs/file-explorer/spec.md:12)');
     await userEvent.click(screen.getByRole('link', { name: 'spec' }));

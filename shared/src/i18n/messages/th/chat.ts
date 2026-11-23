@@ -181,6 +181,7 @@ export default {
   'chat.selects.default': 'ค่าเริ่มต้น',
   'chat.selects.mode': 'โหมดสิทธิ์',
   'chat.selects.model': 'โมเดล',
+  'chat.selects.effort': 'ระดับความพยายาม',
   'chat.selects.noRoot': 'เอเจนต์รันด้วย root จึงใช้ bypassPermissions ไม่ได้',
   'chat.selects.optionNoRoot': '{mode} (ใช้ไม่ได้ด้วย root)',
   'chat.sub.label': 'เอเจนต์ย่อย: {title}',

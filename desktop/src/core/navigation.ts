@@ -30,6 +30,29 @@ export function safeReturnPath(value: string | null | undefined): string {
   return `${path}${u.search}${u.hash}`;
 }
 
+// Paths the hub answers itself, not with the web (`NON_SPA` of hub/src/app.ts).
+const NON_PAGE_PATH = /^\/(api|ws|agent-api|agent|enroll|healthz|metrics|mcp)(\/|$)/;
+// `/C:/…`: a file of a machine taken for a hub path (a link to a file opened as an address).
+const DRIVE_PATH = /^\/[A-Za-z]:(\/|%5c|$)/i;
+
+/**
+ * A page of the web on the hub (change desktop-hub-non-page-urls, Requirement: Адреса хаба вне веба): own origin, not an API or
+ * service path, no file extension in the last segment, no drive letter. Only such an address may fill the main window.
+ */
+export function isHubPage(raw: string, publicOrigin: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  if ((u.protocol !== 'http:' && u.protocol !== 'https:') || u.origin !== publicOrigin) return false;
+  const path = u.pathname;
+  if (NON_PAGE_PATH.test(path) || DRIVE_PATH.test(path)) return false;
+  const last = path.split('/').pop() ?? '';
+  return !/\.[A-Za-z0-9]+$/.test(last);
+}
+
 export function decideNavigation(raw: string, publicOrigin: string): NavigationDecision {
   let u: URL;
   try {
@@ -40,6 +63,8 @@ export function decideNavigation(raw: string, publicOrigin: string): NavigationD
   if (u.protocol === 'http:' || u.protocol === 'https:') {
     if (u.origin === publicOrigin) {
       if (u.pathname === '/auth/login') return { kind: 'login', returnPath: safeReturnPath(u.searchParams.get('return')) };
+      // an API answer or a file path would replace the app in the main window
+      if (!isHubPage(u.href, publicOrigin)) return { kind: 'deny' };
       return { kind: 'allow' };
     }
     return { kind: 'external', url: u.href };

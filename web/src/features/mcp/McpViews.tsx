@@ -14,13 +14,14 @@
  * - mcp-auth-controls A6: «Войти заново» and «Выйти» (ghost, after «Выключить») of an OAuth server, «Войти» of a server
  *   failed with an auth error; McpLogoutConfirm — the confirmation of «Выйти» under the row (focus on «Отмена», Esc).
  */
-import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type RefObject } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { type McpAuthFlowView, type McpServerView, type McpSessionView, type SessionView } from '../../api/types';
 import { useStore } from '../../store';
 import { hubText, t, useT } from '../../i18n';
 import { clockLabel, runnerIndex } from '../sessions/status';
 import { useDialog, useNow } from '../ui/a11y';
+import { anchorBelow, shownRect, useScrimAnchor } from '../ui/anchor';
 import { openSettings } from '../settings/Settings';
 import { closeMcpPanel, loadMcp, logoutServer, mcpAction, openMcpPanel, refreshMcp, startMcpAuth, submitMcpCallback } from './actions';
 import { McpRegistry } from './McpRegistry';
@@ -49,6 +50,10 @@ import {
   sleepingNote,
   snapshotLine,
 } from './mcpModel';
+
+/** The widths of `.sub-list.mcp-panel` and `.sub-list.mcp-registry` in app.css, for keeping the popover in the window. */
+const PANEL_W = 420;
+const REGISTRY_W = 760;
 
 const PLUG = (
   <svg className="mcp-ico" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
@@ -164,7 +169,8 @@ export function McpPanel({ s, onClose, paneMark }: { s: SessionView; onClose: ()
     setFocusServerId(serverId);
     setRegistryOpen(true);
   };
-  const anchor = useAnchor(!phone, paneMark);
+  const anchor = useScrimAnchor(!phone, () => mcpPlace(paneMark, PANEL_W));
+  const registryAnchor = useScrimAnchor(!phone && registryOpen, () => mcpPlace(paneMark, REGISTRY_W));
   useDialog(ref, () => {
     if (!registryOpen) onClose();
   });
@@ -265,7 +271,7 @@ export function McpPanel({ s, onClose, paneMark }: { s: SessionView; onClose: ()
           )}
         </div>
       </div>
-      {registryOpen && <McpRegistry sessionId={s.id} focusServerId={focusServerId} onClose={() => setRegistryOpen(false)} />}
+      {registryOpen && <McpRegistry sessionId={s.id} focusServerId={focusServerId} anchor={registryAnchor} onClose={() => setRegistryOpen(false)} />}
     </>,
     document.body,
   );
@@ -275,32 +281,16 @@ export function McpPanel({ s, onClose, paneMark }: { s: SessionView; onClose: ()
  * UI review M1: the desktop popover hangs under the head's «MCP» button (its right edge under the button's right edge),
  * not in the window's corner; the phone's sheet is not anchored. QA fix 3: the button is looked up in the session's own
  * pane (several panes on a desktop): its «MCP», else its «⋯» (opened from the menu), else the pane's top right corner.
+ * The registry opened from the panel takes the same place (pane-anchored-popovers), `width` keeps it in the window.
  */
-function useAnchor(on: boolean, paneMark?: RefObject<HTMLElement | null>): CSSProperties | undefined {
-  const [pos, setPos] = useState<CSSProperties | undefined>(undefined);
-  useLayoutEffect(() => {
-    if (!on) {
-      setPos(undefined);
-      return;
-    }
-    const place = () => {
-      const pane = paneMark?.current?.closest<HTMLElement>('section') ?? null;
-      const scope: ParentNode = pane ?? document;
-      const shown = (sel: string) =>
-        Array.from(scope.querySelectorAll<HTMLElement>(sel))
-          .map(b => b.getBoundingClientRect())
-          .find(r => r.width > 0);
-      const r = shown('.mcp-btn') ?? shown('.ctl-more > .icon-btn');
-      if (r) return setPos({ paddingTop: Math.round(r.bottom + 6), paddingRight: Math.max(12, Math.round(window.innerWidth - r.right)) });
-      const p = pane?.getBoundingClientRect();
-      if (!p || !p.width) return setPos(undefined);
-      setPos({ paddingTop: Math.round(p.top + 48), paddingRight: Math.max(12, Math.round(window.innerWidth - p.right + 8)) });
-    };
-    place();
-    window.addEventListener('resize', place);
-    return () => window.removeEventListener('resize', place);
-  }, [on, paneMark]);
-  return pos;
+function mcpPlace(paneMark: RefObject<HTMLElement | null> | undefined, width: number): CSSProperties | undefined {
+  const pane = paneMark?.current?.closest<HTMLElement>('section') ?? null;
+  const scope: ParentNode = pane ?? document;
+  const r = shownRect(scope, '.mcp-btn') ?? shownRect(scope, '.ctl-more > .icon-btn');
+  if (r) return anchorBelow(r, width);
+  const p = pane?.getBoundingClientRect();
+  if (!p || !p.width) return undefined;
+  return { paddingTop: Math.round(p.top + 48), paddingRight: Math.max(12, Math.round(window.innerWidth - p.right + 8)) };
 }
 
 function McpServerRow({

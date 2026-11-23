@@ -145,8 +145,11 @@ interface State {
   limits: SubscriptionLimitsResponse | null;
   /** serverTime − the browser's clock at the last load (ms): the model counts resets and cooldowns on the hub's clock. */
   limitsSkew: number;
-  /** The open limits card: the subscription and what opened it (the focus goes back there). */
-  limitCard: { subscriptionId: string; from: 'row' | 'chip' } | null;
+  /**
+   * The open limits card: the subscription and what opened it (the focus goes back there); `pane` — the pane of the chip,
+   * the same subscription's chip is in every pane with its sessions (pane-anchored-popovers).
+   */
+  limitCard: { subscriptionId: string; from: 'row' | 'chip'; pane?: string | null } | null;
   /** The block folded by hand; null — by the number of subscriptions (3 on the phone, 4 on the desktop). */
   limitsCollapsed: boolean | null;
   /**

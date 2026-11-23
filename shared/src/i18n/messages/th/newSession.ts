@@ -11,6 +11,7 @@ export default {
   'newSession.modeNoRoot': '{mode} — ใช้ไม่ได้ภายใต้ root',
   'newSession.rootHint': 'เอเจนต์บน {machine} รันเป็น root — ไม่สามารถใช้ bypassPermissions ได้',
   'newSession.model': 'โมเดล',
+  'newSession.effort': 'ระดับความพยายาม',
   'newSession.retry': 'ลองอีกครั้ง',
   'newSession.start': 'เริ่ม',
   'newSession.starting': 'กำลังเริ่ม…',

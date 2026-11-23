@@ -8,7 +8,7 @@
  * 422 subscription_unavailable (the subscription chip) / 502 attachment_delivery_failed (the banner with «Повторить»).
  */
 import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { PROVIDER_LABELS, PROVIDERS, UI_PERMISSION_MODES, bypassUnavailable, type RunnerView } from '../../api/types';
+import { PROVIDER_LABELS, PROVIDERS, UI_PERMISSION_MODES, bypassUnavailable, type EffortLevel, type RunnerView } from '../../api/types';
 import { usableRunner, useStore } from '../../store';
 import { useT } from '../../i18n';
 import { useMenu } from '../ui/a11y';
@@ -44,6 +44,9 @@ function useLaunch(draftId: string, d: Draft) {
   const mode = noBypass && (d.mode ?? 'bypassPermissions') === 'bypassPermissions' ? 'acceptEdits' : (d.mode ?? 'bypassPermissions');
   const models = providerModels(runner, provider, claudeModels);
   const model = models.some(m => m.value === d.model) ? d.model : (models[0]?.value ?? '');
+  // session-effort D7: the levels come from the model's entry; a level the model does not have is dropped
+  const efforts = provider === 'claude' ? (models.find(m => m.value === model)?.efforts ?? []) : [];
+  const effort = (efforts as string[]).includes(d.effort) ? d.effort : '';
   const sub = subscriptionChoice(
     subs,
     runner,
@@ -53,7 +56,7 @@ function useLaunch(draftId: string, d: Draft) {
     id => chooseInDraft(draftId, 'subscription', { subPicked: id }),
     id => patchDraft(draftId, { subUnavailable: id }),
   );
-  return { runners, runner, provider, noBypass, mode, models, model, sub, subs };
+  return { runners, runner, provider, noBypass, mode, models, model, efforts, effort, sub, subs };
 }
 
 const FIELD_OF: Record<string, DraftField> = { cwd: 'project', runner: 'runner', subscription: 'subscription', form: 'form' };
@@ -78,6 +81,7 @@ function DraftBody({ draftId, paneId, d }: { draftId: string; paneId: string; d:
         runnerId: l.runner.id,
         permissionMode: l.mode,
         model: l.model,
+        ...(l.effort ? { effort: l.effort as EffortLevel } : {}),
         prompt: text.trim(),
         ...(images.length ? { attachments: images } : {}),
         ...(l.provider !== 'claude' ? { provider: l.provider } : {}),
@@ -187,13 +191,30 @@ function DraftChips({ draftId, d, l, folder }: { draftId: string; d: Draft; l: L
               on={m.value === l.model}
               title={m.displayName}
               onPick={() => {
-                chooseInDraft(draftId, 'model', { model: m.value });
+                chooseInDraft(draftId, 'model', { model: m.value, effort: '' });
                 close();
               }}
             />
           ))
         }
       </Chip>
+      {l.efforts.length > 0 && (
+        <Chip label={t('newSession.effort')} value={l.effort || t('chat.selects.default')}>
+          {close =>
+            ['', ...l.efforts].map(e => (
+              <Option
+                key={e}
+                on={e === l.effort}
+                title={e || t('chat.selects.default')}
+                onPick={() => {
+                  chooseInDraft(draftId, 'form', { effort: e });
+                  close();
+                }}
+              />
+            ))
+          }
+        </Chip>
+      )}
       <Chip label={t('newSession.mode')} value={l.mode} bypass={l.mode === 'bypassPermissions'}>
         {close => (
           <>

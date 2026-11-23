@@ -55,11 +55,14 @@ import { fsListPayload, fsReadChunkPayload, fsReadPayload } from './files.js';
  * 1.19 (change `session-machine-context`, design D1): the hub name of the session's machine `machineName` in session.start/resume.
  * 1.20 (change `session-context-usage`, design D1): message session.context — a snapshot of a session's context window.
  * 1.21 (change `qwen-provider`, design D7): the provider `qwen` (an OpenAI-compatible endpoint, no subscriptions) in session.start/resume/fork and hello.providers.
+ * 1.22 (change `session-effort`, design D3): `effort` in session.start/resume, command session.set_effort.
  * Minor versions talk to each other (D3); images need 1.2 on the agent, subscriptions 1.4, self-update 1.5, limits 1.6,
  * MCP management 1.7, MCP sign-out 1.8, session peers 1.9, providers other than Claude 1.10, negotiated fs.list-dirs 1.13, fs.browse 1.14,
  * the project catalogue in the session context 1.15, file download 1.16.
  */
-export const PROTOCOL_VERSION = '1.21';
+export const PROTOCOL_VERSION = '1.22';
+/** The first protocol version whose agents take `effort` in session.start/resume and session.set_effort (session-effort D3). */
+export const EFFORT_PROTOCOL = '1.22';
 /** The first protocol version whose agents run sessions of the provider `qwen` (change `qwen-provider`, design D7). */
 export const QWEN_PROTOCOL = '1.21';
 /** The first protocol version whose hubs take session.context (session-context-usage D1). */
@@ -188,6 +191,11 @@ export type ProtectedDirs = z.infer<typeof protectedDirsSchema>;
 /** agent-providers D1: the vendor of a session. Absent in a command — `claude` (hubs and agents before 1.10). */
 export const PROVIDERS = ['claude', 'codex', 'qwen'] as const;
 export const providerSchema = z.enum(PROVIDERS);
+
+/** session-effort D1: the effort levels the hub knows; Claude Code reports which of them a model supports. */
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type EffortLevel = (typeof EFFORT_LEVELS)[number];
+export const effortLevelSchema = z.enum(EFFORT_LEVELS);
 export type Provider = z.infer<typeof providerSchema>;
 /** Providers whose sessions run under a subscription of the registry; qwen has none (qwen-provider D6). */
 export const SUBSCRIPTION_PROVIDERS = ['claude', 'codex'] as const;
@@ -793,6 +801,8 @@ export const sessionStartPayload = z.object({
   subscription,
   /** 1.10: absent — claude. */
   provider: providerSchema.optional(),
+  /** 1.22: absent — the model's default. */
+  effort: effortLevelSchema.optional(),
 });
 
 export const sessionResumePayload = z.object({
@@ -813,12 +823,16 @@ export const sessionResumePayload = z.object({
   subscription,
   /** 1.10: absent — claude. */
   provider: providerSchema.optional(),
+  /** 1.22: absent — the model's default. */
+  effort: effortLevelSchema.optional(),
 });
 
 export const sessionSendPayload = z.object({ sessionId, text: z.string(), promptUuid: z.guid(), attachments });
 export const sessionInterruptPayload = z.object({ sessionId });
 export const sessionSetModePayload = z.object({ sessionId, mode: permissionModeSchema });
 export const sessionSetModelPayload = z.object({ sessionId, model: nonEmpty });
+/** 1.22: null — back to the model's default. */
+export const sessionSetEffortPayload = z.object({ sessionId, effort: effortLevelSchema.nullable() });
 export const sessionStopPayload = z.object({ sessionId, reason: z.enum(['sleep', 'user']) });
 
 export const permissionResponsePayload = z.object({
@@ -1012,6 +1026,7 @@ export const hubMessageSchema = z.discriminatedUnion('type', [
   command('session.interrupt', sessionInterruptPayload),
   command('session.set_mode', sessionSetModePayload),
   command('session.set_model', sessionSetModelPayload),
+  command('session.set_effort', sessionSetEffortPayload),
   command('session.stop', sessionStopPayload),
   msg('permission.response', permissionResponsePayload),
   command('session.fork', sessionForkPayload),

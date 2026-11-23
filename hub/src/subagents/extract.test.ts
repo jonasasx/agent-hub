@@ -250,3 +250,27 @@ describe('helpers', () => {
     expect(promptSha(null)).toBeNull();
   });
 });
+
+describe('scanLines on a Codex mirror (subAgentActivity of session 6a051dc9)', () => {
+  const facts = scanLines({ kind: 'main', agentIdOfFile: null }, fixture('codex-main.jsonl'));
+
+  it('six background calls named after the agent path; results carry the thread as agentId', () => {
+    expect(only(facts, 'call').map(f => f.name)).toEqual(['commissioning_progress', 'camera_ba', 'camera_sa', 'camera_dev', 'camera_review', 'camera_delivery']);
+    expect(only(facts, 'call').every(f => f.background && f.agentType === 'codex')).toBe(true);
+    expect(only(facts, 'result').find(f => f.toolUseId === 'call_5c3543f121814aa08a325a4c06adf22d')).toMatchObject({
+      agentId: '01a1eeb9-d184-7e20-987f-b5b324ea814f',
+      background: true,
+      model: 'gpt-6.2-sol',
+    });
+  });
+
+  it('send_input resumes the subagent, completion is a notification of its thread; no background tasks', () => {
+    expect(only(facts, 'resume').filter(f => f.agentId === '01a1eeb9-d184-7e20-987f-b5b324ea814f')).toHaveLength(3);
+    expect(
+      only(facts, 'notify')
+        .filter(f => f.agentId === '01a1eeb9-d184-7e20-987f-b5b324ea814f')
+        .map(f => f.state),
+    ).toEqual(['completed', 'completed']);
+    expect(facts.filter(f => f.t.startsWith('bg'))).toEqual([]);
+  });
+});
