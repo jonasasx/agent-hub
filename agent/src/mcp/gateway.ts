@@ -145,6 +145,8 @@ export class McpGateway {
   private retryTimers = new Map<string, NodeJS.Timeout>();
   private retryAfter = new Map<string, number>();
   private unavailableExecutables = new Map<string, number>();
+  /** mcp-remote-upstream-errors: the last upstream state of a remote server sent to the hub — `ready`, `http:<code>` or `network`. */
+  private upstreamStates = new Map<string, string>();
   private oauthAccess: ((serverId: string) => Promise<string | null>) | null = null;
   private oauthRefresh: ((serverId: string) => Promise<string | null>) | null = null;
   private limits: GatewayLimits;
@@ -374,7 +376,10 @@ export class McpGateway {
         this.emitStatus({ serverId, revision: startingRevision, status: 'stopped', observedAt: Date.now() });
         throw new Error('MCP server configuration changed while starting');
       }
-      if (cfg.transport !== 'stdio') this.emitStatus({ serverId, revision: startingRevision, status: 'ready', endpoint: this.endpoint, observedAt: Date.now() });
+      if (cfg.transport !== 'stdio') {
+        this.upstreamStates.delete(serverId);
+        this.emitStatus({ serverId, revision: startingRevision, status: 'ready', endpoint: this.endpoint, observedAt: Date.now() });
+      }
       let bySession = this.tokens.get(serverId);
       if (!bySession) this.tokens.set(serverId, (bySession = new Map()));
       bySession.set(sessionId, bearer);
@@ -680,14 +685,22 @@ export class McpGateway {
       const upstream = new AbortController();
       res.once('close', () => upstream.abort());
       const request = () => fetch(target, { method, headers, ...(body ? { body } : {}), redirect: 'manual', signal: upstream.signal });
-      let response = await request();
-      if (token && response.status === 401 && this.oauthRefresh) {
-        const token = await this.oauthRefresh(oauthServerId);
-        if (token) {
-          headers.set('authorization', `Bearer ${token}`);
-          response = await request();
+      let response: Response;
+      try {
+        response = await request();
+        if (token && response.status === 401 && this.oauthRefresh) {
+          const token = await this.oauthRefresh(oauthServerId);
+          if (token) {
+            headers.set('authorization', `Bearer ${token}`);
+            response = await request();
+          }
         }
+      } catch (e) {
+        // A client that hung up aborts the request: that says nothing about the server.
+        if (!upstream.signal.aborted) this.reportUpstream(cfg, null, this.redactText(cfg.id, networkErrorText(e)));
+        throw e;
       }
+      this.reportUpstream(cfg, response.status);
       const out: Record<string, string> = {};
       response.headers.forEach((v, k) => {
         if (k.toLowerCase() !== GATEWAY_ERROR_HEADER && !HOP.has(k.toLowerCase()) && !RESPONSE_BODY_HEADERS.has(k.toLowerCase())) out[k] = v;
@@ -848,6 +861,27 @@ export class McpGateway {
     if (busy) this.log.warn('MCP gateway limit reached', { server: cfg.name, mode: cfg.mode, ...reason, busy: busy.map(key => this.describeKey(key)) });
     this.reportStatus(cfg.id, { serverId: cfg.id, revision: cfg.revision, ...scope, status: 'failed', error: message, reason, observedAt: Date.now() });
     return new Error(message);
+  }
+
+  /**
+   * mcp-remote-upstream-errors: the upstream answer of a remote server reaches the hub as the machine row, once per change —
+   * `failed` on 401, 403, 5xx (`httpStatus`) or a network error (no `httpStatus`), `ready` on the first other answer after it.
+   * 400, 404 and 405 belong to the MCP protocol (bad request, expired session, GET without SSE) and are not a refusal.
+   */
+  private reportUpstream(cfg: ServerConfig, httpStatus: number | null, error?: string): void {
+    if (this.validationOrigins.has(cfg.id)) return;
+    const failed = httpStatus === null || httpStatus === 401 || httpStatus === 403 || httpStatus >= 500;
+    const state = !failed ? 'ready' : httpStatus === null ? 'network' : `http:${httpStatus}`;
+    if ((this.upstreamStates.get(cfg.id) ?? 'ready') === state) return;
+    this.upstreamStates.set(cfg.id, state);
+    if (!failed) {
+      this.reportStatus(cfg.id, { serverId: cfg.id, revision: cfg.revision, status: 'ready', endpoint: this.endpoint, observedAt: Date.now() });
+      return;
+    }
+    const reason: McpGatewayFailureReason = httpStatus === null ? { kind: 'upstream' } : { kind: 'upstream', httpStatus };
+    const text = httpStatus === null ? (error ?? 'MCP proxy request failed') : `upstream HTTP ${httpStatus}`;
+    this.log.warn('MCP remote server refused', { server: cfg.name, httpStatus, error: httpStatus === null ? text : undefined });
+    this.reportStatus(cfg.id, { serverId: cfg.id, revision: cfg.revision, status: 'failed', error: text.slice(0, 500), reason, observedAt: Date.now() });
   }
 
   /** `<server>:<revision>[:@stateless][:<session>]` as server name, protocol family and session for the log. */
@@ -1076,6 +1110,13 @@ function requestedProtocolVersion(rpc: RpcMessage): string | undefined {
   if (!meta || typeof meta !== 'object') return undefined;
   for (const [key, value] of Object.entries(meta)) if ((key === 'protocolVersion' || key.endsWith('/protocolVersion')) && typeof value === 'string' && value) return value;
   return undefined;
+}
+/** `fetch failed` says nothing alone: the cause code (ECONNREFUSED, ENOTFOUND, UND_ERR_CONNECT_TIMEOUT) names the network error. */
+function networkErrorText(e: unknown): string {
+  if (!(e instanceof Error)) return 'MCP proxy request failed';
+  const cause = (e as Error & { cause?: { code?: unknown; message?: unknown } }).cause;
+  const code = typeof cause?.code === 'string' ? cause.code : typeof cause?.message === 'string' ? cause.message : '';
+  return code ? `${e.message} (${code})` : e.message;
 }
 function redact(s: string): string {
   return s.replace(/(bearer\s+)[^\s"']+/gi, '$1[redacted]').replace(/([?&](?:token|key|secret|password)=)[^&\s]+/gi, '$1[redacted]');

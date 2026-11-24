@@ -142,6 +142,37 @@ describe('the MCP panel', () => {
     expect(registry.querySelector('article.mcp-row.focused')).toHaveFocus();
   });
 
+  it('Отказ апстрима в панели сессии: 503 of a remote server leads, SDK text and the reconnect error only in «Подробности»', async () => {
+    const serverId = '5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+    const sdk = 'SdkHttpError dialing http://127.0.0.1:62522/mcp (CLIENT_HTTP_NOT_IMPLEMENTED)';
+    const s = session({ mcpProblems: 1 });
+    mockFetch({
+      [`GET /api/sessions/${s.id}/mcp`]: mcpRoute(
+        mcpView({
+          servers: [
+            mcpServer({
+              name: 'fleet-api',
+              status: 'failed',
+              transport: 'http',
+              error: sdk,
+              lastError: sdk,
+              gateway: { serverId, status: 'failed', error: 'upstream HTTP 503', reason: { kind: 'upstream', httpStatus: 503 }, observedAt: new Date().toISOString() },
+            }),
+          ],
+        }),
+      ),
+    });
+    head(s);
+    await userEvent.click(await screen.findByRole('button', { name: /^MCP/ }));
+    const fleet = await waitFor(() => row('fleet-api'));
+    expect(fleet).toHaveTextContent('Машина X1: сервер временно недоступен (HTTP 503). Переподключите его через минуту.');
+    expect(within(fleet).queryByRole('alert')).not.toBeInTheDocument();
+    const details = fleet.querySelector('details.mcp-details')!;
+    expect(details).not.toHaveAttribute('open');
+    expect(details).toHaveTextContent('upstream HTTP 503');
+    expect(details).toHaveTextContent(sdk);
+  });
+
   it('only needs-auth → --warn; no problems → a neutral «MCP»; 404 of the hub → no button', async () => {
     const a = session({ mcpProblems: 1 });
     const b = session({ mcpProblems: 0 });

@@ -6,7 +6,7 @@
 import type { FsEntry } from '@agent-hub/shared';
 
 /** The class of a name by its extension: it picks the icon and the first guess of the viewer (the hub's X-File-Kind decides). */
-export type NameKind = 'dir' | 'md' | 'img' | 'pdf' | 'txt' | 'bin';
+export type NameKind = 'dir' | 'md' | 'html' | 'img' | 'pdf' | 'txt' | 'bin';
 
 const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg']);
 const BINARY_EXT = new Set([
@@ -50,6 +50,7 @@ export function extOf(name: string): string {
 export function nameKind(name: string): NameKind {
   const ext = extOf(name);
   if (ext === 'md' || ext === 'markdown') return 'md';
+  if (ext === 'html' || ext === 'htm') return 'html';
   if (IMAGE_EXT.has(ext)) return 'img';
   if (ext === 'pdf') return 'pdf';
   if (BINARY_EXT.has(ext)) return 'bin';
@@ -91,7 +92,17 @@ export function iconFile(label: string) {
       {label ? (
         <>
           <rect x="2" y="8.2" width="9.6" height="5" rx="1.2" fill="currentColor" />
-          <text x="6.8" y="12.1" textAnchor="middle" fontSize="4.3" fontWeight="700" fontFamily="Segoe UI,sans-serif" fill="var(--surface)">
+          {/* «HTML» is wider than the badge: four letters are squeezed into it */}
+          <text
+            x="6.8"
+            y="12.1"
+            textAnchor="middle"
+            fontSize="4.3"
+            fontWeight="700"
+            fontFamily="Segoe UI,sans-serif"
+            fill="var(--surface)"
+            {...(label.length > 3 ? { textLength: 8.6, lengthAdjust: 'spacingAndGlyphs' } : {})}
+          >
             {label}
           </text>
         </>
@@ -150,12 +161,12 @@ interface FileIconProps {
   blocked?: boolean;
 }
 
-/** The icon of a tree row or a tab: a folder (open or closed), an image, PDF, Markdown, code/text or another file. */
+/** The icon of a tree row or a tab: a folder (open or closed), an image, PDF, Markdown, HTML, code/text or another file. */
 export function FileIcon({ kind, open, blocked }: FileIconProps) {
   if (blocked) return <span className="fx-ic k-bin">{ICON_LOCK}</span>;
   if (kind === 'dir') return <span className="fx-ic k-dir">{open ? ICON_DIR_OPEN : ICON_DIR}</span>;
   if (kind === 'img') return <span className="fx-ic k-img">{ICON_IMG}</span>;
-  const label = kind === 'md' ? 'MD' : kind === 'pdf' ? 'PDF' : '';
+  const label = kind === 'md' ? 'MD' : kind === 'html' ? 'HTML' : kind === 'pdf' ? 'PDF' : '';
   return <span className={`fx-ic k-${kind}`}>{iconFile(label)}</span>;
 }
 

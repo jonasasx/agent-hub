@@ -1,7 +1,7 @@
 {
   "name": "@agent-hub/desktop",
   "productName": "Agent Hub",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Agent Hub desktop client",
   "author": "Ivan Volynkin",
   "private": true,

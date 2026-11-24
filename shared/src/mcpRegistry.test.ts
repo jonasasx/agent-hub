@@ -380,6 +380,13 @@ describe('MCP gateway session limits (mcp-gateway-session-limits)', () => {
     expect(mcpGatewayStatusSchema.safeParse({ serverId, machineId, status: 'failed', reason: { kind: 'other' }, observedAt: 1 }).success).toBe(false);
   });
 
+  it('carries an upstream refusal of a remote server with or without the HTTP status (mcp-remote-upstream-errors)', () => {
+    const status = mcpGatewayStatusSchema.parse({ serverId, machineId, status: 'failed', error: 'upstream HTTP 503', reason: { kind: 'upstream', httpStatus: 503 }, observedAt: 1 });
+    expect(status.reason).toEqual({ kind: 'upstream', httpStatus: 503 });
+    expect(mcpGatewayStatusSchema.parse({ serverId, machineId, status: 'failed', reason: { kind: 'upstream' }, observedAt: 1 }).reason).toEqual({ kind: 'upstream' });
+    expect(mcpGatewayStatusSchema.safeParse({ serverId, machineId, status: 'failed', reason: { kind: 'upstream', httpStatus: 700 }, observedAt: 1 }).success).toBe(false);
+  });
+
   it('bounds the machine limits and lets the snapshot carry them', () => {
     expect(mcpGatewayLimitsSchema.parse({ maxPerServerSessions: 8 })).toEqual({ maxPerServerSessions: 8 });
     expect(mcpGatewayLimitsSchema.safeParse({ maxProcesses: 500 }).success).toBe(false);

@@ -169,6 +169,47 @@ describe('fs/list and fs/file (integration)', () => {
     expect(r.headers['x-content-type-options']).toBe('nosniff');
   });
 
+  // change `file-viewer-html`, tasks 1.2
+  it('serves an html file as an isolated page that only the hub may frame', async () => {
+    const page = '<!doctype html><p>report</p><script>draw()</script>';
+    s.script.next = (_type, payload) => ({ path: payload.path, kind: 'text', mime: 'text/plain', size: page.length, mtimeMs: 1, text: page });
+    const r = await s.get(`/api/runners/vm/fs/html?sessionId=${s.sessionId}&path=${enc('/home/test/proj/Report.HTML')}`);
+    expect(r.statusCode).toBe(200);
+    expect(r.body).toBe(page);
+    expect(r.headers['content-type']).toBe('text/html; charset=utf-8');
+    const csp = String(r.headers['content-security-policy']);
+    expect(csp).toMatch(/^sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals; /);
+    expect(csp).not.toContain('allow-same-origin');
+    expect(csp).toContain("connect-src 'none'");
+    expect(csp).toContain("form-action 'none'");
+    expect(csp).toContain("frame-ancestors 'self'");
+    expect(r.headers['x-frame-options']).toBe('SAMEORIGIN');
+    expect(r.headers['x-content-type-options']).toBe('nosniff');
+    expect(r.headers['referrer-policy']).toBe('no-referrer');
+    expect(r.headers['cache-control']).toBe('private, no-store');
+    expect(s.commands.at(-1)).toMatchObject({ type: 'fs.read', payload: { path: '/home/test/proj/Report.HTML', root: '/home/test/proj' } });
+  });
+
+  it('answers 415 on fs/html for a file that is not html or not text', async () => {
+    const txt = await s.get(`/api/runners/vm/fs/html?path=${enc('/home/test/a.txt')}`);
+    expect(txt.statusCode).toBe(415);
+    expect(txt.json()).toEqual({ error: 'unsupported', kind: 'text', size: SECRET_TEXT.length, mime: 'text/plain' });
+    expect(txt.headers['content-type']).not.toMatch(/html/);
+    expect(txt.headers['content-security-policy']).toBe("sandbox; default-src 'none'");
+    // a link named .html that resolves to another file: the agent's real path decides
+    s.script.next = () => ({ path: '/home/test/notes.md', kind: 'markdown', mime: 'text/markdown', size: 3, mtimeMs: 1, text: 'abc' });
+    expect((await s.get(`/api/runners/vm/fs/html?path=${enc('/home/test/link.html')}`)).statusCode).toBe(415);
+    s.script.next = () => ({ path: '/home/test/x.html', kind: 'binary', mime: 'application/octet-stream', size: 9, mtimeMs: 1 });
+    expect((await s.get(`/api/runners/vm/fs/html?path=${enc('/home/test/x.html')}`)).statusCode).toBe(415);
+  });
+
+  it('answers 404 on fs/html for a foreign machine and sends nothing to the agent', async () => {
+    const before = fsCommands().length;
+    expect((await s.get(`/api/runners/other-machine/fs/html?path=${enc('/home/other/a.html')}`)).statusCode).toBe(404);
+    expect((await s.get(`/api/runners/vm/fs/html?sessionId=${s.foreignSessionId}&path=${enc('/home/other/p/a.html')}`)).statusCode).toBe(404);
+    expect(fsCommands()).toHaveLength(before);
+  });
+
   it('maps every error of the agent to the status of the contract', async () => {
     for (const code of FS_ERROR_CODES) {
       s.script.next = () => {

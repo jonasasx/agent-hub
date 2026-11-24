@@ -36,9 +36,11 @@ export const mcpGatewayLimitsUpdateSchema = z.object({
   idleMs: limit('idleMs').nullable(),
 });
 export const mcpGatewayFailureReasonSchema = z.object({
-  kind: z.enum(['server-limit', 'machine-limit', 'backoff', 'restart-limit', 'unavailable']),
+  kind: z.enum(['server-limit', 'machine-limit', 'backoff', 'restart-limit', 'unavailable', 'upstream']),
   limit: z.number().int().nonnegative().optional(),
   inUse: z.number().int().nonnegative().optional(),
+  /** mcp-remote-upstream-errors: the upstream answer of a remote server (`upstream`); absent for a network error. */
+  httpStatus: z.number().int().min(100).max(599).optional(),
 });
 export const mcpImportStateSchema = z.enum(['auto-pending', 'done']);
 export const mcpTransportSchema = z.enum(['stdio', 'http', 'sse']);

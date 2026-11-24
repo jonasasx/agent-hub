@@ -2,8 +2,8 @@
  * The views of the file viewer by class (change tool-windows-file-explorer, task 6.5). Markup after
  * docs/prototypes/file-explorer.html (`fileView`): `.v-img`, `.md-body`, `.src`, `.v-empty`.
  * Requirement (file-explorer): Просмотрщик — pictures, Markdown (a source toggle, pictures only inside the root),
- * text with line numbers, «Нельзя показать» for the binary class and «Файл слишком большой», both with «Скачать»
- * (change file-download).
+ * HTML in an isolated frame (change file-viewer-html), text with line numbers, «Нельзя показать» for the binary class
+ * and «Файл слишком большой», both with «Скачать» (change file-download).
  */
 import { useMemo, useState, type ReactNode } from 'react';
 import { FileImageContext, FileLinkContext, Markdown } from '../chat/Markdown';
@@ -13,7 +13,7 @@ import { formatBytes } from '../images/format';
 import { openLightbox } from '../images/ImagePreview';
 import { downloadFile } from './fileActions';
 import { ICON_DOWNLOAD } from './fileIcons';
-import { fsFileUrl } from './filesApi';
+import { fsFileUrl, fsHtmlUrl } from './filesApi';
 import { fileLinkResolver } from './links';
 import { baseName, isInside, parentOf, resolveRelative } from './paths';
 
@@ -93,6 +93,31 @@ export function MarkdownView({ text, mode, runnerId, path, sessionId, root }: Md
       </FileImageContext.Provider>
     </div>
   );
+}
+
+interface HtmlProps {
+  text: string;
+  mode: 'r' | 's';
+  runnerId: string;
+  path: string;
+  sessionId?: string;
+  name: string;
+}
+
+/** The sandbox of the frame: scripts run, the origin stays opaque (no `allow-same-origin`), the hub also sends a CSP sandbox. */
+export const HTML_FRAME_SANDBOX = 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals';
+
+/** An HTML page from the hub endpoint in an isolated frame; «Исходник» shows the text with line numbers. */
+export function HtmlView({ text, mode, runnerId, path, sessionId, name }: HtmlProps) {
+  // a new source after «Обновить» loads the page again (state adjusted while rendering: no second load on mount)
+  const [seen, setSeen] = useState(text);
+  const [rev, setRev] = useState(0);
+  if (seen !== text) {
+    setSeen(text);
+    setRev(r => r + 1);
+  }
+  if (mode === 's') return <TextView text={text} />;
+  return <iframe key={rev} className="fx-html" src={fsHtmlUrl(runnerId, path, sessionId)} sandbox={HTML_FRAME_SANDBOX} referrerPolicy="no-referrer" title={name} data-testid="html-view" />;
 }
 
 export function ViewerEmpty({ big, children, action }: { big: string; children?: ReactNode; action?: ReactNode }) {

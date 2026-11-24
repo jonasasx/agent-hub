@@ -4,7 +4,7 @@
  */
 import { BrowserWindow, Menu, nativeImage, screen, session, shell, type Session } from 'electron';
 import { join } from 'node:path';
-import { decideNavigation, hubPath, isHubPage, isImageViewerUrl, isPermissionAllowed, isPermissionCheckAllowed } from '../core/navigation.js';
+import { decideNavigation, hubPath, isFrameAllowed, isHubPage, isImageViewerUrl, isPermissionAllowed, isPermissionCheckAllowed } from '../core/navigation.js';
 import { HEALTH_POLL_MS, HEALTH_TIMEOUT_MS, actionOnHubBack, actionOnHubUnreachable, isOfflineHttpStatus, isOfflineLoadError, type WindowOutageView } from '../core/offline.js';
 import { offlinePage, toDataUrl } from '../core/pages.js';
 import { shouldHideOnToggle, type TrayIconName } from '../core/trayView.js';
@@ -135,10 +135,12 @@ export class AppWindow {
     wc.on('will-navigate', e => guard(e, e.url));
     wc.on('will-redirect', e => guard(e, e.url));
     wc.on('will-frame-navigate', e => {
-      // Sub-frames of the hub page may only show the hub's own origin (no external iframes taking over).
+      // Sub-frames of the hub page may only show the hub's own pages and the HTML file of the viewer (no external iframes taking over).
       if (e.isMainFrame) return;
-      const d = decideNavigation(e.url, origin);
-      if (d.kind !== 'allow' && !e.url.startsWith('about:')) e.preventDefault();
+      if (!isFrameAllowed(e.url, origin)) {
+        e.preventDefault();
+        log(`frame navigation denied: ${e.url.slice(0, 200)}`);
+      }
     });
     wc.setWindowOpenHandler(({ url }) => {
       // «Открыть оригинал»: the picture in a window of its own, the app stays (change image-viewer, D4)

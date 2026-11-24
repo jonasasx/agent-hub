@@ -41,6 +41,28 @@ describe('FileViewer', () => {
     expect(screen.getByRole('button', { name: 'Исходник' })).toHaveAttribute('aria-pressed', 'true');
   });
 
+  it('html: a sandboxed frame of the page endpoint, «Исходник» shows the source, the meta says HTML', async () => {
+    stubFs({ list: {}, files: { '/home/u/r.html': { kind: 'text', body: '<h1>Report</h1>\n<script>draw()</script>\n' } } });
+    render(<FileViewer tabId={tab('/home/u/r.html')} />);
+    const frame = await screen.findByTestId('html-view');
+    expect(frame.getAttribute('src')).toBe('/api/runners/vm/fs/html?path=%2Fhome%2Fu%2Fr.html');
+    expect(frame.getAttribute('sandbox')).toContain('allow-scripts');
+    expect(frame.getAttribute('sandbox')).not.toContain('allow-same-origin');
+    expect(frame).toHaveAttribute('referrerpolicy', 'no-referrer');
+    expect(screen.getByText(/· HTML/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Исходник' }));
+    expect(screen.queryByTestId('html-view')).not.toBeInTheDocument();
+    expect((await screen.findByTestId('text-view')).querySelectorAll('span')).toHaveLength(2);
+  });
+
+  it('a .txt file with HTML inside stays text', async () => {
+    stubFs({ list: {}, files: { '/home/u/r.txt': { kind: 'text', body: '<h1>Report</h1>' } } });
+    render(<FileViewer tabId={tab('/home/u/r.txt')} />);
+    expect(await screen.findByTestId('text-view')).toBeInTheDocument();
+    expect(screen.queryByTestId('html-view')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Исходник' })).not.toBeInTheDocument();
+  });
+
   it('a picture is shown by <img> with the zoom switch; the size comes from the listing', async () => {
     stubFs({ list: { '/home/u': dir('/home/u', [{ name: 'p.png', kind: 'file', size: 2048 } as never]) }, files: {} });
     render(<FileViewer tabId={tab('/home/u/p.png')} />);

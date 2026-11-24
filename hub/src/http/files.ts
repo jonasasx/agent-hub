@@ -115,6 +115,29 @@ export function attachmentDisposition(name: string): string {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${utf8}`;
 }
 
+/**
+ * Policy of an HTML page shown by the viewer (file-viewer-html D2): scripts run in an opaque origin, no requests to the hub
+ * or anywhere else, no forms; resources only over https: and data:; only the hub may frame the page.
+ */
+export const HTML_PAGE_CSP = [
+  'sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals',
+  "default-src 'none'",
+  "script-src 'unsafe-inline' 'unsafe-eval' https: data: blob:",
+  "style-src 'unsafe-inline' https: data:",
+  'img-src https: data: blob:',
+  'font-src https: data:',
+  'media-src https: data: blob:',
+  "connect-src 'none'",
+  "form-action 'none'",
+  "base-uri 'none'",
+  "frame-ancestors 'self'",
+].join('; ');
+
+/** `.html` / `.htm` in any case, by the last segment of a path of either platform. */
+export function isHtmlName(p: string): boolean {
+  return /\.html?$/i.test(baseName(p));
+}
+
 /** The last segment of a path of either platform. */
 function baseName(p: string): string {
   return (
@@ -247,6 +270,35 @@ export function registerFileRoutes(app: FastifyInstance, deps: { db: Db; agents:
     reply.header(FS_FILE_HEADERS.kind, kind);
     reply.header(FS_FILE_HEADERS.size, String(body.length));
     return reply.type(type).send(body);
+  });
+
+  // Requirement: Просмотрщик — an HTML file as a page for the viewer frame (change `file-viewer-html`, D2).
+  // CSP sandbox without allow-same-origin gives the page an opaque origin even when the address is opened directly.
+  app.get('/api/runners/:runnerId/fs/html', async (req, reply: FastifyReply) => {
+    const q = parse(fsFileQuerySchema, req.query);
+    const { runnerId, root, target, connection } = await prepare(req, req.params, q.sessionId, q.path);
+    const raw = await run(req, connection, runnerId, () => connection.request('fs.read', { path: target, root }, o.readTimeoutMs));
+    const parsed = fsReadResultSchema.safeParse(raw);
+    if (!parsed.success) {
+      req.log.warn({ runnerId }, 'fs.read: malformed agent answer');
+      throw fail('io_error');
+    }
+    const r = parsed.data;
+    reply.header('Cache-Control', 'private, no-store');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    if (r.kind !== 'text' || !isHtmlName(r.path)) {
+      reply.header('Content-Security-Policy', "sandbox; default-src 'none'");
+      // the body of fs/file, but the class may be any: the page endpoint shows only HTML text
+      return reply.code(FS_ERROR_STATUS.unsupported).send({ error: 'unsupported', kind: r.kind, size: r.size, mime: r.mime });
+    }
+    if (typeof r.text !== 'string') throw fail('io_error');
+    const body = Buffer.from(r.text, 'utf8');
+    req.log.info({ runnerId, kind: 'html', size: body.length }, 'fs file served');
+    reply.header('Content-Security-Policy', HTML_PAGE_CSP);
+    reply.header('X-Frame-Options', 'SAMEORIGIN');
+    reply.header('Referrer-Policy', 'no-referrer');
+    reply.header('Content-Disposition', 'inline');
+    return reply.type('text/html; charset=utf-8').send(body);
   });
 
   // Requirement: Скачивание файла — any class and size, read from the machine in pieces of FS_CHUNK_MAX (D1-D5).

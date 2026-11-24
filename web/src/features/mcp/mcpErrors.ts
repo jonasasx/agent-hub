@@ -66,10 +66,19 @@ export function mcpGatewayMessage(gateway: McpServerGatewayIssue, machine: strin
   if (reason?.kind === 'backoff') return { message: t('mcp.gateway.backoff', { machine }), details, hints: [] };
   if (reason?.kind === 'restart-limit') return { message: t('mcp.gateway.restartLimit', { machine }), details, hints: [] };
   if (reason?.kind === 'unavailable') return { message: t('mcp.gateway.unavailable', { machine }), details, hints: [] };
+  if (reason?.kind === 'upstream') return { message: upstreamMessage(reason.httpStatus, machine), details, hints: [] };
   const command = getMissingCommand(details);
   if (command) return { message: t('mcp.gateway.noCommand', { machine, command }), details, hints: [] };
   const parsed = mcpErrorMessage(gateway.error, 'http');
   return { message: t('mcp.gateway.failed', { machine, message: parsed.message }), details: parsed.details, hints: [] };
+}
+
+/** mcp-remote-upstream-errors: the answer of a remote server to the machine gateway; no status — the address did not answer. */
+function upstreamMessage(status: number | undefined, machine: string): string {
+  if (status === undefined) return t('mcp.gateway.upstreamUnreachable', { machine });
+  if (status === 401 || status === 403) return t('mcp.gateway.upstreamDenied', { machine, status });
+  if (status === 502 || status === 503 || status === 504) return t('mcp.gateway.upstreamUnavailable', { machine, status });
+  return t('mcp.gateway.upstreamError', { machine, status });
 }
 
 function errorText(error: unknown): string {

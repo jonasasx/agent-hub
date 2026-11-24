@@ -2012,6 +2012,82 @@ describe('McpGateway', () => {
     expect(response.headers.get('content-length')).toBeNull();
     expect(await response.json()).toEqual(JSON.parse(payload));
   });
+
+  it('mcp-remote-upstream-errors: reports the upstream answer of a remote server to the hub once per change', async () => {
+    let code = 503;
+    const remote = (remoteFixture = createServer((_req, res) => {
+      res.writeHead(code, { 'content-type': 'application/json' });
+      res.end(code === 200 ? JSON.stringify({ jsonrpc: '2.0', id: 1, result: {} }) : '');
+    }));
+    await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve));
+    const address = remote.address();
+    if (!address || typeof address === 'string') throw new Error('remote fixture failed to bind');
+    const statuses: Array<Record<string, unknown>> = [];
+    gateway = new McpGateway(createLogger({ level: 'error', write: () => undefined }), status => statuses.push(status as Record<string, unknown>));
+    await gateway.start();
+    const closed = createServer();
+    await new Promise<void>(resolve => closed.listen(0, '127.0.0.1', resolve));
+    const closedPort = (closed.address() as { port: number }).port;
+    await new Promise<void>(resolve => closed.close(() => resolve()));
+    const serverId = randomUUID();
+    const unreachableId = randomUUID();
+    const server = (id: string, name: string, url: string) => ({
+      id,
+      name,
+      enabled: true,
+      transport: 'http' as const,
+      mode: 'remote' as const,
+      url,
+      machineScope: { allMachines: true, machineIds: [] },
+      projectIds: [],
+      revision: 1,
+      secrets: [],
+    });
+    gateway.setRegistry({
+      protocol: '1.13',
+      revision: 1,
+      generatedAt: 1,
+      registryEnabled: true,
+      servers: [server(serverId, 'fleet-api', `http://127.0.0.1:${address.port}/mcp`), server(unreachableId, 'nowhere', `http://127.0.0.1:${closedPort}/mcp`)],
+    });
+    const sessionId = randomUUID();
+    const bearer = randomUUID() + randomUUID();
+    const endpoint = await gateway.startManaged(serverId, sessionId, bearer);
+    await gateway.startManaged(unreachableId, sessionId, bearer);
+    const call = (id: string, method = 'POST') =>
+      fetch(`${endpoint}?server=${id}`, {
+        method,
+        headers: { authorization: `Bearer ${bearer}`, 'x-agent-session': sessionId, 'content-type': 'application/json' },
+        ...(method === 'POST' ? { body: '{"jsonrpc":"2.0","id":1,"method":"initialize"}' } : {}),
+      });
+    const upstream = () => statuses.filter(s => s.serverId === serverId).slice(1);
+
+    for (let i = 0; i < 5; i += 1) expect((await call(serverId)).status).toBe(503);
+    expect(upstream()).toEqual([expect.objectContaining({ status: 'failed', error: 'upstream HTTP 503', reason: { kind: 'upstream', httpStatus: 503 } })]);
+    expect(upstream()[0]).not.toHaveProperty('sessionId');
+
+    code = 200;
+    expect((await call(serverId)).status).toBe(200);
+    expect((await call(serverId)).status).toBe(200);
+    expect(upstream().slice(1)).toEqual([expect.objectContaining({ status: 'ready', endpoint: endpoint.replace(/\?.*$/, '') })]);
+
+    code = 404;
+    expect((await call(serverId)).status).toBe(404);
+    code = 405;
+    expect((await call(serverId, 'GET')).status).toBe(405);
+    expect(upstream()).toHaveLength(2);
+
+    code = 403;
+    expect((await call(serverId)).status).toBe(403);
+    expect(upstream()[2]).toMatchObject({ status: 'failed', reason: { kind: 'upstream', httpStatus: 403 } });
+
+    expect((await call(unreachableId)).status).toBe(502);
+    const network = statuses.filter(s => s.serverId === unreachableId).slice(1);
+    expect(network).toHaveLength(1);
+    expect(network[0]).toMatchObject({ status: 'failed', reason: { kind: 'upstream' } });
+    expect((network[0]!.reason as Record<string, unknown>).httpStatus).toBeUndefined();
+    expect(String(network[0]!.error)).toMatch(/ECONNREFUSED/);
+  });
 });
 
 // A stdio server that pins its connection to the first client's revision, like FastMCP 4.x: a stateless request (2026-07-28)

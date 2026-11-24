@@ -1304,6 +1304,42 @@ describe('MCP registry draft tools', () => {
     expect(server?.gateway).toMatchObject({ serverId, status: 'failed', reason: { kind: 'server-limit', limit: 4, inUse: 4 }, busySessionIds: [busy] });
   });
 
+  it('mcp-remote-upstream-errors: an upstream refusal of the machine reaches the panel of a session with a failed remote server', async () => {
+    const name = `registry_gateway_upstream_${randomUUID().slice(0, 8)}`;
+    const created = await t.hub.app.inject({
+      method: 'POST',
+      url: '/api/mcp/registry',
+      cookies: { ah_session: cookie },
+      headers: { origin: PUBLIC_URL },
+      payload: { server: candidate(name).server },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const serverId = (created.json() as { id: string }).id;
+    agentSend(agent, 'mcp.gateway.status', {
+      serverId,
+      machineId: runnerId,
+      status: 'failed',
+      error: 'upstream HTTP 503',
+      reason: { kind: 'upstream', httpStatus: 503 },
+      observedAt: Date.now(),
+    });
+    const gateway = await waitFor(async () => {
+      const response = await t.hub.app.inject({ method: 'GET', url: '/api/mcp/registry/status', cookies: { ah_session: cookie } });
+      const rows = (response.json() as { gateways: Array<Record<string, unknown>> }).gateways;
+      return rows.find(row => row.serverId === serverId && !row.sessionId && row.status === 'failed') ?? null;
+    });
+    expect(gateway).toMatchObject({ reason: { kind: 'upstream', httpStatus: 503 } });
+    const sdk = 'SdkHttpError dialing http://127.0.0.1:62522/mcp (CLIENT_HTTP_NOT_IMPLEMENTED)';
+    await t.tdb.pool.query(`update sessions set mcp_servers=$2::jsonb, mcp_observed_at=now() where id=$1`, [
+      sessionId,
+      JSON.stringify([{ name, status: 'failed', transport: 'http', toolCount: 0, error: sdk }]),
+    ]);
+    const panel = await t.hub.app.inject({ method: 'GET', url: `/api/sessions/${sessionId}/mcp`, cookies: { ah_session: cookie } });
+    expect(panel.statusCode, panel.body).toBe(200);
+    const server = (panel.json() as { servers: Array<Record<string, unknown>> }).servers.find(row => row.name === name);
+    expect(server).toMatchObject({ error: sdk, gateway: { serverId, status: 'failed', error: 'upstream HTTP 503', reason: { kind: 'upstream', httpStatus: 503 } } });
+  });
+
   it('mcp-gateway-session-limits: the owner saves machine limits, the agent gets them in the snapshot, bad values and foreign machines are refused', async () => {
     const machineId = randomUUID();
     const token = await t.addRunner(machineId, `mcp_gateway_limits_${machineId.slice(0, 8)}`);

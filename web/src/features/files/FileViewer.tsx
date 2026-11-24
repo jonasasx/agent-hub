@@ -12,8 +12,8 @@ import { formatBytes } from '../images/format';
 import { parseFileTabId } from '../layout/layout';
 import { Breadcrumbs } from './Breadcrumbs';
 import { copyPath, insertMention, revealInTree } from './fileActions';
-import { ICON_COPY, ICON_FOLDER_BTN } from './fileIcons';
-import { DownloadButton, ImageView, MarkdownView, TextView, TooLarge, Unsupported, ViewerEmpty, type DownloadTarget, type ImageZoom } from './fileViews';
+import { ICON_COPY, ICON_FOLDER_BTN, nameKind } from './fileIcons';
+import { DownloadButton, HtmlView, ImageView, MarkdownView, TextView, TooLarge, Unsupported, ViewerEmpty, type DownloadTarget, type ImageZoom } from './fileViews';
 import { useFiles } from './filesStore';
 import { baseName } from './paths';
 import { runnerSupportsDownload } from './source';
@@ -60,17 +60,19 @@ function Viewer({ tabId, runnerId, path }: { tabId: string; runnerId: string; pa
   const machineName = runner?.name ?? runnerId;
   const onPages = useCallback((n: number) => setPages(n), []);
   const onPage = useCallback((n: number) => setPage(n), []);
+  // the agent sends HTML as text; the viewer tells it by the extension (change file-viewer-html, D1)
+  const html = state.status === 'text' && state.kind === 'text' && nameKind(path) === 'html';
   const download: DownloadTarget = { runnerId, path, sessionId, machineName, supported: !!runner && runnerSupportsDownload(runner, { [runnerId]: outdated }) };
 
   const meta = useMemo(() => {
     if (state.status === 'image') return [natural ? `${natural.w}×${natural.h}` : null, state.size ? formatBytes(state.size) : null].filter(Boolean).join(' · ');
     if (state.status === 'pdf') return `${pages ? `${t('files.viewer.pages', { count: pages })} · ` : ''}${formatBytes(state.size)}`;
-    if (state.status === 'text') return `${formatBytes(state.size)} · ${state.kind === 'markdown' ? 'Markdown' : t('files.viewer.text')}`;
+    if (state.status === 'text') return `${formatBytes(state.size)} · ${state.kind === 'markdown' ? 'Markdown' : html ? 'HTML' : t('files.viewer.text')}`;
     return '';
-  }, [state, natural, pages, t]);
+  }, [state, natural, pages, html, t]);
 
   const tools: React.ReactNode[] = [];
-  if (state.status === 'text' && state.kind === 'markdown') {
+  if ((state.status === 'text' && state.kind === 'markdown') || html) {
     tools.push(
       <span key="md" className="fx-mini-seg">
         <button type="button" className={md === 'r' ? 'on' : ''} aria-pressed={md === 'r'} onClick={() => setMd('r')}>
@@ -189,6 +191,7 @@ function Viewer({ tabId, runnerId, path }: { tabId: string; runnerId: string; pa
           </Suspense>
         );
       case 'text':
+        if (html) return <HtmlView text={state.text} mode={md} runnerId={runnerId} path={path} sessionId={sessionId} name={name} />;
         return state.kind === 'markdown' ? <MarkdownView text={state.text} mode={md} runnerId={runnerId} path={path} sessionId={sessionId} root={root} /> : <TextView text={state.text} />;
     }
   }

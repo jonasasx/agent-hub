@@ -1,6 +1,6 @@
 // Requirements: Навигация и внешние ссылки; Изоляция окна (design D3, D2).
 import { describe, expect, it } from 'vitest';
-import { decideNavigation, isHubPage, isImageViewerUrl, isPermissionAllowed, isPermissionCheckAllowed, safeReturnPath } from './navigation.js';
+import { decideNavigation, isFrameAllowed, isHubPage, isImageViewerUrl, isPermissionAllowed, isPermissionCheckAllowed, safeReturnPath } from './navigation.js';
 
 const HUB = 'https://hub.example.com';
 const ID = 'dd346743-9bbb-5c33-a0c4-38db15ed5df6';
@@ -165,5 +165,32 @@ describe('isImageViewerUrl (image-viewer D4)', () => {
     expect(isImageViewerUrl(`${HUB}/api/blobs/../auth/login`, HUB)).toBe(false);
     expect(isImageViewerUrl(`https://evil.example.com/api/blobs/${SHA}`, HUB)).toBe(false);
     expect(isImageViewerUrl('not a url', HUB)).toBe(false);
+  });
+});
+
+describe('isFrameAllowed (desktop-html-frame)', () => {
+  it('the HTML file of the viewer and hub pages load in a sub-frame', () => {
+    expect(isFrameAllowed(`${HUB}/api/runners/hp/fs/html?path=${encodeURIComponent('C:\\Users\\ivan\\report.html')}`, HUB)).toBe(true);
+    expect(isFrameAllowed(`${HUB}/api/runners/${ID}/fs/html?path=%2Fhome%2Fubuntu%2Fa.html&sessionId=${ID}`, HUB)).toBe(true);
+    expect(isFrameAllowed(`${HUB}/s/${ID}`, HUB)).toBe(true);
+    expect(isFrameAllowed('about:blank', HUB)).toBe(true);
+    expect(isFrameAllowed('about:srcdoc', HUB)).toBe(true);
+  });
+  it('other hub addresses outside the web, other origins and schemes stay out of a sub-frame', () => {
+    const urls = [
+      `${HUB}/api/me`,
+      `${HUB}/api/runners/hp/fs/file?path=%2Fetc%2Fpasswd`,
+      `${HUB}/api/runners/hp/fs/download?path=a.html`,
+      `${HUB}/api/runners/hp/fs/html/x`,
+      `${HUB}/api/runners/a/b/fs/html`,
+      `${HUB}/C:/Users/ivan/report.html`,
+      `https://evil.example.com/api/runners/hp/fs/html?path=a.html`,
+      'http://hub.example.com/api/runners/hp/fs/html?path=a.html',
+      'https://gitlab.com/x',
+      'data:text/html,x',
+      'javascript:alert(1)',
+      'not a url',
+    ];
+    for (const u of urls) expect(isFrameAllowed(u, HUB), u).toBe(false);
   });
 });

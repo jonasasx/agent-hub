@@ -97,6 +97,7 @@
 .fx-ic svg { width: 16px; height: 16px; }
 .fx-ic.k-dir { color: color-mix(in srgb, var(--accent) 80%, var(--muted)); }
 .fx-ic.k-md { color: var(--info); }
+.fx-ic.k-html { color: var(--warn); }
 .fx-ic.k-img { color: var(--ok); }
 .fx-ic.k-pdf { color: var(--bad); }
 .fx-ic.k-txt { color: var(--muted); }
@@ -108,6 +109,7 @@
 /* the file tab */
 .tab.file .fx-ic { color: inherit; }
 .tab.file .fx-ic.k-md { color: var(--info); }
+.tab.file .fx-ic.k-html { color: var(--warn); }
 .tab.file .fx-ic.k-img { color: var(--ok); }
 .tab.file .fx-ic.k-pdf { color: var(--bad); }
 .tab.preview .t-title { font-style: italic; }
@@ -157,6 +159,7 @@
 .fx-pdf-page .pno { position: absolute; bottom: calc(14px * var(--pz, 1)); left: 0; right: 0; text-align: center; color: #889; font-size: 11px; pointer-events: none; }
 .fx-pdf-page .fx-note-center { position: absolute; inset: 0; display: grid; place-items: center; }
 
+.fx-html { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
 .fx-md { padding: 20px 28px 40px; max-width: 820px; line-height: 1.6; font-size: 14px; overflow-wrap: anywhere; }
 .fx-md h1 { font-size: 22px; margin: 0 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 .fx-md h2 { font-size: 17px; margin: 22px 0 8px; }

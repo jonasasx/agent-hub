@@ -87,6 +87,23 @@ export function isImageViewerUrl(raw: string, publicOrigin: string): boolean {
   return u.origin === publicOrigin && /^\/api\/blobs\/[0-9a-f]+$/i.test(u.pathname);
 }
 
+/**
+ * A sub-frame of the hub page (change desktop-html-frame): a page of the web or the HTML file of the viewer,
+ * `/api/runners/<id>/fs/html` of its own origin (the hub sends it with a CSP sandbox, change file-viewer-html).
+ * A sub-frame cannot replace the app, so this page is not an address of the main window.
+ */
+export function isFrameAllowed(raw: string, publicOrigin: string): boolean {
+  if (raw.startsWith('about:')) return true;
+  if (decideNavigation(raw, publicOrigin).kind === 'allow') return true;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  return u.origin === publicOrigin && /^\/api\/runners\/[^/]+\/fs\/html$/.test(u.pathname);
+}
+
 /** Permissions the page may get (D2): everything else — including `notifications` — is refused. */
 export const ALLOWED_PERMISSIONS: ReadonlySet<string> = new Set(['clipboard-sanitized-write', 'fullscreen']);
 

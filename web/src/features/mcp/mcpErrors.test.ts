@@ -89,4 +89,20 @@ describe('mcpGatewayMessage', () => {
       expect(message.hints).toEqual([]);
     }
   });
+
+  it('mcp-remote-upstream-errors: explains the upstream answer of a remote server, the gateway text stays in details', () => {
+    const upstream = (httpStatus?: number) => ({ ...issue('failed', `upstream HTTP ${httpStatus}`), reason: { kind: 'upstream' as const, httpStatus } });
+    expect(mcpGatewayMessage(upstream(503), 'HP', 'fleet-api')).toEqual({
+      message: 'Машина HP: сервер временно недоступен (HTTP 503). Переподключите его через минуту.',
+      details: 'upstream HTTP 503',
+      hints: [],
+    });
+    expect(mcpGatewayMessage(upstream(502), 'HP', 'mm').message).toMatch(/временно недоступен \(HTTP 502\)/);
+    expect(mcpGatewayMessage(upstream(504), 'HP', 'mm').message).toMatch(/временно недоступен \(HTTP 504\)/);
+    expect(mcpGatewayMessage(upstream(500), 'HP', 'mm').message).toBe('Машина HP: сервер ответил ошибкой (HTTP 500).');
+    expect(mcpGatewayMessage(upstream(401), 'HP', 'mm').message).toMatch(/^Машина HP: сервер отклонил доступ \(HTTP 401\)/);
+    expect(mcpGatewayMessage(upstream(403), 'HP', 'mm').message).toMatch(/^Машина HP: сервер отклонил доступ \(HTTP 403\)/);
+    const network = { ...issue('failed', 'fetch failed: ECONNREFUSED'), reason: { kind: 'upstream' as const } };
+    expect(mcpGatewayMessage(network, 'HP', 'mm').message).toBe('Машина HP: адрес сервера не отвечает с этой машины. Проверьте адрес и сеть.');
+  });
 });

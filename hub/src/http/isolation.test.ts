@@ -370,6 +370,7 @@ describe('isolation of users (integration)', () => {
     'GET /api/runners/:runnerId/directories': { url: `/api/runners/${o.runner}/directories` },
     'GET /api/runners/:runnerId/fs/list': { url: `/api/runners/${o.runner}/fs/list` },
     'GET /api/runners/:runnerId/fs/file': { url: `/api/runners/${o.runner}/fs/file?path=${encodeURIComponent('/home/ubuntu/notes.md')}` },
+    'GET /api/runners/:runnerId/fs/html': { url: `/api/runners/${o.runner}/fs/html?path=${encodeURIComponent('/home/ubuntu/report.html')}` },
     'GET /api/runners/:runnerId/fs/download': { url: `/api/runners/${o.runner}/fs/download?path=${encodeURIComponent('/home/ubuntu/notes.md')}` },
     'PATCH /api/runners/:id': { url: `/api/runners/${o.runner}`, body: { name: 'x' } },
     'POST /api/runners/:id/enroll-code': { url: `/api/runners/${o.runner}/enroll-code`, body: {} },
@@ -391,6 +392,7 @@ describe('isolation of users (integration)', () => {
     'POST /api/voice/transcribe': { url: '/api/voice/transcribe', body: 'not audio' },
     // voice-conversation: a link for another user's session → 404, no ElevenLabs request; the Custom LLM answers only to its key
     'GET /api/voice/talk': { url: `/api/voice/talk?session=${o.session}` },
+    'GET /api/voice/talk/report': { url: `/api/voice/talk/report?session=${o.session}` },
     'POST /voice-llm/v1/chat/completions': { url: '/voice-llm/v1/chat/completions', body: { messages: [{ role: 'user', content: 'x' }] } },
     // session-peers: the journal of another user's session → 404
     'GET /api/peers/messages': { url: `/api/peers/messages?session=${o.session}` },

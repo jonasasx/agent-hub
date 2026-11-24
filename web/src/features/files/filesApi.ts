@@ -83,6 +83,13 @@ export function fsFileUrl(runnerId: string, path: string, sessionId?: string): s
   return `/api/runners/${enc(runnerId)}/fs/file?${params.toString()}`;
 }
 
+/** The URL of an HTML file served as a page in a sandbox with an opaque origin (change file-viewer-html, D2). */
+export function fsHtmlUrl(runnerId: string, path: string, sessionId?: string): string {
+  const params = new URLSearchParams({ path });
+  if (sessionId) params.set('sessionId', sessionId);
+  return `/api/runners/${enc(runnerId)}/fs/html?${params.toString()}`;
+}
+
 /** The URL of the download of a file: `Content-Disposition: attachment`, any class and size (change file-download, D4). */
 export function fsDownloadUrl(runnerId: string, path: string, sessionId?: string, probe = false): string {
   const params = new URLSearchParams({ path });
